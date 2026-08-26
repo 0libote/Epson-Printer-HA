@@ -30,8 +30,24 @@ def test_status_parses_ready(mock_run):
 def test_airscan_device_is_preferred_and_identified(mock_run):
     mock_run.return_value = CommandResult(
         True,
-        "device `airscan:e0:Epson XP-2200' is a eSCL Epson XP-2200 ip=192.0.2.10",
+        "\n".join(
+            [
+                "device `net:127.0.0.1:epsonscan2:XP-2200' is a Epson network scanner",
+                "device `airscan:e0:Epson XP-2200' is a eSCL Epson XP-2200 ip=192.0.2.10",
+            ]
+        ),
     )
     device, backend = detect_sane_device()
     assert device == "airscan:e0:Epson XP-2200"
     assert backend == "AirScan/WSD"
+
+
+@patch("app.core.run_command")
+def test_sidecar_is_identified_as_compatibility_bridge(mock_run):
+    mock_run.return_value = CommandResult(
+        True,
+        "device `net:127.0.0.1:epsonscan2:XP-2200' is a Epson XP-2200 network scanner",
+    )
+    device, backend = detect_sane_device()
+    assert device == "net:127.0.0.1:epsonscan2:XP-2200"
+    assert backend == "Epson compatibility bridge"
