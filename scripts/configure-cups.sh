@@ -3,7 +3,7 @@ set -euo pipefail
 
 PRINTER_IP="${PRINTER_IP:-}"
 PRINTER_NAME="${PRINTER_NAME:-Home_Epson_XP2200}"
-PRINT_PROTOCOL="${PRINT_PROTOCOL:-lpd}"
+PRINT_PROTOCOL="${PRINT_PROTOCOL:-socket}"
 
 if [[ -z "$PRINTER_IP" ]]; then
   echo "[cups] PRINTER_IP is not set; skipping queue creation."
@@ -23,8 +23,11 @@ fi
 
 case "$PRINT_PROTOCOL" in
   socket) URI="socket://${PRINTER_IP}:9100" ;;
-  lpd) URI="lpd://${PRINTER_IP}/" ;;
-  *) URI="lpd://${PRINTER_IP}/" ;;
+  lpd) URI="lpd://${PRINTER_IP}/PASSTHRU" ;;
+  *)
+    echo "[cups] Unknown PRINT_PROTOCOL '$PRINT_PROTOCOL'; use socket or lpd."
+    exit 1
+    ;;
 esac
 
 lpadmin -p "$PRINTER_NAME" -v "$URI" -m "$MODEL" -E -o printer-is-shared=true
