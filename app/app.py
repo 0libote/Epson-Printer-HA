@@ -20,11 +20,9 @@ from .core import (
     scanner_status,
     submit_print,
 )
-from .driver_installer import install_bundle
 
 APP_DIR = Path(os.getenv("APP_DATA", "/data"))
 SCAN_DIR = APP_DIR / "scans"
-DRIVER_DIR = Path(os.getenv("DRIVER_DIR", "/drivers"))
 SETTINGS_FILE = APP_DIR / "settings.json"
 PRINTER_IP_ENV = os.getenv("PRINTER_IP", "").strip()
 PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip()
@@ -34,7 +32,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or os.urandom(32)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
-for p in (APP_DIR, SCAN_DIR, DRIVER_DIR):
+for p in (APP_DIR, SCAN_DIR):
     p.mkdir(parents=True, exist_ok=True)
 
 
@@ -222,31 +220,6 @@ def cancel(job_id: str):
 @require_auth
 def download_scan(filename: str):
     return send_from_directory(SCAN_DIR, filename, as_attachment=True)
-
-
-@app.post("/drivers/upload")
-@require_auth
-def upload_driver():
-    upload = request.files.get("bundle")
-    if not upload or not upload.filename:
-        flash("Choose the Epson Scan 2 Linux bundle.", "error")
-        return redirect(url_for("index"))
-    name = secure_filename(upload.filename)
-    allowed = (".deb", ".tar.gz", ".tgz", ".tar.xz", ".tar")
-    if not any(name.endswith(ext) for ext in allowed):
-        flash("Upload Epson's .deb or .tar.gz/.tgz/.tar.xz bundle.", "error")
-        return redirect(url_for("index"))
-    target = DRIVER_DIR / name
-    upload.save(target)
-    try:
-        ok, log = install_bundle(target)
-    except Exception as exc:
-        ok, log = False, str(exc)
-    if ok:
-        flash("Epson Scan 2 compatibility fallback is installed.", "success")
-    else:
-        flash(f"Driver install failed: {log[-1000:]}", "error")
-    return redirect(url_for("index"))
 
 
 @app.get("/api/status")
