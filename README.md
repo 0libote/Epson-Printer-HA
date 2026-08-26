@@ -9,7 +9,7 @@ The first target is the **Epson Expression Home XP-2200 Series**.
 - Shares the XP-2200 through **CUPS / IPP** so Windows, macOS and other LAN clients can print without Epson's Windows software on every machine.
 - Uses the ESC/P-R Linux printing stack on the server side.
 - Talks to the physical printer over its documented **PORT9100** network printing interface by default.
-- Provides one simple web dashboard for file printing, queue status, scanning and scan downloads.
+- Provides one simple web dashboard for first-run setup, file printing, queue status, scanning and scan downloads.
 - Tries fully open-source **AirScan/eSCL and WSD scanning first** through `sane-airscan`.
 - Offers an optional Epson Scan 2 compatibility fallback if the XP-2200 firmware does not expose an open network scanning protocol.
 - Advertises the CUPS queue over mDNS/DNS-SD using Avahi.
@@ -27,24 +27,28 @@ There is no subscription, licence purchase or cloud account required by this pro
 
 ## Quick start
 
-1. Connect the printer to Wi-Fi normally and give it a DHCP reservation/static lease.
+1. Connect the printer to Wi-Fi normally and give it a DHCP reservation/static lease in your router.
 2. Clone this repository.
-3. Edit `docker-compose.yml` and set `PRINTER_IP` to the printer's IPv4 address.
-4. Start it:
+3. Start it:
 
 ```bash
 docker compose up -d
 ```
 
-5. Open:
+4. Open:
 
 ```text
 http://YOUR-SERVER-IP:8080
 ```
 
+5. Enter the XP-2200's IPv4 address on the first-run screen.
 6. Print a test PDF from the dashboard.
 7. The scanner card automatically checks for open-source AirScan/WSD support. If it works, nothing else is needed.
 8. If the XP-2200 refuses open network scanning, the dashboard shows the optional Epson compatibility upload.
+
+The saved printer address lives in `./data/settings.json`, so container upgrades/recreates automatically rebuild the CUPS queue without repeating setup.
+
+If you prefer configuration-as-code, set `PRINTER_IP` in `.env` instead. An environment value overrides the dashboard setting.
 
 ## Adding the shared printer
 
@@ -60,14 +64,14 @@ The stack intentionally uses `network_mode: host`. Printing discovery and multic
 
 Persistent directories:
 
-- `./data` stores scans.
+- `./data` stores settings and scans.
 - `./drivers` stores an optional user-supplied Epson Scan 2 fallback bundle. It is ignored by Git.
 
 ## Environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PRINTER_IP` | none | IPv4 address of the physical Epson printer |
+| `PRINTER_IP` | blank | Optional printer IPv4 override; leave blank for dashboard setup |
 | `PRINTER_NAME` | `Home_Epson_XP2200` | CUPS queue name |
 | `PRINT_PROTOCOL` | `socket` | Server-to-printer transport (`socket`/PORT9100, or `lpd` fallback) |
 | `WEB_PORT` | `8080` | Dashboard port |
@@ -122,7 +126,7 @@ The Epson fallback upload is allow-listed to packages named `epsonscan2` and `ep
 
 ## Current status
 
-Early alpha. The code path and container build are tested automatically, but actual XP-2200 Wi-Fi printing/scanning still needs testing against physical hardware. The first real deployment will tell us whether this specific firmware exposes AirScan/WSD or requires the compatibility fallback.
+Early alpha. The code path is unit-tested, but actual XP-2200 Wi-Fi printing/scanning still needs testing against physical hardware. The first real deployment will tell us whether this specific firmware exposes AirScan/WSD or requires the compatibility fallback.
 
 ## Why this exists
 
