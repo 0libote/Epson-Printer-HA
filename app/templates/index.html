@@ -40,7 +40,7 @@
     <article class="card">
       <div class="card-head"><h2>Printer</h2><span class="dot {{ 'ok' if printer.ok else 'bad' }}"></span></div>
       <p class="big">{{ printer.state|replace('_',' ')|title }}</p>
-      <p class="muted">{{ printer_name }} · {{ printer_ip }}</p>
+      <p class="muted">{{ display_name }} · {{ printer_ip }}</p>
       {% if not printer_ip_locked %}
       <details>
         <summary>Change printer IP</summary>
@@ -92,6 +92,84 @@
       <p class="muted">Drop Epson's Linux Scan 2 bundle into the Compose <code>epson-driver</code> folder and the sidecar will pick it up automatically.</p>
       {% endif %}
     </article>
+  </section>
+
+  <section class="card client-card">
+    <div class="client-title">
+      <div>
+        <p class="eyebrow">NETWORK PRINTING</p>
+        <h2>Use this printer from Windows, Mac and other devices</h2>
+        <p class="muted">The homelab publishes a normal IPP printer. Client devices talk to this server; only the server needs the Epson driver.</p>
+      </div>
+      <span class="status-pill {{ 'ok' if share_printer else 'bad' }}">{{ 'Shared on LAN' if share_printer else 'Sharing off' }}</span>
+    </div>
+
+    <div class="client-grid">
+      <div>
+        <h3>Sharing settings</h3>
+        <form method="post" action="/client-settings" class="client-settings-form">
+          <label>Friendly name
+            <input class="text-input" type="text" name="display_name" value="{{ display_name }}" maxlength="80" required>
+          </label>
+          <label>CUPS queue name
+            <input class="text-input" type="text" name="printer_name" value="{{ printer_name }}" pattern="[A-Za-z0-9._-]+" maxlength="127" required>
+            <small>No spaces. This becomes part of the IPP address.</small>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" name="share_printer" {% if share_printer %}checked{% endif %}>
+            <span><strong>Share on the LAN</strong><small>Enables remote IPP printing and Bonjour/DNS-SD discovery for Apple devices.</small></span>
+          </label>
+          <button type="submit">Apply network printing settings</button>
+        </form>
+      </div>
+
+      <div>
+        <h3>Connection details</h3>
+        {% if share_printer %}
+        <p class="muted">Automatic discovery is the easiest route. If a device does not find it, use the manual details below.</p>
+        <div class="connection-item">
+          <span>IPP address</span>
+          <code class="codebox">{{ client_setup.ipp_uri }}</code>
+        </div>
+        <div class="connection-item">
+          <span>Windows-compatible URL</span>
+          <code class="codebox">{{ client_setup.http_uri }}</code>
+        </div>
+        <div class="connection-item">
+          <span>Server / queue</span>
+          <code class="codebox">{{ client_setup.host }} · /{{ client_setup.queue_path }}</code>
+        </div>
+        {% else %}
+        <p class="muted">Turn on LAN sharing to let Windows, macOS and phones connect directly to this queue.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if share_printer %}
+    <div class="platform-grid">
+      <div class="platform-box">
+        <h3>Windows 11</h3>
+        <ol>
+          <li>Settings → Bluetooth &amp; devices → Printers &amp; scanners.</li>
+          <li>Try <strong>Add device</strong> first.</li>
+          <li>If it is not found, choose the manual add option and enter <code>{{ client_setup.http_uri }}</code>.</li>
+          <li>Use the Microsoft IPP class driver when Windows offers it.</li>
+        </ol>
+      </div>
+      <div class="platform-box">
+        <h3>macOS</h3>
+        <ol>
+          <li>System Settings → Printers &amp; Scanners → Add Printer.</li>
+          <li>Look for <strong>{{ display_name }}</strong> in the default/Bonjour list.</li>
+          <li>If needed, use the IP tab with protocol <strong>IPP</strong>, address <code>{{ client_setup.host }}</code> and queue <code>/{{ client_setup.queue_path }}</code>.</li>
+        </ol>
+      </div>
+      <div class="platform-box">
+        <h3>iPhone / iPad / Linux</h3>
+        <p class="muted">Apple devices can use Bonjour/IPP discovery when the queue is advertised. Linux desktops can add the IPP URI directly. If a device cannot discover the printer, use the IPP address above.</p>
+      </div>
+    </div>
+    {% endif %}
   </section>
 
   <section class="grid lower-grid">
