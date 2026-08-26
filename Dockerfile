@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ghostscript \
     printer-driver-escpr \
     python3 \
+    python3-cups \
     python3-pip \
     sane-airscan \
     sane-utils \
