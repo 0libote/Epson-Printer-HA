@@ -145,6 +145,7 @@ def _configure_cups(
     env["PRINTER_DISPLAY_NAME"] = display_name or current_display_name()
     env["SHARE_PRINTER"] = "true" if (network_sharing_enabled() if share_printer is None else share_printer) else "false"
     env["OLD_PRINTER_NAME"] = old_printer_name
+    env["PREFER_ENV_SETTINGS"] = "true"
     try:
         proc = subprocess.run(
             ["/usr/local/bin/configure-cups.sh"],
