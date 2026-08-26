@@ -2,10 +2,7 @@ name: epson-printer-ha
 
 services:
   epson-hub:
-    image: epson-printer-ha:local
-    pull_policy: build
-    build:
-      context: https://github.com/0libote/Epson-Printer-HA.git#main
+    image: ghcr.io/0libote/epson-printer-ha:latest
     container_name: epson-printer-ha
     network_mode: host
     restart: unless-stopped
@@ -21,10 +18,7 @@ services:
       - /DATA/AppData/epson-printer-ha/data:/data
 
   epson-scan-bridge:
-    image: epson-printer-ha-scan-bridge:local
-    pull_policy: build
-    build:
-      context: https://github.com/0libote/Epson-Printer-HA.git#main:scan-bridge
+    image: ghcr.io/0libote/epson-printer-ha-scan-bridge:latest
     container_name: epson-printer-ha-scan-bridge
     network_mode: host
     restart: unless-stopped
