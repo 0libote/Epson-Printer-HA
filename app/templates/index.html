@@ -31,6 +31,7 @@
       <div class="card-head"><h2>Scanner</h2><span class="dot {{ 'ok' if scanner.ok else 'warn' }}"></span></div>
       <p class="big">{{ scanner.state|replace('_',' ')|title }}</p>
       <p class="muted">{{ scanner.detail }}</p>
+      {% if scanner.ok and scanner.open_source %}<p class="tag">Open-source network scan</p>{% endif %}
     </article>
   </section>
 
@@ -49,13 +50,7 @@
 
     <article class="card">
       <h2>Scan</h2>
-      {% if scanner.state == 'driver_missing' %}
-      <p class="muted">Wi-Fi scanning needs Epson Scan 2's network plugin. Download the Linux bundle from Epson, then upload it here once.</p>
-      <form method="post" action="/drivers/upload" enctype="multipart/form-data">
-        <label class="drop"><span>Upload Epson Scan 2 Linux bundle</span><input type="file" name="bundle" required></label>
-        <button class="secondary" type="submit">Install scanner driver</button>
-      </form>
-      {% else %}
+      {% if scanner.ok %}
       <form method="post" action="/scan">
         <div class="row three">
           <label>Mode<select name="mode"><option>Color</option><option>Gray</option><option>Lineart</option></select></label>
@@ -64,6 +59,16 @@
         </div>
         <button type="submit">Scan A4 document</button>
       </form>
+      {% else %}
+      <p class="muted">The hub tried the free/open eSCL (AirScan) and WSD scanner protocols first, but did not find the XP-2200 scanner over Wi-Fi.</p>
+      <details>
+        <summary>Optional Epson compatibility fallback</summary>
+        <p class="muted">Epson Scan 2 is free to download but its network bridge is proprietary. Nothing from Epson is bundled into this project. If you want the fallback, download Epson's Linux bundle yourself and upload it once here.</p>
+        <form method="post" action="/drivers/upload" enctype="multipart/form-data">
+          <label class="drop"><span>Upload Epson Scan 2 Linux bundle</span><input type="file" name="bundle" required></label>
+          <button class="secondary" type="submit">Install compatibility fallback</button>
+        </form>
+      </details>
       {% endif %}
     </article>
   </section>
