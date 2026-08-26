@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+touch /tmp/scan-bridge-alive
+
+get_printer_ip() {
+  if [[ -n "${PRINTER_IP:-}" ]]; then
+    printf '%s\n' "$PRINTER_IP"
+    return 0
+  fi
+
+  python3 - <<'PY'
+import ipaddress
+import json
+from pathlib import Path
+
+path = Path('/data/settings.json')
+try:
+    value = str(json.loads(path.read_text()).get('printer_ip', '')).strip()
+    ip = ipaddress.ip_address(value)
+    if ip.version == 4 and not ip.is_loopback and not ip.is_multicast and not ip.is_unspecified:
+        print(ip)
+except Exception:
+    pass
+PY
+}
+
+while true; do
+  /usr/local/bin/install-epson-bundle
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    break
+  fi
+  if [[ $rc -eq 2 ]]; then
+    sleep 20
+  else
+    echo "[scan-bridge] Package installation failed (exit $rc); retrying in 60 seconds."
+    sleep 60
+  fi
+done
+
+mkdir -p /root/.epsonscan2/Network
+
+last_ip=""
+configure_ip() {
+  local ip="$1"
+  [[ -n "$ip" ]] || return 0
+  [[ "$ip" == "$last_ip" ]] && return 0
+  printf '[Network]\n%s\n' "$ip" > /root/.epsonscan2/Network/epsonscan2.conf
+  epsonscan2 --set-ip "$ip" >/dev/null 2>&1 || true
+  last_ip="$ip"
+  echo "[scan-bridge] Scanner target configured: $ip"
+}
+
+configure_ip "$(get_printer_ip)"
+
+echo "[scan-bridge] Starting saned on localhost:6566."
+saned -l -b 127.0.0.1 -p 6566 -n &
+saned_pid=$!
+trap 'kill "$saned_pid" 2>/dev/null || true; wait "$saned_pid" 2>/dev/null || true' TERM INT EXIT
+
+while kill -0 "$saned_pid" 2>/dev/null; do
+  configure_ip "$(get_printer_ip)"
+  sleep 10
+done
+
+wait "$saned_pid"
