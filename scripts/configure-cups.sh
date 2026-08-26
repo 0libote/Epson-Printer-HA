@@ -7,6 +7,7 @@ PRINTER_DISPLAY_NAME="${PRINTER_DISPLAY_NAME:-Home Epson XP-2200}"
 PRINT_PROTOCOL="${PRINT_PROTOCOL:-socket}"
 SHARE_PRINTER="${SHARE_PRINTER:-true}"
 OLD_PRINTER_NAME="${OLD_PRINTER_NAME:-}"
+PREFER_ENV_SETTINGS="${PREFER_ENV_SETTINGS:-false}"
 
 if [[ -z "$PRINTER_IP" && -f /data/settings.json ]]; then
   PRINTER_IP="$(python3 - <<'PY'
@@ -22,7 +23,7 @@ PY
 )"
 fi
 
-if [[ -f /data/settings.json ]]; then
+if [[ "${PREFER_ENV_SETTINGS,,}" != "true" && -f /data/settings.json ]]; then
   readarray -t SAVED_PRINT_SETTINGS < <(python3 - <<'PY'
 import json
 try:
