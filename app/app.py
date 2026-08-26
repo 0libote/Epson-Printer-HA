@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
+import json
 import os
+import subprocess
 from functools import wraps
 from pathlib import Path
 
@@ -22,7 +25,8 @@ from .driver_installer import install_bundle
 APP_DIR = Path(os.getenv("APP_DATA", "/data"))
 SCAN_DIR = APP_DIR / "scans"
 DRIVER_DIR = Path(os.getenv("DRIVER_DIR", "/drivers"))
-PRINTER_IP = os.getenv("PRINTER_IP", "").strip()
+SETTINGS_FILE = APP_DIR / "settings.json"
+PRINTER_IP_ENV = os.getenv("PRINTER_IP", "").strip()
 PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip()
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "128"))
 
@@ -55,6 +59,58 @@ def require_auth(func):
     return wrapper
 
 
+def _validate_ipv4(value: str) -> str:
+    parsed = ipaddress.ip_address(value.strip())
+    if parsed.version != 4 or parsed.is_unspecified or parsed.is_multicast or parsed.is_loopback:
+        raise ValueError("Use the printer's normal IPv4 address")
+    return str(parsed)
+
+
+def _saved_settings() -> dict:
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def current_printer_ip() -> str:
+    if PRINTER_IP_ENV:
+        return PRINTER_IP_ENV
+    value = str(_saved_settings().get("printer_ip", "")).strip()
+    try:
+        return _validate_ipv4(value) if value else ""
+    except ValueError:
+        return ""
+
+
+def _save_printer_ip(printer_ip: str) -> None:
+    data = _saved_settings()
+    data["printer_ip"] = printer_ip
+    temp = SETTINGS_FILE.with_suffix(".tmp")
+    temp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    temp.replace(SETTINGS_FILE)
+
+
+def _configure_cups(printer_ip: str) -> tuple[bool, str]:
+    env = os.environ.copy()
+    env["PRINTER_IP"] = printer_ip
+    env["PRINTER_NAME"] = PRINTER_NAME
+    try:
+        proc = subprocess.run(
+            ["/usr/local/bin/configure-cups.sh"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=60,
+            check=False,
+            env=env,
+        )
+        return proc.returncode == 0, proc.stdout.strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+
+
 def recent_scans(limit: int = 10):
     files = [p for p in SCAN_DIR.iterdir() if p.is_file() and not p.name.startswith(".")]
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
@@ -63,23 +119,49 @@ def recent_scans(limit: int = 10):
 @app.get("/")
 @require_auth
 def index():
-    p_status = cups_printer_status(PRINTER_NAME)
-    s_status = scanner_status(PRINTER_IP) if PRINTER_IP else {"ok": False, "state": "missing_ip", "detail": "Set PRINTER_IP"}
+    printer_ip = current_printer_ip()
+    p_status = cups_printer_status(PRINTER_NAME) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
+    s_status = scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
     return render_template(
         "index.html",
-        printer_ip=PRINTER_IP,
+        printer_ip=printer_ip,
+        printer_ip_locked=bool(PRINTER_IP_ENV),
         printer_name=PRINTER_NAME,
-        reachable=printer_reachable(PRINTER_IP) if PRINTER_IP else False,
+        reachable=printer_reachable(printer_ip) if printer_ip else False,
         printer=p_status,
         scanner=s_status,
-        jobs=list_jobs(PRINTER_NAME),
+        jobs=list_jobs(PRINTER_NAME) if printer_ip else [],
         scans=recent_scans(),
     )
+
+
+@app.post("/setup")
+@require_auth
+def setup_printer():
+    if PRINTER_IP_ENV:
+        flash("PRINTER_IP is set by Docker, so the dashboard cannot change it.", "error")
+        return redirect(url_for("index"))
+    try:
+        printer_ip = _validate_ipv4(request.form.get("printer_ip", ""))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("index"))
+
+    _save_printer_ip(printer_ip)
+    ok, log = _configure_cups(printer_ip)
+    if ok:
+        flash(f"Printer saved at {printer_ip}. CUPS is configured.", "success")
+    else:
+        flash(f"Printer IP saved, but CUPS setup failed: {log[-800:] or 'unknown error'}", "error")
+    return redirect(url_for("index"))
 
 
 @app.post("/print")
 @require_auth
 def print_file():
+    if not current_printer_ip():
+        flash("Set up the printer first.", "error")
+        return redirect(url_for("index"))
     upload = request.files.get("file")
     if not upload or not upload.filename:
         flash("Choose a file first.", "error")
@@ -110,11 +192,12 @@ def print_file():
 @app.post("/scan")
 @require_auth
 def scan():
-    if not PRINTER_IP:
-        flash("Set PRINTER_IP in Docker Compose first.", "error")
+    printer_ip = current_printer_ip()
+    if not printer_ip:
+        flash("Set up the printer first.", "error")
         return redirect(url_for("index"))
     result, path = scan_document(
-        PRINTER_IP,
+        printer_ip,
         SCAN_DIR,
         dpi=int(request.form.get("dpi", "300")),
         mode=request.form.get("mode", "Color"),
@@ -160,7 +243,7 @@ def upload_driver():
     except Exception as exc:
         ok, log = False, str(exc)
     if ok:
-        flash("Epson Scan 2 and its network plugin are installed.", "success")
+        flash("Epson Scan 2 compatibility fallback is installed.", "success")
     else:
         flash(f"Driver install failed: {log[-1000:]}", "error")
     return redirect(url_for("index"))
@@ -169,13 +252,14 @@ def upload_driver():
 @app.get("/api/status")
 @require_auth
 def api_status():
+    printer_ip = current_printer_ip()
     return jsonify({
-        "printer_ip": PRINTER_IP,
+        "printer_ip": printer_ip,
         "printer_name": PRINTER_NAME,
-        "reachable": printer_reachable(PRINTER_IP) if PRINTER_IP else False,
-        "printer": cups_printer_status(PRINTER_NAME),
-        "scanner": scanner_status(PRINTER_IP) if PRINTER_IP else {"ok": False, "state": "missing_ip"},
-        "queue": list_jobs(PRINTER_NAME),
+        "reachable": printer_reachable(printer_ip) if printer_ip else False,
+        "printer": cups_printer_status(PRINTER_NAME) if printer_ip else {"ok": False, "state": "setup_required"},
+        "scanner": scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required"},
+        "queue": list_jobs(PRINTER_NAME) if printer_ip else [],
     })
 
 
