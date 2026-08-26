@@ -8,6 +8,7 @@ The first target is the **Epson Expression Home XP-2200 Series**.
 
 - Shares the XP-2200 through **CUPS / IPP** so Windows, macOS and other LAN clients can print without Epson's Windows software on every machine.
 - Uses the ESC/P-R Linux printing stack on the server side.
+- Talks to the physical printer over its documented **PORT9100** network printing interface by default.
 - Provides one simple web dashboard for file printing, queue status, scanning and scan downloads.
 - Tries fully open-source **AirScan/eSCL and WSD scanning first** through `sane-airscan`.
 - Offers an optional Epson Scan 2 compatibility fallback if the XP-2200 firmware does not expose an open network scanning protocol.
@@ -51,7 +52,7 @@ The CUPS queue is named `Home_Epson_XP2200` by default and is advertised over DN
 
 On a modern Windows machine, try **Settings → Bluetooth & devices → Printers & scanners → Add device**. If automatic discovery does not appear, add the CUPS IPP queue manually using the server's IP and port 631.
 
-The physical Epson remains on Wi-Fi. Client computers talk to the homelab instead of directly installing Epson's Windows driver stack.
+The physical Epson remains on Wi-Fi. Client computers talk IPP to the homelab. The homelab renders the job with ESC/P-R and sends it to the XP-2200 over TCP port 9100, so client machines do not need Epson's Windows driver stack.
 
 ## Docker Compose
 
@@ -68,7 +69,7 @@ Persistent directories:
 | --- | --- | --- |
 | `PRINTER_IP` | none | IPv4 address of the physical Epson printer |
 | `PRINTER_NAME` | `Home_Epson_XP2200` | CUPS queue name |
-| `PRINT_PROTOCOL` | `lpd` | Server-to-printer transport (`lpd` or `socket`) |
+| `PRINT_PROTOCOL` | `socket` | Server-to-printer transport (`socket`/PORT9100, or `lpd` fallback) |
 | `WEB_PORT` | `8080` | Dashboard port |
 | `WEB_USERNAME` | blank | Optional HTTP Basic username |
 | `WEB_PASSWORD` | blank | Optional HTTP Basic password |
@@ -91,7 +92,7 @@ Windows / macOS / phones
 | optional Epson fallback*    |
 +-----------------------------+
           |
-        Wi-Fi
+      TCP/9100 + Wi-Fi
           |
      Epson XP-2200
 
