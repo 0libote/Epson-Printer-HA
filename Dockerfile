@@ -36,7 +36,7 @@ ENV WEB_PORT=8080 \
     APP_DATA=/data \
     DRIVER_DIR=/drivers \
     PRINTER_NAME=Home_Epson_XP2200 \
-    PRINT_PROTOCOL=lpd
+    PRINT_PROTOCOL=socket
 
 EXPOSE 8080 631
 VOLUME ["/data", "/drivers"]
