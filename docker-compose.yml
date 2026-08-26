@@ -1,0 +1,19 @@
+services:
+  epson-hub:
+    build: .
+    image: ghcr.io/0libote/epson-printer-ha:latest
+    container_name: epson-printer-ha
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      PRINTER_IP: "192.168.1.240"
+      PRINTER_NAME: "Home_Epson_XP2200"
+      PRINT_PROTOCOL: "lpd"
+      WEB_PORT: "8080"
+      # Optional dashboard login. Leave both blank for trusted LAN-only use.
+      # WEB_USERNAME: "printer"
+      # WEB_PASSWORD: "change-me"
+      # SECRET_KEY: "change-me-too"
+    volumes:
+      - ./data:/data
+      - ./drivers:/drivers
