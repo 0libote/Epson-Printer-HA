@@ -89,20 +89,12 @@ def cancel_job(job_id: str) -> CommandResult:
     return run_command(["cancel", job_id], timeout=10)
 
 
-def epson_fallback_installed() -> bool:
-    return run_command(["sh", "-lc", "command -v epsonscan2 >/dev/null 2>&1"], timeout=5).ok
-
-
-def configure_epf_fallback(printer_ip: str) -> CommandResult:
-    if not epson_fallback_installed():
-        return CommandResult(False, stderr="Epson Scan 2 fallback is not installed", returncode=127)
-    return run_command(["epsonscan2", "--set-ip", printer_ip], timeout=15)
-
-
 def detect_sane_device() -> tuple[str | None, str | None]:
-    result = run_command(["scanimage", "-L"], timeout=20)
+    result = run_command(["scanimage", "-L"], timeout=12)
     if not result.ok:
         return None, None
+
+    candidates: list[tuple[int, str, str]] = []
     for line in result.stdout.splitlines():
         match = re.search(r"device [`']([^`']+)[`']", line)
         if not match:
@@ -111,15 +103,23 @@ def detect_sane_device() -> tuple[str | None, str | None]:
         lower = f"{device} {line}".lower()
         if "epson" not in lower:
             continue
+
         if device.startswith("airscan:") or "escl" in lower or "wsd" in lower:
-            return device, "AirScan/WSD"
-        if "epsonscan2" in lower:
-            return device, "Epson Scan 2 fallback"
-        return device, "SANE"
-    return None, None
+            candidates.append((0, device, "AirScan/WSD"))
+        elif device.startswith("net:") and "epson" in lower:
+            candidates.append((1, device, "Epson compatibility bridge"))
+        elif "epsonscan2" in lower:
+            candidates.append((1, device, "Epson compatibility bridge"))
+        else:
+            candidates.append((2, device, "SANE"))
+
+    if not candidates:
+        return None, None
+    _, device, backend = sorted(candidates, key=lambda item: item[0])[0]
+    return device, backend
 
 
-def scanner_status(printer_ip: str) -> dict:
+def scanner_status(_printer_ip: str) -> dict:
     device, backend = detect_sane_device()
     if device:
         return {
@@ -131,41 +131,24 @@ def scanner_status(printer_ip: str) -> dict:
             "open_source": backend == "AirScan/WSD",
         }
 
-    if epson_fallback_installed() and printer_ip:
-        configure_epf_fallback(printer_ip)
-        device, backend = detect_sane_device()
-        if device:
-            return {
-                "ok": True,
-                "state": "ready",
-                "detail": f"{backend}: {device}",
-                "backend": backend,
-                "device": device,
-                "open_source": backend == "AirScan/WSD",
-            }
-
     return {
         "ok": False,
         "state": "not_detected",
-        "detail": "No Wi-Fi scanner protocol detected. Open-source AirScan/WSD was tried first.",
+        "detail": "No Wi-Fi scanner detected. AirScan/WSD and the optional localhost compatibility bridge were checked.",
         "backend": None,
         "device": None,
         "open_source": False,
-        "fallback_installed": epson_fallback_installed(),
     }
 
 
-def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:
+def scan_document(_printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:
     dpi = dpi if dpi in {150, 200, 300, 600} else 300
     mode = mode if mode in {"Color", "Gray", "Lineart"} else "Color"
     fmt = fmt.lower() if fmt.lower() in {"pdf", "png", "jpg", "jpeg"} else "pdf"
 
     device, _backend = detect_sane_device()
-    if not device and epson_fallback_installed():
-        configure_epf_fallback(printer_ip)
-        device, _backend = detect_sane_device()
     if not device:
-        return CommandResult(False, stderr="No network scanner detected. AirScan/WSD was tried first; this XP-2200 firmware may require the optional Epson compatibility bridge."), None
+        return CommandResult(False, stderr="No network scanner detected. The hub checked AirScan/WSD and the optional localhost SANE compatibility bridge."), None
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
