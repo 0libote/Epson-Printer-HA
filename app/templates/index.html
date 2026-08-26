@@ -14,18 +14,42 @@
       <h1>Epson Printer Hub</h1>
       <p class="sub">One boringly simple front door for the XP-2200.</p>
     </div>
+    {% if printer_ip %}
     <div class="status-pill {{ 'ok' if reachable else 'bad' }}">{{ 'Printer online' if reachable else 'Printer unreachable' }}</div>
+    {% else %}
+    <div class="status-pill">Setup needed</div>
+    {% endif %}
   </header>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
   {% endwith %}
 
+  {% if not printer_ip %}
+  <section class="card setup-card">
+    <p class="eyebrow">FIRST RUN</p>
+    <h2>Where is your XP-2200?</h2>
+    <p class="muted">Give the printer a reserved address in your router, then enter that IPv4 address here. This is the only required printer setting.</p>
+    <form method="post" action="/setup" class="setup-form">
+      <label>Printer IPv4 address<input class="text-input" type="text" inputmode="decimal" name="printer_ip" placeholder="192.168.1.50" required></label>
+      <button type="submit">Connect printer</button>
+    </form>
+  </section>
+  {% else %}
   <section class="grid status-grid">
     <article class="card">
       <div class="card-head"><h2>Printer</h2><span class="dot {{ 'ok' if printer.ok else 'bad' }}"></span></div>
       <p class="big">{{ printer.state|replace('_',' ')|title }}</p>
-      <p class="muted">{{ printer_name }}{% if printer_ip %} · {{ printer_ip }}{% endif %}</p>
+      <p class="muted">{{ printer_name }} · {{ printer_ip }}</p>
+      {% if not printer_ip_locked %}
+      <details>
+        <summary>Change printer IP</summary>
+        <form method="post" action="/setup" class="setup-form compact">
+          <label>Printer IPv4 address<input class="text-input" type="text" inputmode="decimal" name="printer_ip" value="{{ printer_ip }}" required></label>
+          <button class="secondary" type="submit">Save address</button>
+        </form>
+      </details>
+      {% endif %}
     </article>
     <article class="card">
       <div class="card-head"><h2>Scanner</h2><span class="dot {{ 'ok' if scanner.ok else 'warn' }}"></span></div>
@@ -93,6 +117,7 @@
       {% else %}<p class="muted">No scans yet.</p>{% endif %}
     </article>
   </section>
+  {% endif %}
 
   <footer>Local only. Do not expose this dashboard or CUPS directly to the internet.</footer>
 </main>
