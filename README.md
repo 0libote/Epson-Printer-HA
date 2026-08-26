@@ -47,14 +47,16 @@ The main image is FOSS-oriented and contains no Epson Scan 2 proprietary network
 ```bash
 git clone https://github.com/0libote/Epson-Printer-HA.git
 cd Epson-Printer-HA
-docker compose up -d
+docker compose up -d --build
 ```
 
-Open `http://YOUR-SERVER-IP:8080`, enter the XP-2200 IPv4 address once, and the hub configures CUPS automatically. The setting is persisted in `./data/settings.json`.
+The default Compose builds locally from the checked-out source, so it does not require registry credentials. Open `http://YOUR-SERVER-IP:8080`, enter the XP-2200 IPv4 address once, and the hub configures CUPS automatically. The setting is persisted in `./data/settings.json`.
 
 ## ZimaOS
 
-A ZimaOS-ready file is included as `compose.zimaos.yml`. It uses:
+A ZimaOS-ready file is included as `compose.zimaos.yml`. It builds both images directly from this public GitHub repository, so a fresh install does **not** depend on GHCR package visibility or a GitHub login.
+
+It uses:
 
 - dashboard port `8098`
 - `/DATA/AppData/epson-printer-ha/data` for persistent settings/scans
