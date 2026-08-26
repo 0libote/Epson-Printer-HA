@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app.core import CommandResult, cancel_job, cups_printer_status, submit_print
+from app.core import CommandResult, cancel_job, cups_printer_status, detect_sane_device, submit_print
 
 
 def test_cancel_rejects_bad_job_id():
@@ -24,3 +24,14 @@ def test_status_parses_ready(mock_run):
     status = cups_printer_status("Home_Epson_XP2200")
     assert status["ok"] is True
     assert status["state"] == "ready"
+
+
+@patch("app.core.run_command")
+def test_airscan_device_is_preferred_and_identified(mock_run):
+    mock_run.return_value = CommandResult(
+        True,
+        "device `airscan:e0:Epson XP-2200' is a eSCL Epson XP-2200 ip=192.0.2.10",
+    )
+    device, backend = detect_sane_device()
+    assert device == "airscan:e0:Epson XP-2200"
+    assert backend == "AirScan/WSD"
