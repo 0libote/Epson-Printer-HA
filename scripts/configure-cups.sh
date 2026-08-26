@@ -5,8 +5,22 @@ PRINTER_IP="${PRINTER_IP:-}"
 PRINTER_NAME="${PRINTER_NAME:-Home_Epson_XP2200}"
 PRINT_PROTOCOL="${PRINT_PROTOCOL:-socket}"
 
+if [[ -z "$PRINTER_IP" && -f /data/settings.json ]]; then
+  PRINTER_IP="$(python3 - <<'PY'
+import ipaddress, json
+try:
+    with open('/data/settings.json', encoding='utf-8') as fh:
+        value = str(json.load(fh).get('printer_ip', '')).strip()
+    ip = ipaddress.ip_address(value)
+    print(ip if ip.version == 4 and not (ip.is_unspecified or ip.is_multicast or ip.is_loopback) else '')
+except Exception:
+    print('')
+PY
+)"
+fi
+
 if [[ -z "$PRINTER_IP" ]]; then
-  echo "[cups] PRINTER_IP is not set; skipping queue creation."
+  echo "[cups] Printer IP not configured yet; dashboard setup will create the queue."
   exit 0
 fi
 
