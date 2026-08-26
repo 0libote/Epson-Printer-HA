@@ -55,7 +55,11 @@
       <div class="card-head"><h2>Scanner</h2><span class="dot {{ 'ok' if scanner.ok else 'warn' }}"></span></div>
       <p class="big">{{ scanner.state|replace('_',' ')|title }}</p>
       <p class="muted">{{ scanner.detail }}</p>
-      {% if scanner.ok and scanner.open_source %}<p class="tag">Open-source network scan</p>{% endif %}
+      {% if scanner.ok and scanner.open_source %}
+      <p class="tag">Open-source network scan</p>
+      {% elif scanner.ok and scanner.backend == 'Epson compatibility bridge' %}
+      <p class="tag">Compatibility sidecar</p>
+      {% endif %}
     </article>
   </section>
 
@@ -84,15 +88,8 @@
         <button type="submit">Scan A4 document</button>
       </form>
       {% else %}
-      <p class="muted">The hub tried the free/open eSCL (AirScan) and WSD scanner protocols first, but did not find the XP-2200 scanner over Wi-Fi.</p>
-      <details>
-        <summary>Optional Epson compatibility fallback</summary>
-        <p class="muted">Epson Scan 2 is free to download but its network bridge is proprietary. Nothing from Epson is bundled into this project. If you want the fallback, download Epson's Linux bundle yourself and upload it once here.</p>
-        <form method="post" action="/drivers/upload" enctype="multipart/form-data">
-          <label class="drop"><span>Upload Epson Scan 2 Linux bundle</span><input type="file" name="bundle" required></label>
-          <button class="secondary" type="submit">Install compatibility fallback</button>
-        </form>
-      </details>
+      <p class="muted">No network scanner is visible yet. The hub always tries free/open AirScan and WSD first. If your XP-2200 needs Epson's protocol, the optional Compose sidecar can provide it without putting proprietary code in this app.</p>
+      <p class="muted">Drop Epson's Linux Scan 2 bundle into the Compose <code>epson-driver</code> folder and the sidecar will pick it up automatically.</p>
       {% endif %}
     </article>
   </section>
