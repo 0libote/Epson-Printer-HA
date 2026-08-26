@@ -4,6 +4,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import subprocess
 from functools import wraps
 from pathlib import Path
@@ -25,7 +26,9 @@ APP_DIR = Path(os.getenv("APP_DATA", "/data"))
 SCAN_DIR = APP_DIR / "scans"
 SETTINGS_FILE = APP_DIR / "settings.json"
 PRINTER_IP_ENV = os.getenv("PRINTER_IP", "").strip()
-PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip()
+DEFAULT_PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip() or "Home_Epson_XP2200"
+DEFAULT_DISPLAY_NAME = os.getenv("PRINTER_DISPLAY_NAME", "Home Epson XP-2200").strip() or "Home Epson XP-2200"
+DEFAULT_SHARE_PRINTER = os.getenv("SHARE_PRINTER", "true").strip().lower() not in {"0", "false", "no", "off"}
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "128"))
 
 app = Flask(__name__)
@@ -64,12 +67,32 @@ def _validate_ipv4(value: str) -> str:
     return str(parsed)
 
 
+def _validate_queue_name(value: str) -> str:
+    value = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,127}", value) or value in {".", ".."}:
+        raise ValueError("Queue name may only contain letters, numbers, dot, dash and underscore")
+    return value
+
+
+def _validate_display_name(value: str) -> str:
+    value = " ".join(value.strip().split())
+    if not value or len(value) > 80:
+        raise ValueError("Display name must be between 1 and 80 characters")
+    return value
+
+
 def _saved_settings() -> dict:
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _save_settings(data: dict) -> None:
+    temp = SETTINGS_FILE.with_suffix(".tmp")
+    temp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    temp.replace(SETTINGS_FILE)
 
 
 def current_printer_ip() -> str:
@@ -82,18 +105,46 @@ def current_printer_ip() -> str:
         return ""
 
 
+def current_printer_name() -> str:
+    value = str(_saved_settings().get("printer_name", DEFAULT_PRINTER_NAME)).strip()
+    try:
+        return _validate_queue_name(value)
+    except ValueError:
+        return DEFAULT_PRINTER_NAME
+
+
+def current_display_name() -> str:
+    value = str(_saved_settings().get("display_name", DEFAULT_DISPLAY_NAME)).strip()
+    try:
+        return _validate_display_name(value)
+    except ValueError:
+        return DEFAULT_DISPLAY_NAME
+
+
+def network_sharing_enabled() -> bool:
+    value = _saved_settings().get("share_printer", DEFAULT_SHARE_PRINTER)
+    return value if isinstance(value, bool) else str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _save_printer_ip(printer_ip: str) -> None:
     data = _saved_settings()
     data["printer_ip"] = printer_ip
-    temp = SETTINGS_FILE.with_suffix(".tmp")
-    temp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    temp.replace(SETTINGS_FILE)
+    _save_settings(data)
 
 
-def _configure_cups(printer_ip: str) -> tuple[bool, str]:
+def _configure_cups(
+    printer_ip: str,
+    printer_name: str | None = None,
+    display_name: str | None = None,
+    share_printer: bool | None = None,
+    old_printer_name: str = "",
+) -> tuple[bool, str]:
     env = os.environ.copy()
     env["PRINTER_IP"] = printer_ip
-    env["PRINTER_NAME"] = PRINTER_NAME
+    env["PRINTER_NAME"] = printer_name or current_printer_name()
+    env["PRINTER_DISPLAY_NAME"] = display_name or current_display_name()
+    env["SHARE_PRINTER"] = "true" if (network_sharing_enabled() if share_printer is None else share_printer) else "false"
+    env["OLD_PRINTER_NAME"] = old_printer_name
     try:
         proc = subprocess.run(
             ["/usr/local/bin/configure-cups.sh"],
@@ -114,21 +165,38 @@ def recent_scans(limit: int = 10):
     return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
 
 
+def _client_setup(printer_name: str) -> dict:
+    host = request.host.split(":", 1)[0]
+    queue_path = f"printers/{printer_name}"
+    return {
+        "host": host,
+        "ipp_uri": f"ipp://{host}:631/{queue_path}",
+        "http_uri": f"http://{host}:631/{queue_path}",
+        "queue_path": queue_path,
+    }
+
+
 @app.get("/")
 @require_auth
 def index():
     printer_ip = current_printer_ip()
-    p_status = cups_printer_status(PRINTER_NAME) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
+    printer_name = current_printer_name()
+    display_name = current_display_name()
+    share_printer = network_sharing_enabled()
+    p_status = cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
     s_status = scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
     return render_template(
         "index.html",
         printer_ip=printer_ip,
         printer_ip_locked=bool(PRINTER_IP_ENV),
-        printer_name=PRINTER_NAME,
+        printer_name=printer_name,
+        display_name=display_name,
+        share_printer=share_printer,
+        client_setup=_client_setup(printer_name),
         reachable=printer_reachable(printer_ip) if printer_ip else False,
         printer=p_status,
         scanner=s_status,
-        jobs=list_jobs(PRINTER_NAME) if printer_ip else [],
+        jobs=list_jobs(printer_name) if printer_ip else [],
         scans=recent_scans(),
     )
 
@@ -154,6 +222,45 @@ def setup_printer():
     return redirect(url_for("index"))
 
 
+@app.post("/client-settings")
+@require_auth
+def client_settings():
+    printer_ip = current_printer_ip()
+    if not printer_ip:
+        flash("Set up the physical printer first.", "error")
+        return redirect(url_for("index"))
+
+    old_name = current_printer_name()
+    try:
+        printer_name = _validate_queue_name(request.form.get("printer_name", ""))
+        display_name = _validate_display_name(request.form.get("display_name", ""))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("index"))
+
+    share_printer = request.form.get("share_printer") == "on"
+    ok, log = _configure_cups(
+        printer_ip,
+        printer_name=printer_name,
+        display_name=display_name,
+        share_printer=share_printer,
+        old_printer_name=old_name,
+    )
+    if not ok:
+        flash(f"Network printing settings were not applied: {log[-800:] or 'unknown error'}", "error")
+        return redirect(url_for("index"))
+
+    data = _saved_settings()
+    data.update({
+        "printer_name": printer_name,
+        "display_name": display_name,
+        "share_printer": share_printer,
+    })
+    _save_settings(data)
+    flash("Network printing settings applied.", "success")
+    return redirect(url_for("index"))
+
+
 @app.post("/print")
 @require_auth
 def print_file():
@@ -175,7 +282,7 @@ def print_file():
     upload.save(target)
     try:
         result = submit_print(
-            PRINTER_NAME,
+            current_printer_name(),
             str(target),
             copies=int(request.form.get("copies", "1")),
             grayscale=request.form.get("grayscale") == "on",
@@ -226,13 +333,16 @@ def download_scan(filename: str):
 @require_auth
 def api_status():
     printer_ip = current_printer_ip()
+    printer_name = current_printer_name()
     return jsonify({
         "printer_ip": printer_ip,
-        "printer_name": PRINTER_NAME,
+        "printer_name": printer_name,
+        "display_name": current_display_name(),
+        "network_sharing": network_sharing_enabled(),
         "reachable": printer_reachable(printer_ip) if printer_ip else False,
-        "printer": cups_printer_status(PRINTER_NAME) if printer_ip else {"ok": False, "state": "setup_required"},
+        "printer": cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required"},
         "scanner": scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required"},
-        "queue": list_jobs(PRINTER_NAME) if printer_ip else [],
+        "queue": list_jobs(printer_name) if printer_ip else [],
     })
 
 
