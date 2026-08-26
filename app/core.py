@@ -76,7 +76,14 @@ def list_jobs(printer_name: str) -> list[dict]:
 
 
 def submit_print(printer_name: str, path: str, copies: int = 1, grayscale: bool = False) -> CommandResult:
-    args = ["lp", "-d", printer_name, "-n", str(max(1, min(copies, 99)))]
+    title = Path(path).name[:255] or "WebUI print"
+    args = [
+        "lp",
+        "-U", "webui",
+        "-d", printer_name,
+        "-t", title,
+        "-n", str(max(1, min(copies, 99))),
+    ]
     if grayscale:
         args += ["-o", "ColorModel=Gray"]
     args.append(path)
