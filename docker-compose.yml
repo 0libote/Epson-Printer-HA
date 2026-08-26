@@ -6,10 +6,11 @@ services:
     network_mode: host
     restart: unless-stopped
     environment:
-      PRINTER_IP: "192.168.1.240"
-      PRINTER_NAME: "Home_Epson_XP2200"
-      PRINT_PROTOCOL: "socket"
-      WEB_PORT: "8080"
+      # Leave PRINTER_IP blank to configure it in the dashboard on first run.
+      PRINTER_IP: "${PRINTER_IP:-}"
+      PRINTER_NAME: "${PRINTER_NAME:-Home_Epson_XP2200}"
+      PRINT_PROTOCOL: "${PRINT_PROTOCOL:-socket}"
+      WEB_PORT: "${WEB_PORT:-8080}"
       # Optional dashboard login. Leave both blank for trusted LAN-only use.
       # WEB_USERNAME: "printer"
       # WEB_PASSWORD: "change-me"
