@@ -1,0 +1,45 @@
+name: epson-printer-ha
+
+services:
+  epson-hub:
+    image: ghcr.io/0libote/epson-printer-ha:latest
+    container_name: epson-printer-ha
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      PRINTER_IP: ""
+      PRINTER_NAME: "Home_Epson_XP2200"
+      PRINT_PROTOCOL: "socket"
+      WEB_PORT: "8098"
+      WEB_USERNAME: ""
+      WEB_PASSWORD: ""
+      SECRET_KEY: ""
+    volumes:
+      - /DATA/AppData/epson-printer-ha/data:/data
+
+  epson-scan-bridge:
+    image: ghcr.io/0libote/epson-printer-ha-scan-bridge:latest
+    container_name: epson-printer-ha-scan-bridge
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      PRINTER_IP: ""
+    volumes:
+      - /DATA/AppData/epson-printer-ha/data:/data:ro
+      - /DATA/AppData/epson-printer-ha/epson-driver:/drivers:ro
+
+x-casaos:
+  id: epson-printer-ha
+  main: epson-hub
+  index: /
+  port_map: "8098"
+  scheme: http
+  title:
+    en_US: Epson Printer Hub
+  tagline:
+    en_US: Local print and scan hub for Epson XP-2200
+  description:
+    en_US: Shares an Epson XP-2200 over IPP and provides a local print and scan dashboard. Open-source scanning is preferred, with an isolated optional Epson compatibility sidecar.
+  category: Utilities
+  architectures:
+    - amd64
