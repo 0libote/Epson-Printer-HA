@@ -7,10 +7,12 @@ A self-hosted Docker appliance that turns an awkward Epson network printer/scann
 - Shares the XP-2200 through **CUPS / IPP** so client PCs do not need Epson's Windows connectivity stack.
 - Renders jobs server-side with ESC/P-R and sends them to the printer over **TCP/9100**.
 - Provides one web dashboard for first-run setup, file printing, queue status, scanning and scan downloads.
+- Lets the user configure the shared printer name and LAN sharing from the WebUI.
+- Shows generated Windows/macOS IPP connection details directly in the dashboard.
 - Tries fully open-source **AirScan/eSCL and WSD** scanning first with `sane-airscan`.
 - Keeps Epson's proprietary network scanning component out of the main app entirely.
 - Includes an optional isolated **scan compatibility sidecar** for XP-2200 firmware that only works with Epson Scan 2's network protocol.
-- Advertises the CUPS queue over mDNS/DNS-SD using Avahi.
+- Advertises shared CUPS queues over mDNS/DNS-SD using Avahi.
 - Uses no database, cloud account, subscription or licence purchase.
 
 ## Quick start
@@ -36,6 +38,18 @@ GitHub Container Registry creates new packages as private by default, even when 
 
 The ZimaOS stack uses dashboard port `8098`, host networking, `/DATA/AppData/epson-printer-ha/data` for settings/scans, and `/DATA/AppData/epson-printer-ha/epson-driver` for the optional Epson Scan 2 bundle.
 
+## Network printing setup
+
+The WebUI contains a **Network Printing** section after the physical printer is configured. It lets the user:
+
+- set a friendly printer display name;
+- set the CUPS queue name;
+- enable or disable LAN sharing;
+- view the generated IPP URI and HTTP IPP URL;
+- follow Windows 11 and macOS setup instructions using the actual server address.
+
+When LAN sharing is enabled, the queue is shared through CUPS and advertised through Bonjour/DNS-SD. Clients use normal IPP and do not need Epson's Windows/macOS connectivity suite.
+
 ## Scanning
 
 The scan path is intentionally layered:
@@ -55,13 +69,9 @@ If AirScan/WSD does not work, download Epson Scan 2 for Linux x64 directly from 
 
 The sidecar installer only accepts packages whose Debian package names are exactly `epsonscan2` and `epsonscan2-non-free-plugin`.
 
-## Adding the printer on clients
-
-The default CUPS queue is `Home_Epson_XP2200` and is advertised over DNS-SD/mDNS. On Windows 11, try **Settings → Bluetooth & devices → Printers & scanners → Add device**. If discovery does not appear, add the CUPS IPP printer manually using the homelab server's address and TCP port 631.
-
 ## Home Assistant
 
-`GET /api/status` returns JSON containing printer reachability, CUPS state, scanner backend/state and the current queue.
+`GET /api/status` returns JSON containing printer reachability, CUPS state, scanner backend/state, LAN sharing state and the current queue.
 
 ## Security
 
