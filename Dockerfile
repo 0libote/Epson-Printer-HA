@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     printer-driver-escpr \
     python3 \
     python3-pip \
+    sane-airscan \
     sane-utils \
     supervisor \
     && rm -rf /var/lib/apt/lists/*
