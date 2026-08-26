@@ -21,6 +21,7 @@ from .core import (
     scanner_status,
     submit_print,
 )
+from .history import list_print_history
 
 APP_DIR = Path(os.getenv("APP_DATA", "/data"))
 SCAN_DIR = APP_DIR / "scans"
@@ -198,6 +199,7 @@ def index():
         printer=p_status,
         scanner=s_status,
         jobs=list_jobs(printer_name) if printer_ip else [],
+        print_history=list_print_history(100),
         scans=recent_scans(),
     )
 
@@ -344,7 +346,18 @@ def api_status():
         "printer": cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required"},
         "scanner": scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required"},
         "queue": list_jobs(printer_name) if printer_ip else [],
+        "recent_prints": list_print_history(10),
     })
+
+
+@app.get("/api/history")
+@require_auth
+def api_history():
+    try:
+        limit = int(request.args.get("limit", "100"))
+    except ValueError:
+        limit = 100
+    return jsonify({"history": list_print_history(limit)})
 
 
 @app.get("/api/health")
