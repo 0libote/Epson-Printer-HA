@@ -172,6 +172,49 @@
     {% endif %}
   </section>
 
+  <section class="card history-card">
+    <div class="history-head">
+      <div>
+        <p class="eyebrow">AUDIT TRAIL</p>
+        <h2>Print history</h2>
+        <p class="muted">Jobs from this WebUI and every Windows, Mac, Linux or other IPP client are collected here. Document contents are not retained.</p>
+      </div>
+      <span class="history-count">{{ print_history|length }} recent</span>
+    </div>
+    {% if print_history %}
+    <div class="history-table-wrap">
+      <table class="history-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Document</th>
+            <th>Source</th>
+            <th>User / device</th>
+            <th>Status</th>
+            <th>Pages</th>
+            <th>Size</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for job in print_history %}
+          <tr>
+            <td data-label="When">{{ job.created_display }}</td>
+            <td data-label="Document"><strong>{{ job.document }}</strong><small>#{{ job.job_id }}</small></td>
+            <td data-label="Source"><span class="source-pill {{ 'web' if job.source == 'WebUI' else 'device' }}">{{ job.source }}</span></td>
+            <td data-label="User / device">{{ job.user_name or 'Unknown user' }}{% if job.origin_host %}<small>{{ job.origin_host }}</small>{% endif %}</td>
+            <td data-label="Status"><span class="job-state state-{{ job.state }}">{{ job.state|replace('_',' ')|title }}</span></td>
+            <td data-label="Pages">{{ job.pages if job.pages else '—' }}</td>
+            <td data-label="Size">{{ job.size_display }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="muted">No print jobs recorded yet. New jobs will appear here automatically.</p>
+    {% endif %}
+  </section>
+
   <section class="grid lower-grid">
     <article class="card">
       <h2>Print queue</h2>
