@@ -9,7 +9,7 @@ services:
     environment:
       PRINTER_IP: ""
       PRINTER_NAME: "Home_Epson_XP2200"
-      PRINT_PROTOCOL: "socket"
+      PRINT_PROTOCOL: "auto"
       WEB_PORT: "8098"
       CLIENT_HOST: ""
       WEB_USERNAME: ""

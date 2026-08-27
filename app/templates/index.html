@@ -3,246 +3,248 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Epson Printer Hub</title>
+  <meta name="theme-color" content="#f4f6f8">
+  <title>Home Print Hub</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head>
 <body>
-<main class="wrap">
-  <header>
-    <div>
-      <p class="eyebrow">LOCAL PRINT + SCAN</p>
-      <h1>Epson Printer Hub</h1>
-      <p class="sub">One boringly simple front door for the XP-2200.</p>
-    </div>
+  <nav class="topbar" aria-label="Home Print Hub">
+    <a class="brand" href="/" aria-label="Home Print Hub home">
+      <span class="brand-mark" aria-hidden="true">P</span>
+      <span><strong>Home Print Hub</strong><small>Epson XP-2200</small></span>
+    </a>
     {% if printer_ip %}
-    <div class="status-pill {{ 'ok' if reachable else 'bad' }}">{{ 'Printer online' if reachable else 'Printer unreachable' }}</div>
+      <span class="health {{ 'online' if reachable else 'offline' }}">
+        <span class="health-dot"></span>{{ 'Online' if reachable else 'Needs attention' }}
+      </span>
     {% else %}
-    <div class="status-pill">Setup needed</div>
+      <span class="health setup"><span class="health-dot"></span>Setup needed</span>
     {% endif %}
-  </header>
+  </nav>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
-  {% endwith %}
+  <main class="shell">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="notice {{ category }}" role="status">
+          <span class="notice-icon" aria-hidden="true">{{ '✓' if category == 'success' else '!' }}</span>
+          <span>{{ message }}</span>
+        </div>
+      {% endfor %}
+    {% endwith %}
 
-  {% if not printer_ip %}
-  <section class="card setup-card">
-    <p class="eyebrow">FIRST RUN</p>
-    <h2>Where is your XP-2200?</h2>
-    <p class="muted">Give the printer a reserved address in your router, then enter that IPv4 address here. This is the only required printer setting.</p>
-    <form method="post" action="/setup" class="setup-form">
-      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-      <label>Printer IPv4 address<input class="text-input" type="text" inputmode="decimal" name="printer_ip" placeholder="192.168.1.50" required></label>
-      <button type="submit">Connect printer</button>
-    </form>
-  </section>
-  {% else %}
-  <section class="grid status-grid">
-    <article class="card">
-      <div class="card-head"><h2>Printer</h2><span class="dot {{ 'ok' if printer.ok else 'bad' }}"></span></div>
-      <p class="big">{{ printer.state|replace('_',' ')|title }}</p>
-      <p class="muted">{{ display_name }} · {{ printer_ip }}</p>
-      {% if not printer_ip_locked %}
-      <details>
-        <summary>Change printer IP</summary>
-        <form method="post" action="/setup" class="setup-form compact">
+    {% if not printer_ip %}
+      <section class="welcome panel">
+        <div class="welcome-copy">
+          <span class="step">One-time setup</span>
+          <h1>Connect your printer</h1>
+          <p>Enter the IP address shown in your router or on the printer's network status sheet. After this, everyone at home can print from this page.</p>
+        </div>
+        <form method="post" action="/setup" class="setup-form" data-busy-form>
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <label>Printer IPv4 address<input class="text-input" type="text" inputmode="decimal" name="printer_ip" value="{{ printer_ip }}" required></label>
-          <button class="secondary" type="submit">Save address</button>
+          <label for="printer-ip">Printer IP address</label>
+          <div class="field-action">
+            <input id="printer-ip" class="input" type="text" inputmode="decimal" autocomplete="off" name="printer_ip" placeholder="192.168.1.50" required>
+            <button type="submit" data-busy-text="Connecting…">Connect</button>
+          </div>
+          <small>Tip: reserve this address in your router so it does not change.</small>
         </form>
-      </details>
-      {% endif %}
-    </article>
-    <article class="card">
-      <div class="card-head"><h2>Scanner</h2><span class="dot {{ 'ok' if scanner.ok else 'warn' }}"></span></div>
-      <p class="big">{{ scanner.state|replace('_',' ')|title }}</p>
-      <p class="muted">{{ scanner.detail }}</p>
-      {% if scanner.ok and scanner.open_source %}
-      <p class="tag">Open-source network scan</p>
-      {% elif scanner.ok and scanner.backend == 'Epson compatibility bridge' %}
-      <p class="tag">Compatibility sidecar</p>
-      {% endif %}
-    </article>
-  </section>
-
-  <section class="grid action-grid">
-    <article class="card">
-      <h2>Print</h2>
-      <form method="post" action="/print" enctype="multipart/form-data">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <label class="drop"><span>Choose PDF, PNG, JPG or TXT</span><input type="file" name="file" required></label>
-        <div class="row">
-          <label>Copies<input type="number" name="copies" value="1" min="1" max="99"></label>
-          <label class="check"><input type="checkbox" name="grayscale"> Grayscale</label>
+      </section>
+    {% else %}
+      <header class="intro">
+        <div>
+          <p class="kicker">Ready when you are</p>
+          <h1>What would you like to do?</h1>
+          <p>Print a file or scan a document without installing anything on this device.</p>
         </div>
-        <button type="submit">Send to printer</button>
-      </form>
-    </article>
-
-    <article class="card">
-      <h2>Scan</h2>
-      {% if scanner.ok %}
-      <form method="post" action="/scan">
-        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-        <div class="row three">
-          <label>Mode<select name="mode"><option>Color</option><option>Gray</option><option>Lineart</option></select></label>
-          <label>DPI<select name="dpi"><option>150</option><option>200</option><option selected>300</option><option>600</option></select></label>
-          <label>Format<select name="format"><option selected>pdf</option><option>png</option><option>jpg</option></select></label>
+        <div class="service-summary" aria-label="Service status">
+          <span><i class="service-dot {{ 'good' if printer.ok else 'bad' }}"></i>Printer {{ printer.state|replace('_', ' ') }}</span>
+          <span><i class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i>Scanner {{ 'ready' if scanner.ok else 'unavailable' }}</span>
         </div>
-        <button type="submit">Scan A4 document</button>
-      </form>
-      {% else %}
-      <p class="muted">No network scanner is visible yet. The hub always tries free/open AirScan and WSD first. If your XP-2200 needs Epson's protocol, the optional Compose sidecar can provide it without putting proprietary code in this app.</p>
-      <p class="muted">Drop Epson's Linux Scan 2 bundle into the Compose <code>epson-driver</code> folder and the sidecar will pick it up automatically.</p>
-      {% endif %}
-    </article>
-  </section>
+      </header>
 
-  <section class="card client-card">
-    <div class="client-title">
-      <div>
-        <p class="eyebrow">NETWORK PRINTING</p>
-        <h2>Use this printer from Windows, Mac and other devices</h2>
-        <p class="muted">The homelab publishes a normal IPP printer. Client devices talk to this server; only the server needs the Epson driver.</p>
-      </div>
-      <span class="status-pill {{ 'ok' if share_printer else 'bad' }}">{{ 'Shared on LAN' if share_printer else 'Sharing off' }}</span>
-    </div>
+      <section class="action-grid" aria-label="Print and scan">
+        <article class="panel task-card print-card">
+          <div class="task-heading">
+            <span class="task-icon print" aria-hidden="true">↥</span>
+            <div><p class="kicker">Print</p><h2>Put a file on paper</h2></div>
+          </div>
+          <form method="post" action="/print" enctype="multipart/form-data" data-busy-form>
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <label class="file-picker" for="print-file">
+              <input id="print-file" type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.txt" required data-file-input>
+              <span class="file-glyph" aria-hidden="true">＋</span>
+              <span><strong data-file-label>Choose a file</strong><small>PDF, image or text · up to {{ max_upload_mb }} MB</small></span>
+            </label>
+            <div class="options-row">
+              <label for="copies">Copies
+                <input id="copies" class="input compact" type="number" name="copies" value="1" min="1" max="99">
+              </label>
+              <label class="check-option"><input type="checkbox" name="grayscale"><span>Black &amp; white</span></label>
+            </div>
+            <button class="primary-action" type="submit" data-busy-text="Sending to printer…">Print file</button>
+          </form>
+        </article>
 
-    <div class="client-grid">
-      <div>
-        <h3>Sharing settings</h3>
-        <form method="post" action="/client-settings" class="client-settings-form">
-          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
-          <label>Friendly name
-            <input class="text-input" type="text" name="display_name" value="{{ display_name }}" maxlength="80" required>
-          </label>
-          <label>CUPS queue name
-            <input class="text-input" type="text" name="printer_name" value="{{ printer_name }}" pattern="[A-Za-z0-9._-]+" maxlength="127" required>
-            <small>No spaces. This becomes part of the IPP address.</small>
-          </label>
-          <label class="toggle-row">
-            <input type="checkbox" name="share_printer" {% if share_printer %}checked{% endif %}>
-            <span><strong>Share on the LAN</strong><small>Enables remote IPP printing and Bonjour/DNS-SD discovery for Apple devices.</small></span>
-          </label>
-          <button type="submit">Apply network printing settings</button>
-        </form>
-      </div>
+        <article class="panel task-card scan-card">
+          <div class="task-heading">
+            <span class="task-icon scan" aria-hidden="true">⌑</span>
+            <div><p class="kicker">Scan</p><h2>Make a digital copy</h2></div>
+          </div>
+          {% if scanner.ok %}
+            <form method="post" action="/scan" data-busy-form>
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <div class="scan-options">
+                <label for="mode">Colour
+                  <select id="mode" class="input" name="mode"><option>Color</option><option>Gray</option><option>Lineart</option></select>
+                </label>
+                <label for="dpi">Quality
+                  <select id="dpi" class="input" name="dpi"><option value="150">Quick</option><option value="200">Standard</option><option value="300" selected>High</option><option value="600">Very high</option></select>
+                </label>
+                <label for="format">Save as
+                  <select id="format" class="input" name="format"><option value="pdf" selected>PDF</option><option value="png">PNG</option><option value="jpg">JPG</option></select>
+                </label>
+              </div>
+              <p class="help-text">Place the document face-down on the glass, then press scan.</p>
+              <button class="primary-action teal" type="submit" data-busy-text="Scanning… this can take a minute">Scan document</button>
+            </form>
+          {% else %}
+            <div class="empty-action">
+              <strong>Scanning needs the Epson driver</strong>
+              <p>The printer's open scanner connection is not compatible. Add Epson Scan 2 for Linux to enable this button.</p>
+              <a class="driver-link" href="https://download-center.epson.com/softwares/?device_id=XP-2200+Series&amp;language=en&amp;os=DEBX64&amp;region=GB" target="_blank" rel="noopener">Open Epson's Linux download page ↗</a>
+              <details>
+                <summary>How to enable scanning</summary>
+                <ol>
+                  <li>Download the Linux Epson Scan 2 bundle for the XP-2200 from Epson.</li>
+                  <li>Put the downloaded archive in <code>/DATA/AppData/epson-printer-ha/epson-driver</code>.</li>
+                  <li>The scanner service installs it automatically; refresh this page after a minute.</li>
+                </ol>
+              </details>
+            </div>
+          {% endif %}
+        </article>
+      </section>
 
-      <div>
-        <h3>Connection details</h3>
-        {% if share_printer %}
-        <p class="muted">Automatic discovery is the easiest route. If a device does not find it, use the manual details below.</p>
-        <div class="connection-item">
-          <span>IPP address</span>
-          <code class="codebox">{{ client_setup.ipp_uri }}</code>
+      <section class="status-strip panel" aria-label="Current devices">
+        <div class="device-status">
+          <i class="service-dot {{ 'good' if printer.ok else 'bad' }}"></i>
+          <span><small>Printer</small><strong>{{ printer.state|replace('_', ' ')|title }}</strong></span>
+          <span class="device-detail">{{ display_name }} · {{ printer_ip }}</span>
         </div>
-        <div class="connection-item">
-          <span>Windows-compatible URL</span>
-          <code class="codebox">{{ client_setup.http_uri }}</code>
+        <div class="device-status">
+          <i class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i>
+          <span><small>Scanner</small><strong>{{ 'Ready' if scanner.ok else 'Not set up' }}</strong></span>
+          <span class="device-detail">{{ scanner.backend if scanner.ok else 'Epson Scan 2 required' }}</span>
         </div>
-        <div class="connection-item">
-          <span>Server / queue</span>
-          <code class="codebox">{{ client_setup.host }} · /{{ client_setup.queue_path }}</code>
+        <div class="device-status">
+          <i class="service-dot {{ 'warn' if jobs else 'good' }}"></i>
+          <span><small>Print queue</small><strong>{{ jobs|length }} {{ 'job' if jobs|length == 1 else 'jobs' }}</strong></span>
+          <span class="device-detail">{{ 'Working through the queue' if jobs else 'Nothing waiting' }}</span>
         </div>
-        {% else %}
-        <p class="muted">Turn on LAN sharing to let Windows, macOS and phones connect directly to this queue.</p>
+      </section>
+
+      {% if jobs or scans %}
+      <section class="activity-grid">
+        {% if jobs %}
+        <article class="panel compact-panel">
+          <div class="section-heading"><div><p class="kicker">In progress</p><h2>Print queue</h2></div></div>
+          <div class="item-list">
+            {% for job in jobs %}
+            <div class="item-row">
+              <span><strong>{{ job.id }}</strong><small>{{ job.owner }} · {{ job.size }}</small></span>
+              <form method="post" action="/jobs/{{ job.id }}/cancel">
+                <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+                <button class="button-quiet danger" type="submit">Cancel</button>
+              </form>
+            </div>
+            {% endfor %}
+          </div>
+        </article>
         {% endif %}
-      </div>
-    </div>
+        {% if scans %}
+        <article class="panel compact-panel">
+          <div class="section-heading"><div><p class="kicker">Downloads</p><h2>Recent scans</h2></div></div>
+          <div class="item-list">
+            {% for scan in scans %}
+              <a class="item-row" href="/scans/{{ scan.name }}"><span><strong>{{ scan.name }}</strong><small>Saved scan</small></span><span class="download">Download</span></a>
+            {% endfor %}
+          </div>
+        </article>
+        {% endif %}
+      </section>
+      {% endif %}
 
-    {% if share_printer %}
-    <div class="platform-grid">
-      <div class="platform-box">
-        <h3>Windows 11</h3>
-        <ol>
-          <li>Settings → Bluetooth &amp; devices → Printers &amp; scanners.</li>
-          <li>Try <strong>Add device</strong> first.</li>
-          <li>If it is not found, choose the manual add option and enter <code>{{ client_setup.http_uri }}</code>.</li>
-          <li>Use the Microsoft IPP class driver when Windows offers it.</li>
-        </ol>
-      </div>
-      <div class="platform-box">
-        <h3>macOS</h3>
-        <ol>
-          <li>System Settings → Printers &amp; Scanners → Add Printer.</li>
-          <li>Look for <strong>{{ display_name }}</strong> in the default/Bonjour list.</li>
-          <li>If needed, use the IP tab with protocol <strong>IPP</strong>, address <code>{{ client_setup.host }}</code> and queue <code>/{{ client_setup.queue_path }}</code>.</li>
-        </ol>
-      </div>
-      <div class="platform-box">
-        <h3>iPhone / iPad / Linux</h3>
-        <p class="muted">Apple devices can use Bonjour/IPP discovery when the queue is advertised. Linux desktops can add the IPP URI directly. If a device cannot discover the printer, use the IPP address above.</p>
-      </div>
-    </div>
-    {% endif %}
-  </section>
-
-  <section class="card history-card">
-    <div class="history-head">
-      <div>
-        <p class="eyebrow">AUDIT TRAIL</p>
-        <h2>Print history</h2>
-        <p class="muted">Jobs from this WebUI and every Windows, Mac, Linux or other IPP client are collected here. Document contents are not retained.</p>
-      </div>
-      <span class="history-count">{{ print_history|length }} recent</span>
-    </div>
-    {% if print_history %}
-    <div class="history-table-wrap">
-      <table class="history-table">
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Document</th>
-            <th>Source</th>
-            <th>User / device</th>
-            <th>Status</th>
-            <th>Pages</th>
-            <th>Size</th>
-          </tr>
-        </thead>
-        <tbody>
-        {% for job in print_history %}
-          <tr>
-            <td data-label="When">{{ job.created_display }}</td>
-            <td data-label="Document"><strong>{{ job.document }}</strong><small>#{{ job.job_id }}</small></td>
-            <td data-label="Source"><span class="source-pill {{ 'web' if job.source == 'WebUI' else 'device' }}">{{ job.source }}</span></td>
-            <td data-label="User / device">{{ job.user_name or 'Unknown user' }}{% if job.origin_host %}<small>{{ job.origin_host }}</small>{% endif %}</td>
-            <td data-label="Status"><span class="job-state state-{{ job.state }}">{{ job.state|replace('_',' ')|title }}</span></td>
-            <td data-label="Pages">{{ job.pages if job.pages else '—' }}</td>
-            <td data-label="Size">{{ job.size_display }}</td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-      <p class="muted">No print jobs recorded yet. New jobs will appear here automatically.</p>
-    {% endif %}
-  </section>
-
-  <section class="grid lower-grid">
-    <article class="card">
-      <h2>Print queue</h2>
-      {% if jobs %}
-        <div class="list">
-        {% for job in jobs %}
-          <div class="list-row"><div><strong>{{ job.id }}</strong><small>{{ job.owner }} · {{ job.size }}</small></div><form method="post" action="/jobs/{{ job.id }}/cancel"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}"><button class="tiny" type="submit">Cancel</button></form></div>
-        {% endfor %}
+      <details class="panel fold">
+        <summary><span><strong>Connect phones and computers</strong><small>Share this printer around the house</small></span><span class="summary-state {{ 'on' if share_printer else '' }}">{{ 'Sharing on' if share_printer else 'Sharing off' }}</span></summary>
+        <div class="fold-content network-grid">
+          <form method="post" action="/client-settings" class="settings-form" data-busy-form>
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+            <label for="display-name">Printer name<input id="display-name" class="input" type="text" name="display_name" value="{{ display_name }}" maxlength="80" required></label>
+            <label for="queue-name">Technical queue name<input id="queue-name" class="input" type="text" name="printer_name" value="{{ printer_name }}" pattern="[A-Za-z0-9._-]+" maxlength="127" required></label>
+            <label class="toggle"><input type="checkbox" name="share_printer" {% if share_printer %}checked{% endif %}><span><strong>Share on the home network</strong><small>Allows AirPrint, Windows and Linux devices to find it.</small></span></label>
+            <button type="submit" data-busy-text="Saving…">Save sharing settings</button>
+          </form>
+          <div class="connection-help">
+            {% if share_printer %}
+              <h3>Automatic setup</h3>
+              <p>On most devices, add a printer and choose <strong>{{ display_name }}</strong> from the list.</p>
+              <h3>Manual address</h3>
+              <div class="copy-row"><code>{{ client_setup.ipp_uri }}</code><button class="button-quiet" type="button" data-copy="{{ client_setup.ipp_uri }}">Copy</button></div>
+              <details class="platform-help"><summary>Windows and Mac instructions</summary>
+                <div class="platform-columns">
+                  <div><h4>Windows</h4><p>Settings → Bluetooth &amp; devices → Printers &amp; scanners → Add device. If needed, add manually with <code>{{ client_setup.http_uri }}</code>.</p></div>
+                  <div><h4>Mac</h4><p>System Settings → Printers &amp; Scanners → Add Printer, then choose <strong>{{ display_name }}</strong>.</p></div>
+                </div>
+              </details>
+            {% else %}
+              <h3>Sharing is off</h3><p>Turn it on to let other devices find and use this printer.</p>
+            {% endif %}
+          </div>
         </div>
-      {% else %}<p class="muted">Nothing queued.</p>{% endif %}
-    </article>
-    <article class="card">
-      <h2>Recent scans</h2>
-      {% if scans %}
-        <div class="list">
-        {% for scan in scans %}<a class="list-row" href="/scans/{{ scan.name }}"><span>{{ scan.name }}</span><span>Download</span></a>{% endfor %}
-        </div>
-      {% else %}<p class="muted">No scans yet.</p>{% endif %}
-    </article>
-  </section>
-  {% endif %}
+      </details>
 
-  <footer>Local only. Do not expose this dashboard or CUPS directly to the internet.</footer>
-</main>
+      <details class="panel fold">
+        <summary><span><strong>Print history</strong><small>{{ print_history|length }} recent {{ 'job' if print_history|length == 1 else 'jobs' }} · file contents are not stored</small></span></summary>
+        <div class="fold-content history-content">
+          {% if print_history %}
+          <div class="history-wrap">
+            <table>
+              <thead><tr><th>Document</th><th>When</th><th>From</th><th>Status</th><th>Size</th></tr></thead>
+              <tbody>
+              {% for job in print_history %}
+                <tr>
+                  <td data-label="Document"><strong>{{ job.document }}</strong><small>#{{ job.job_id }}</small></td>
+                  <td data-label="When">{{ job.created_display }}</td>
+                  <td data-label="From">{{ job.origin_host or job.user_name or job.source }}</td>
+                  <td data-label="Status"><span class="job-state state-{{ job.state }}">{{ job.state|replace('_', ' ')|title }}</span></td>
+                  <td data-label="Size">{{ job.size_display }}</td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}<p class="empty-copy">No print history yet.</p>{% endif %}
+        </div>
+      </details>
+
+      <details class="panel fold">
+        <summary><span><strong>Printer settings</strong><small>Change the printer address</small></span></summary>
+        <div class="fold-content narrow-content">
+          {% if printer_ip_locked %}
+            <p class="empty-copy">The printer address is managed by the ZimaOS app settings.</p>
+          {% else %}
+            <form method="post" action="/setup" class="settings-form" data-busy-form>
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
+              <label for="change-printer-ip">Printer IP address<input id="change-printer-ip" class="input" type="text" inputmode="decimal" name="printer_ip" value="{{ printer_ip }}" required></label>
+              <button type="submit" data-busy-text="Checking printer…">Save address</button>
+            </form>
+          {% endif %}
+        </div>
+      </details>
+    {% endif %}
+  </main>
+
+  <footer>Private home service · Keep ZimaOS and this printer hub on your local network.</footer>
 </body>
 </html>

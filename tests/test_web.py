@@ -105,3 +105,22 @@ def test_health_requires_cups_scheduler(web, monkeypatch):
     response = web.app.test_client().get("/api/health")
     assert response.status_code == 503
     assert response.json["ok"] is False
+
+
+def test_oversized_upload_returns_to_dashboard_with_friendly_error(web, monkeypatch):
+    web.app.config["MAX_CONTENT_LENGTH"] = 10
+    monkeypatch.setattr(web, "list_print_history", lambda _limit: [])
+    client = web.app.test_client()
+    token = _set_csrf(client)
+    response = client.post(
+        "/print",
+        data={
+            "file": (BytesIO(b"too large" * 4), "document.txt"),
+            "copies": "1",
+            "_csrf_token": token,
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+    assert b"That file is too large" in response.data

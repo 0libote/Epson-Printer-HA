@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 import socket
 import subprocess
+import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -42,7 +44,7 @@ def tcp_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def printer_reachable(host: str) -> bool:
-    return any(tcp_open(host, p) for p in (9100, 515, 631))
+    return any(tcp_open(host, port, timeout=0.6) for port in (631, 9100, 515))
 
 
 def cups_printer_status(printer_name: str) -> dict:
@@ -103,7 +105,7 @@ def cancel_job(job_id: str) -> CommandResult:
 
 
 def detect_sane_device(printer_ip: str = "") -> tuple[str | None, str | None]:
-    result = run_command(["scanimage", "-L"], timeout=12)
+    result = run_command(["scanimage", "-L"], timeout=5)
     if not result.ok:
         return None, None
 
@@ -140,7 +142,8 @@ def detect_sane_device(printer_ip: str = "") -> tuple[str | None, str | None]:
     return device, backend
 
 
-def scanner_status(printer_ip: str) -> dict:
+@lru_cache(maxsize=16)
+def _scanner_status_cached(printer_ip: str, _time_bucket: int) -> dict:
     device, backend = detect_sane_device(printer_ip)
     if device:
         return {
@@ -160,6 +163,12 @@ def scanner_status(printer_ip: str) -> dict:
         "device": None,
         "open_source": False,
     }
+
+
+def scanner_status(printer_ip: str) -> dict:
+    # Scanner discovery is network-broadcast based and can take a few seconds.
+    # Cache the result briefly so loading the household dashboard stays quick.
+    return _scanner_status_cached(printer_ip, int(time.monotonic() // 30))
 
 
 def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:

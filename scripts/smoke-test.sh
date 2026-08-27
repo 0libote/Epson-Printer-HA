@@ -51,6 +51,7 @@ docker exec \
   -e PRINTER_IP=127.0.0.1 \
   -e PRINTER_NAME=Smoke_Epson \
   -e PRINTER_DISPLAY_NAME="Smoke Epson XP-2200" \
+  -e PRINT_PROTOCOL=socket \
   "$container_name" /usr/local/bin/configure-cups.sh
 docker exec "$container_name" python3 -c 'from PIL import Image; Image.new("RGB", (100, 100), "white").save("/tmp/smoke.pdf", "PDF")'
 docker exec "$container_name" lp -d Smoke_Epson /tmp/smoke.pdf

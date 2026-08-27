@@ -5,7 +5,7 @@ A self-hosted Docker appliance that turns an awkward Epson network printer/scann
 ## What it does
 
 - Shares the XP-2200 through **CUPS / IPP** so client PCs do not need Epson's Windows connectivity stack.
-- Renders jobs server-side with ESC/P-R and sends them to the printer over **TCP/9100**.
+- Renders jobs server-side with ESC/P-R and automatically uses the printer's available **IPP, TCP/9100, or LPD** transport (IPP is preferred).
 - Provides one web dashboard for first-run setup, file printing, queue status, scanning and scan downloads.
 - Lets the user configure the shared printer name and LAN sharing from the WebUI.
 - Shows generated Windows/macOS IPP connection details directly in the dashboard.
@@ -78,7 +78,7 @@ The XP-2200 is a flatbed, so the dashboard currently exposes an A4 flatbed workf
 
 Epson Scan 2 is distributed free of charge, but its network plug-in is proprietary. This repository **does not redistribute it**.
 
-If AirScan/WSD does not work, download Epson Scan 2 for Linux x64 directly from Epson and place the archive or its two Debian packages in `./epson-driver/` for normal Docker or `/DATA/AppData/epson-printer-ha/epson-driver/` on ZimaOS.
+If AirScan/WSD does not work, download [Epson Scan 2 for Linux Deb (x64)](https://download-center.epson.com/softwares/?device_id=XP-2200+Series&language=en&os=DEBX64&region=GB) directly from Epson and place the archive or its two Debian packages in `./epson-driver/` for normal Docker or `/DATA/AppData/epson-printer-ha/epson-driver/` on ZimaOS.
 
 The sidecar installer only accepts packages whose Debian package names are exactly `epsonscan2` and `epsonscan2-non-free-plugin`.
 
@@ -114,7 +114,7 @@ This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or 
 
 ## Status
 
-Early alpha. Unit tests and Compose validation cover the software paths, but the first deployment against a physical XP-2200 is still the real integration test.
+Household-ready printing has been verified against a physical XP-2200 over IPP. The dashboard and Compose stack are covered by unit, configuration and container smoke tests. Network scanning is ready once Epson's official Scan 2 Linux bundle is supplied; the XP-2200 does not expose a compatible open scanning protocol on the tested firmware.
 
 ## Why this exists
 

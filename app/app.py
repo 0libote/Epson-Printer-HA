@@ -101,6 +101,12 @@ def verify_csrf():
     return None
 
 
+@app.errorhandler(413)
+def upload_too_large(_error):
+    flash(f"That file is too large. The limit is {MAX_UPLOAD_MB} MB.", "error")
+    return redirect(url_for("index"))
+
+
 def _validate_ipv4(value: str) -> str:
     parsed = ipaddress.ip_address(value.strip())
     if parsed.version != 4 or parsed.is_unspecified or parsed.is_multicast or parsed.is_loopback:
@@ -251,6 +257,7 @@ def index():
         jobs=list_jobs(printer_name) if printer_ip else [],
         print_history=list_print_history(100),
         scans=recent_scans(),
+        max_upload_mb=MAX_UPLOAD_MB,
     )
 
 
@@ -349,7 +356,7 @@ def print_file():
             grayscale=request.form.get("grayscale") == "on",
             title=name,
         )
-    message = (result.stdout or "Print job sent.") if result.ok else (result.stderr or "Print failed.")
+    message = "File added to the print queue." if result.ok else (result.stderr or "Print failed.")
     flash(message, "success" if result.ok else "error")
     return redirect(url_for("index"))
 

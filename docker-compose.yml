@@ -12,7 +12,7 @@ services:
     environment:
       PRINTER_IP: "${PRINTER_IP:-}"
       PRINTER_NAME: "${PRINTER_NAME:-Home_Epson_XP2200}"
-      PRINT_PROTOCOL: "${PRINT_PROTOCOL:-socket}"
+      PRINT_PROTOCOL: "${PRINT_PROTOCOL:-auto}"
       WEB_PORT: "${WEB_PORT:-8080}"
       CLIENT_HOST: "${CLIENT_HOST:-}"
       WEB_USERNAME: "${WEB_USERNAME:-}"

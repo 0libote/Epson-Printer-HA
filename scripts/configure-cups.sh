@@ -4,7 +4,7 @@ set -euo pipefail
 PRINTER_IP="${PRINTER_IP:-}"
 PRINTER_NAME="${PRINTER_NAME:-Home_Epson_XP2200}"
 PRINTER_DISPLAY_NAME="${PRINTER_DISPLAY_NAME:-Home Epson XP-2200}"
-PRINT_PROTOCOL="${PRINT_PROTOCOL:-socket}"
+PRINT_PROTOCOL="${PRINT_PROTOCOL:-auto}"
 SHARE_PRINTER="${SHARE_PRINTER:-true}"
 OLD_PRINTER_NAME="${OLD_PRINTER_NAME:-}"
 PREFER_ENV_SETTINGS="${PREFER_ENV_SETTINGS:-false}"
@@ -23,7 +23,12 @@ PY
 )"
 fi
 
-if [[ "${PREFER_ENV_SETTINGS,,}" != "true" && -f /data/settings.json ]]; then
+case "$PREFER_ENV_SETTINGS" in
+  [Tt][Rr][Uu][Ee]) PREFER_ENV_SETTINGS="true" ;;
+  *) PREFER_ENV_SETTINGS="false" ;;
+esac
+
+if [[ "$PREFER_ENV_SETTINGS" != "true" && -f /data/settings.json ]]; then
   readarray -t SAVED_PRINT_SETTINGS < <(python3 - <<'PY'
 import json
 try:
@@ -47,8 +52,8 @@ PY
   [[ -n "${SAVED_PRINT_SETTINGS[2]:-}" ]] && SHARE_PRINTER="${SAVED_PRINT_SETTINGS[2]}"
 fi
 
-case "${SHARE_PRINTER,,}" in
-  1|true|yes|on) SHARE_PRINTER="true" ;;
+case "$SHARE_PRINTER" in
+  1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) SHARE_PRINTER="true" ;;
   *) SHARE_PRINTER="false" ;;
 esac
 
@@ -68,11 +73,45 @@ if [[ -z "$MODEL" ]]; then
   exit 1
 fi
 
+tcp_open() {
+  python3 - "$PRINTER_IP" "$1" <<'PY'
+import socket, sys
+
+try:
+    with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=2):
+        pass
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
+if [[ "$PRINT_PROTOCOL" == "auto" ]]; then
+  if tcp_open 631; then
+    PRINT_PROTOCOL="ipp"
+  elif tcp_open 9100; then
+    PRINT_PROTOCOL="socket"
+  elif tcp_open 515; then
+    PRINT_PROTOCOL="lpd"
+  else
+    # The XP-2200 may be asleep during a container restart. Build the queue
+    # anyway so CUPS can wake/retry it when the first job arrives.
+    echo "[cups] Printer ${PRINTER_IP} is offline; configuring the XP-2200 IPP default."
+    PRINT_PROTOCOL="ipp"
+  fi
+elif [[ "$PRINT_PROTOCOL" == "socket" ]] && ! tcp_open 9100 && tcp_open 631; then
+  echo "[cups] TCP/9100 is unavailable; switching the saved socket setting to IPP."
+  PRINT_PROTOCOL="ipp"
+elif [[ "$PRINT_PROTOCOL" == "lpd" ]] && ! tcp_open 515 && tcp_open 631; then
+  echo "[cups] LPD is unavailable; switching the saved LPD setting to IPP."
+  PRINT_PROTOCOL="ipp"
+fi
+
 case "$PRINT_PROTOCOL" in
+  ipp) URI="ipp://${PRINTER_IP}:631/ipp/print?version=1.1" ;;
   socket) URI="socket://${PRINTER_IP}:9100" ;;
   lpd) URI="lpd://${PRINTER_IP}/PASSTHRU" ;;
   *)
-    echo "[cups] Unknown PRINT_PROTOCOL '$PRINT_PROTOCOL'; use socket or lpd."
+    echo "[cups] Unknown PRINT_PROTOCOL '$PRINT_PROTOCOL'; use auto, ipp, socket, or lpd."
     exit 1
     ;;
 esac

@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from app.core import CommandResult, cancel_job, cups_printer_status, detect_sane_device, scan_document, submit_print
+from app.core import CommandResult, _scanner_status_cached, cancel_job, cups_printer_status, detect_sane_device, scan_document, scanner_status, submit_print
 
 
 def test_cancel_rejects_bad_job_id():
@@ -94,6 +94,15 @@ def test_open_source_epsonds_backend_is_accepted_for_configured_ip(mock_run):
         "epsonds:net:192.0.2.10",
         "Open-source SANE",
     )
+
+
+@patch("app.core.time.monotonic", return_value=60)
+@patch("app.core.detect_sane_device", return_value=(None, None))
+def test_scanner_status_is_briefly_cached(mock_detect, _mock_time):
+    _scanner_status_cached.cache_clear()
+    scanner_status("192.0.2.10")
+    scanner_status("192.0.2.10")
+    mock_detect.assert_called_once_with("192.0.2.10")
 
 
 @patch("app.core.detect_sane_device", return_value=("epsonds:net:192.0.2.10", "Open-source SANE"))
