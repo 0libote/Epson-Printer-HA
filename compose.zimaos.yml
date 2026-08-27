@@ -36,11 +36,11 @@ x-casaos:
   port_map: "8098"
   scheme: http
   title:
-    en_US: Epson Printer Hub
+    en_US: Home Print Hub
   tagline:
-    en_US: Local print and scan hub for Epson XP-2200
+    en_US: Print and scan from any device at home
   description:
-    en_US: Shares an Epson XP-2200 over IPP and provides a local print and scan dashboard. Open-source scanning is preferred, with an isolated optional Epson compatibility sidecar.
+    en_US: A simple private dashboard for printing to and scanning from an Epson XP-2200 around the house.
   category: Utilities
   architectures:
     - amd64
