@@ -11,6 +11,7 @@ services:
       PRINTER_NAME: "Home_Epson_XP2200"
       PRINT_PROTOCOL: "socket"
       WEB_PORT: "8098"
+      CLIENT_HOST: ""
       WEB_USERNAME: ""
       WEB_PASSWORD: ""
       SECRET_KEY: ""

@@ -11,7 +11,7 @@ A self-hosted Docker appliance that turns an awkward Epson network printer/scann
 - Shows generated Windows/macOS IPP connection details directly in the dashboard.
 - Keeps a persistent **print history** for WebUI jobs and jobs submitted by Windows, macOS, Linux and other IPP clients.
 - Records job metadata only: document name, user/device, source, status, size, pages and timestamps. Completed document files are not retained.
-- Tries fully open-source **AirScan/eSCL and WSD** scanning first with `sane-airscan`.
+- Tries fully open-source **AirScan/eSCL, WSD and SANE epsonds** scanning first.
 - Keeps Epson's proprietary network scanning component out of the main app entirely.
 - Includes an optional isolated **scan compatibility sidecar** for XP-2200 firmware that only works with Epson Scan 2's network protocol.
 - Advertises shared CUPS queues over mDNS/DNS-SD using Avahi.
@@ -26,6 +26,8 @@ docker compose up -d --build
 ```
 
 Open `http://YOUR-SERVER-IP:8080`, enter the XP-2200 IPv4 address once, and the hub configures CUPS automatically.
+
+If you open the dashboard through a reverse proxy or a hostname that client devices cannot resolve, set `CLIENT_HOST` in `.env` to the server's LAN IP or resolvable hostname. This is the address shown in the generated IPP instructions.
 
 ## ZimaOS
 
@@ -65,9 +67,10 @@ CUPS is configured with `PreserveJobHistory Yes` but `PreserveJobFiles No`, so c
 The scan path is intentionally layered:
 
 1. `sane-airscan` checks for eSCL/AirScan and WSD/WS-Scan.
-2. If found, scans are completely open-source and the sidecar is irrelevant.
-3. If not found, the main container checks `127.0.0.1:6566` through SANE's standard `net` backend.
-4. The optional sidecar serves that localhost endpoint only after you provide Epson's Linux Scan 2 bundle.
+2. SANE's open-source `epsonds` backend is also enabled for XP-2200 firmware that exposes ESC/I-2.
+3. If either open-source backend finds the configured printer IP, the sidecar is irrelevant.
+4. Otherwise, the main container checks `127.0.0.1:6566` through SANE's standard `net` backend.
+5. The optional sidecar serves that localhost endpoint only after you provide Epson's Linux Scan 2 bundle.
 
 The XP-2200 is a flatbed, so the dashboard currently exposes an A4 flatbed workflow.
 
@@ -82,6 +85,28 @@ The sidecar installer only accepts packages whose Debian package names are exact
 ## Home Assistant
 
 `GET /api/status` returns JSON containing printer reachability, CUPS state, scanner backend/state, LAN sharing state, the current queue and recent print jobs. `GET /api/history` exposes the longer print-history view.
+
+The API can be consumed directly by Home Assistant's REST integration. Replace the address and add `authentication`, `username` and `password` if WebUI authentication is enabled:
+
+```yaml
+rest:
+  - resource: http://YOUR-SERVER-IP:8080/api/status
+    scan_interval: 60
+    timeout: 20
+    sensor:
+      - name: Epson XP-2200 printer
+        unique_id: epson_xp2200_printer
+        value_template: "{{ value_json.printer.state }}"
+      - name: Epson XP-2200 scanner
+        unique_id: epson_xp2200_scanner
+        value_template: "{{ value_json.scanner.state }}"
+```
+
+This is deliberately a standard REST configuration rather than a custom Home Assistant integration.
+
+## Verification
+
+CI runs the Python tests, validates both Compose files, builds both images, boots the main image on a non-default web port, configures its real XP-2200 PPD, and sends a generated PDF through the CUPS conversion and ESC/P-R filter chain to a local TCP capture socket. Physical printer and scanner hardware remain the final integration test.
 
 ## Security
 

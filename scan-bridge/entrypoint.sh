@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-touch /tmp/scan-bridge-alive
-
 get_printer_ip() {
-  if [[ -n "${PRINTER_IP:-}" ]]; then
-    printf '%s\n' "$PRINTER_IP"
-    return 0
-  fi
-
   python3 - <<'PY'
 import ipaddress
 import json
+import os
 from pathlib import Path
 
-path = Path('/data/settings.json')
 try:
-    value = str(json.loads(path.read_text()).get('printer_ip', '')).strip()
+    value = os.environ.get('PRINTER_IP', '').strip()
+    if not value:
+        value = str(json.loads(Path('/data/settings.json').read_text()).get('printer_ip', '')).strip()
     ip = ipaddress.ip_address(value)
     if ip.version == 4 and not ip.is_loopback and not ip.is_multicast and not ip.is_unspecified:
         print(ip)
@@ -47,9 +42,13 @@ configure_ip() {
   [[ -n "$ip" ]] || return 0
   [[ "$ip" == "$last_ip" ]] && return 0
   printf '[Network]\n%s\n' "$ip" > /root/.epsonscan2/Network/epsonscan2.conf
-  epsonscan2 --set-ip "$ip" >/dev/null 2>&1 || true
-  last_ip="$ip"
-  echo "[scan-bridge] Scanner target configured: $ip"
+  if epsonscan2 --set-ip "$ip" >/dev/null 2>&1; then
+    last_ip="$ip"
+    echo "[scan-bridge] Scanner target configured: $ip"
+  else
+    echo "[scan-bridge] Epson Scan 2 could not configure $ip yet; retrying."
+    return 1
+  fi
 }
 
 configure_ip "$(get_printer_ip)"

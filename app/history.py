@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -45,31 +46,57 @@ def _connect() -> sqlite3.Connection:
     APP_DIR.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(HISTORY_DB, timeout=10)
     db.row_factory = sqlite3.Row
-    db.execute(
-        """
-        CREATE TABLE IF NOT EXISTS print_history (
-            job_id INTEGER PRIMARY KEY,
-            printer TEXT NOT NULL,
-            document TEXT NOT NULL DEFAULT '',
-            user_name TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT 'Network device',
-            origin_host TEXT NOT NULL DEFAULT '',
-            state TEXT NOT NULL DEFAULT 'unknown',
-            size_bytes INTEGER NOT NULL DEFAULT 0,
-            pages INTEGER NOT NULL DEFAULT 0,
-            created_at INTEGER NOT NULL DEFAULT 0,
-            processing_at INTEGER NOT NULL DEFAULT 0,
-            completed_at INTEGER NOT NULL DEFAULT 0,
-            updated_at INTEGER NOT NULL DEFAULT 0
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(print_history)")}
+        if columns and "history_key" not in columns:
+            db.execute("ALTER TABLE print_history RENAME TO print_history_legacy")
+        db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS print_history (
+                history_key TEXT PRIMARY KEY,
+                job_id INTEGER NOT NULL,
+                printer TEXT NOT NULL,
+                document TEXT NOT NULL DEFAULT '',
+                user_name TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'Network device',
+                origin_host TEXT NOT NULL DEFAULT '',
+                state TEXT NOT NULL DEFAULT 'unknown',
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                pages INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL DEFAULT 0,
+                processing_at INTEGER NOT NULL DEFAULT 0,
+                completed_at INTEGER NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL DEFAULT 0
+            )
+            """
         )
-        """
-    )
-    db.execute("CREATE INDEX IF NOT EXISTS idx_print_history_created ON print_history(created_at DESC)")
+        if columns and "history_key" not in columns:
+            db.execute(
+                """
+                INSERT INTO print_history (
+                    history_key, job_id, printer, document, user_name, source, origin_host,
+                    state, size_bytes, pages, created_at, processing_at, completed_at, updated_at
+                )
+                SELECT
+                    printer || ':' || job_id || ':' || CASE WHEN created_at > 0 THEN created_at ELSE updated_at END,
+                    job_id, printer, document, user_name, source, origin_host,
+                    state, size_bytes, pages, created_at, processing_at, completed_at, updated_at
+                FROM print_history_legacy
+                """
+            )
+            db.execute("DROP TABLE print_history_legacy")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_print_history_created ON print_history(created_at DESC)")
+        db.commit()
+    except Exception:
+        db.rollback()
+        db.close()
+        raise
     return db
 
 
 def init_history() -> None:
-    with _connect() as db:
+    with closing(_connect()) as db:
         db.commit()
 
 
@@ -94,7 +121,9 @@ def _normalise_job(job_id: int, attrs: dict, printer_name: str) -> dict:
     pages = int(attrs.get("job-impressions-completed") or attrs.get("job-impressions") or 0)
     user_name = str(attrs.get("job-originating-user-name") or "")
     origin_host = str(attrs.get("job-originating-host-name") or "")
+    created_at = int(attrs.get("time-at-creation") or 0)
     return {
+        "history_key": f"{printer_name}:{int(job_id)}:{created_at}",
         "job_id": int(job_id),
         "printer": printer_name,
         "document": str(attrs.get("job-name") or "Untitled job"),
@@ -104,7 +133,7 @@ def _normalise_job(job_id: int, attrs: dict, printer_name: str) -> dict:
         "state": STATE_NAMES.get(state_value, f"state-{state_value}" if state_value else "unknown"),
         "size_bytes": max(0, size_kb * 1024),
         "pages": max(0, pages),
-        "created_at": int(attrs.get("time-at-creation") or 0),
+        "created_at": created_at,
         "processing_at": int(attrs.get("time-at-processing") or 0),
         "completed_at": int(attrs.get("time-at-completed") or 0),
         "updated_at": int(time.time()),
@@ -147,17 +176,18 @@ def sync_print_history(printer_name: str) -> int:
         init_history()
         return 0
 
-    with _connect() as db:
+    with closing(_connect()) as db:
         db.executemany(
             """
             INSERT INTO print_history (
-                job_id, printer, document, user_name, source, origin_host, state,
+                history_key, job_id, printer, document, user_name, source, origin_host, state,
                 size_bytes, pages, created_at, processing_at, completed_at, updated_at
             ) VALUES (
-                :job_id, :printer, :document, :user_name, :source, :origin_host, :state,
+                :history_key, :job_id, :printer, :document, :user_name, :source, :origin_host, :state,
                 :size_bytes, :pages, :created_at, :processing_at, :completed_at, :updated_at
             )
-            ON CONFLICT(job_id) DO UPDATE SET
+            ON CONFLICT(history_key) DO UPDATE SET
+                job_id=excluded.job_id,
                 printer=excluded.printer,
                 document=excluded.document,
                 user_name=excluded.user_name,
@@ -179,7 +209,7 @@ def sync_print_history(printer_name: str) -> int:
 
 def list_print_history(limit: int = 100) -> list[dict]:
     limit = max(1, min(int(limit), 1000))
-    with _connect() as db:
+    with closing(_connect()) as db:
         rows = db.execute(
             """
             SELECT job_id, printer, document, user_name, source, origin_host, state,

@@ -83,7 +83,8 @@ lpadmin \
   -m "$MODEL" \
   -D "$PRINTER_DISPLAY_NAME" \
   -E \
-  -o "printer-is-shared=${SHARE_PRINTER}"
+  -o "printer-is-shared=${SHARE_PRINTER}" \
+  -o "printer-error-policy=retry-job"
 
 lpoptions -d "$PRINTER_NAME" >/dev/null 2>&1 || true
 cupsaccept "$PRINTER_NAME" || true

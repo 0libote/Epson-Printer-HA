@@ -31,6 +31,7 @@
     <h2>Where is your XP-2200?</h2>
     <p class="muted">Give the printer a reserved address in your router, then enter that IPv4 address here. This is the only required printer setting.</p>
     <form method="post" action="/setup" class="setup-form">
+      <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
       <label>Printer IPv4 address<input class="text-input" type="text" inputmode="decimal" name="printer_ip" placeholder="192.168.1.50" required></label>
       <button type="submit">Connect printer</button>
     </form>
@@ -45,6 +46,7 @@
       <details>
         <summary>Change printer IP</summary>
         <form method="post" action="/setup" class="setup-form compact">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <label>Printer IPv4 address<input class="text-input" type="text" inputmode="decimal" name="printer_ip" value="{{ printer_ip }}" required></label>
           <button class="secondary" type="submit">Save address</button>
         </form>
@@ -67,6 +69,7 @@
     <article class="card">
       <h2>Print</h2>
       <form method="post" action="/print" enctype="multipart/form-data">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <label class="drop"><span>Choose PDF, PNG, JPG or TXT</span><input type="file" name="file" required></label>
         <div class="row">
           <label>Copies<input type="number" name="copies" value="1" min="1" max="99"></label>
@@ -80,6 +83,7 @@
       <h2>Scan</h2>
       {% if scanner.ok %}
       <form method="post" action="/scan">
+        <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
         <div class="row three">
           <label>Mode<select name="mode"><option>Color</option><option>Gray</option><option>Lineart</option></select></label>
           <label>DPI<select name="dpi"><option>150</option><option>200</option><option selected>300</option><option>600</option></select></label>
@@ -108,6 +112,7 @@
       <div>
         <h3>Sharing settings</h3>
         <form method="post" action="/client-settings" class="client-settings-form">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <label>Friendly name
             <input class="text-input" type="text" name="display_name" value="{{ display_name }}" maxlength="80" required>
           </label>
@@ -221,7 +226,7 @@
       {% if jobs %}
         <div class="list">
         {% for job in jobs %}
-          <div class="list-row"><div><strong>{{ job.id }}</strong><small>{{ job.owner }} · {{ job.size }}</small></div><form method="post" action="/jobs/{{ job.id }}/cancel"><button class="tiny" type="submit">Cancel</button></form></div>
+          <div class="list-row"><div><strong>{{ job.id }}</strong><small>{{ job.owner }} · {{ job.size }}</small></div><form method="post" action="/jobs/{{ job.id }}/cancel"><input type="hidden" name="_csrf_token" value="{{ csrf_token() }}"><button class="tiny" type="submit">Cancel</button></form></div>
         {% endfor %}
         </div>
       {% else %}<p class="muted">Nothing queued.</p>{% endif %}

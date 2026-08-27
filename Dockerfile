@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     cups \
     cups-client \
+    cups-filters \
     dbus \
     ghostscript \
     printer-driver-escpr \
@@ -32,7 +33,8 @@ COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
 RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh \
     && mkdir -p /data/scans /data/uploads \
-    && (grep -qxF net /etc/sane.d/dll.conf || printf '\nnet\n' >> /etc/sane.d/dll.conf)
+    && (grep -qxF net /etc/sane.d/dll.conf || printf '\nnet\n' >> /etc/sane.d/dll.conf) \
+    && (grep -qxF epsonds /etc/sane.d/dll.conf || printf '\nepsonds\n' >> /etc/sane.d/dll.conf)
 
 ENV WEB_PORT=8080 \
     APP_DATA=/data \
@@ -42,5 +44,5 @@ ENV WEB_PORT=8080 \
 
 EXPOSE 8080 631
 VOLUME ["/data"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('WEB_PORT', '8080') + '/api/health', timeout=3)" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

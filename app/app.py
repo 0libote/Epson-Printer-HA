@@ -5,11 +5,13 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import subprocess
+import tempfile
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.utils import secure_filename
 
 from .core import (
@@ -17,6 +19,7 @@ from .core import (
     cups_printer_status,
     list_jobs,
     printer_reachable,
+    run_command,
     scan_document,
     scanner_status,
     submit_print,
@@ -31,17 +34,34 @@ DEFAULT_PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip() or
 DEFAULT_DISPLAY_NAME = os.getenv("PRINTER_DISPLAY_NAME", "Home Epson XP-2200").strip() or "Home Epson XP-2200"
 DEFAULT_SHARE_PRINTER = os.getenv("SHARE_PRINTER", "true").strip().lower() not in {"0", "false", "no", "off"}
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "128"))
+CLIENT_HOST = os.getenv("CLIENT_HOST", "").strip()
+WEB_USERNAME = os.getenv("WEB_USERNAME", "")
+WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
+
+if bool(WEB_USERNAME) != bool(WEB_PASSWORD):
+    raise RuntimeError("WEB_USERNAME and WEB_PASSWORD must either both be set or both be blank")
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or os.urandom(32)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 for p in (APP_DIR, SCAN_DIR):
     p.mkdir(parents=True, exist_ok=True)
 
 
 def _auth_required():
-    return bool(os.getenv("WEB_USERNAME") and os.getenv("WEB_PASSWORD"))
+    return bool(WEB_USERNAME)
+
+
+def _auth_valid() -> bool:
+    auth = request.authorization
+    return bool(
+        auth
+        and hmac.compare_digest(auth.username or "", WEB_USERNAME)
+        and hmac.compare_digest(auth.password or "", WEB_PASSWORD)
+    )
 
 
 def require_auth(func):
@@ -49,16 +69,36 @@ def require_auth(func):
     def wrapper(*args, **kwargs):
         if not _auth_required():
             return func(*args, **kwargs)
-        auth = request.authorization
-        good = (
-            auth
-            and hmac.compare_digest(auth.username or "", os.getenv("WEB_USERNAME", ""))
-            and hmac.compare_digest(auth.password or "", os.getenv("WEB_PASSWORD", ""))
-        )
-        if not good:
+        if not _auth_valid():
             return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Epson Hub"'})
         return func(*args, **kwargs)
     return wrapper
+
+
+def _csrf_token() -> str:
+    token = session.get("_csrf_token")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["_csrf_token"] = token
+    return token
+
+
+@app.context_processor
+def csrf_context():
+    return {"csrf_token": _csrf_token}
+
+
+@app.before_request
+def verify_csrf():
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    if _auth_required() and not _auth_valid():
+        return None
+    expected = session.get("_csrf_token", "")
+    supplied = request.form.get("_csrf_token", "") or request.headers.get("X-CSRF-Token", "")
+    if not expected or not hmac.compare_digest(expected, supplied):
+        abort(400, "Invalid or missing CSRF token")
+    return None
 
 
 def _validate_ipv4(value: str) -> str:
@@ -82,6 +122,10 @@ def _validate_display_name(value: str) -> str:
     return value
 
 
+if PRINTER_IP_ENV:
+    PRINTER_IP_ENV = _validate_ipv4(PRINTER_IP_ENV)
+
+
 def _saved_settings() -> dict:
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
@@ -91,9 +135,13 @@ def _saved_settings() -> dict:
 
 
 def _save_settings(data: dict) -> None:
-    temp = SETTINGS_FILE.with_suffix(".tmp")
-    temp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    temp.replace(SETTINGS_FILE)
+    with tempfile.NamedTemporaryFile("w", dir=APP_DIR, prefix=".settings.", encoding="utf-8", delete=False) as fh:
+        temp = Path(fh.name)
+        fh.write(json.dumps(data, indent=2) + "\n")
+    try:
+        temp.replace(SETTINGS_FILE)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def current_printer_ip() -> str:
@@ -168,7 +216,9 @@ def recent_scans(limit: int = 10):
 
 
 def _client_setup(printer_name: str) -> dict:
-    host = request.host.split(":", 1)[0]
+    host = CLIENT_HOST or request.host
+    if not CLIENT_HOST:
+        host = host.split("]", 1)[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
     queue_path = f"printers/{printer_name}"
     return {
         "host": host,
@@ -216,12 +266,12 @@ def setup_printer():
         flash(str(exc), "error")
         return redirect(url_for("index"))
 
-    _save_printer_ip(printer_ip)
     ok, log = _configure_cups(printer_ip)
     if ok:
+        _save_printer_ip(printer_ip)
         flash(f"Printer saved at {printer_ip}. CUPS is configured.", "success")
     else:
-        flash(f"Printer IP saved, but CUPS setup failed: {log[-800:] or 'unknown error'}", "error")
+        flash(f"CUPS setup failed; the previous printer setting was kept: {log[-800:] or 'unknown error'}", "error")
     return redirect(url_for("index"))
 
 
@@ -279,19 +329,26 @@ def print_file():
         flash("Supported files: PDF, PNG, JPG and TXT.", "error")
         return redirect(url_for("index"))
 
+    try:
+        copies = int(request.form.get("copies", "1"))
+        if not 1 <= copies <= 99:
+            raise ValueError
+    except ValueError:
+        flash("Copies must be a whole number between 1 and 99.", "error")
+        return redirect(url_for("index"))
+
     temp_dir = APP_DIR / "uploads"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    target = temp_dir / name
-    upload.save(target)
-    try:
+    with tempfile.TemporaryDirectory(dir=temp_dir, prefix="print-") as work_dir:
+        target = Path(work_dir) / name
+        upload.save(target)
         result = submit_print(
             current_printer_name(),
             str(target),
-            copies=int(request.form.get("copies", "1")),
+            copies=copies,
             grayscale=request.form.get("grayscale") == "on",
+            title=name,
         )
-    finally:
-        target.unlink(missing_ok=True)
     message = (result.stdout or "Print job sent.") if result.ok else (result.stderr or "Print failed.")
     flash(message, "success" if result.ok else "error")
     return redirect(url_for("index"))
@@ -304,10 +361,18 @@ def scan():
     if not printer_ip:
         flash("Set up the printer first.", "error")
         return redirect(url_for("index"))
+    try:
+        dpi = int(request.form.get("dpi", "300"))
+    except ValueError:
+        dpi = 0
+    if dpi not in {150, 200, 300, 600}:
+        flash("DPI must be 150, 200, 300 or 600.", "error")
+        return redirect(url_for("index"))
+
     result, path = scan_document(
         printer_ip,
         SCAN_DIR,
-        dpi=int(request.form.get("dpi", "300")),
+        dpi=dpi,
         mode=request.form.get("mode", "Color"),
         fmt=request.form.get("format", "pdf"),
     )
@@ -362,7 +427,9 @@ def api_history():
 
 @app.get("/api/health")
 def health():
-    return jsonify({"ok": True, "service": "epson-printer-ha"})
+    cups = run_command(["lpstat", "-r"], timeout=3)
+    status = 200 if cups.ok else 503
+    return jsonify({"ok": cups.ok, "service": "epson-printer-ha", "cups": cups.stdout or cups.stderr}), status
 
 
 if __name__ == "__main__":

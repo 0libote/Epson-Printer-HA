@@ -75,8 +75,14 @@ def list_jobs(printer_name: str) -> list[dict]:
     return jobs
 
 
-def submit_print(printer_name: str, path: str, copies: int = 1, grayscale: bool = False) -> CommandResult:
-    title = Path(path).name[:255] or "WebUI print"
+def submit_print(
+    printer_name: str,
+    path: str,
+    copies: int = 1,
+    grayscale: bool = False,
+    title: str | None = None,
+) -> CommandResult:
+    title = (title or Path(path).name)[:255] or "WebUI print"
     args = [
         "lp",
         "-U", "webui",
@@ -85,7 +91,7 @@ def submit_print(printer_name: str, path: str, copies: int = 1, grayscale: bool 
         "-n", str(max(1, min(copies, 99))),
     ]
     if grayscale:
-        args += ["-o", "ColorModel=Gray"]
+        args += ["-o", "Ink=MONO"]
     args.append(path)
     return run_command(args, timeout=60)
 
@@ -96,7 +102,7 @@ def cancel_job(job_id: str) -> CommandResult:
     return run_command(["cancel", job_id], timeout=10)
 
 
-def detect_sane_device() -> tuple[str | None, str | None]:
+def detect_sane_device(printer_ip: str = "") -> tuple[str | None, str | None]:
     result = run_command(["scanimage", "-L"], timeout=12)
     if not result.ok:
         return None, None
@@ -111,14 +117,22 @@ def detect_sane_device() -> tuple[str | None, str | None]:
         if "epson" not in lower:
             continue
 
+        is_bridge = device.startswith("net:127.0.0.1:") or device.startswith("net:localhost:")
+        matches_ip = bool(
+            printer_ip
+            and re.search(rf"(?<![\d.]){re.escape(printer_ip)}(?![\d.])", lower)
+        )
+        if printer_ip and not (matches_ip or is_bridge):
+            continue
+
         if device.startswith("airscan:") or "escl" in lower or "wsd" in lower:
             candidates.append((0, device, "AirScan/WSD"))
-        elif device.startswith("net:") and "epson" in lower:
+        elif is_bridge and "epson" in lower:
             candidates.append((1, device, "Epson compatibility bridge"))
-        elif "epsonscan2" in lower:
+        elif "epsonscan2" in lower and (matches_ip or not printer_ip):
             candidates.append((1, device, "Epson compatibility bridge"))
         else:
-            candidates.append((2, device, "SANE"))
+            candidates.append((2, device, "Open-source SANE"))
 
     if not candidates:
         return None, None
@@ -126,8 +140,8 @@ def detect_sane_device() -> tuple[str | None, str | None]:
     return device, backend
 
 
-def scanner_status(_printer_ip: str) -> dict:
-    device, backend = detect_sane_device()
+def scanner_status(printer_ip: str) -> dict:
+    device, backend = detect_sane_device(printer_ip)
     if device:
         return {
             "ok": True,
@@ -135,7 +149,7 @@ def scanner_status(_printer_ip: str) -> dict:
             "detail": f"{backend}: {device}",
             "backend": backend,
             "device": device,
-            "open_source": backend == "AirScan/WSD",
+            "open_source": backend != "Epson compatibility bridge",
         }
 
     return {
@@ -148,17 +162,17 @@ def scanner_status(_printer_ip: str) -> dict:
     }
 
 
-def scan_document(_printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:
+def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:
     dpi = dpi if dpi in {150, 200, 300, 600} else 300
     mode = mode if mode in {"Color", "Gray", "Lineart"} else "Color"
     fmt = fmt.lower() if fmt.lower() in {"pdf", "png", "jpg", "jpeg"} else "pdf"
 
-    device, _backend = detect_sane_device()
+    device, _backend = detect_sane_device(printer_ip)
     if not device:
         return CommandResult(False, stderr="No network scanner detected. The hub checked AirScan/WSD and the optional localhost SANE compatibility bridge."), None
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    stamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    stamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
     png_path = output_dir / f"scan_{stamp}.png"
     args = [
         "scanimage",
@@ -183,18 +197,20 @@ def scan_document(_printer_ip: str, output_dir: Path, dpi: int = 300, mode: str 
         return CommandResult(True, stdout=str(png_path)), png_path
 
     from PIL import Image
-    image = Image.open(png_path)
-    if fmt in {"jpg", "jpeg"}:
-        jpg_path = output_dir / f"scan_{stamp}.jpg"
-        if image.mode not in ("RGB", "L"):
-            image = image.convert("RGB")
-        image.save(jpg_path, "JPEG", quality=90)
-        png_path.unlink(missing_ok=True)
-        return CommandResult(True, stdout=str(jpg_path)), jpg_path
+    try:
+        with Image.open(png_path) as image:
+            if fmt in {"jpg", "jpeg"}:
+                output_path = output_dir / f"scan_{stamp}.jpg"
+                if image.mode not in ("RGB", "L"):
+                    image = image.convert("RGB")
+                image.save(output_path, "JPEG", quality=90)
+            else:
+                output_path = output_dir / f"scan_{stamp}.pdf"
+                if image.mode not in ("RGB", "L"):
+                    image = image.convert("RGB")
+                image.save(output_path, "PDF", resolution=float(dpi))
+    except OSError as exc:
+        return CommandResult(False, stderr=f"Scan completed, but conversion failed: {exc}"), png_path
 
-    pdf_path = output_dir / f"scan_{stamp}.pdf"
-    if image.mode not in ("RGB", "L"):
-        image = image.convert("RGB")
-    image.save(pdf_path, "PDF", resolution=float(dpi))
     png_path.unlink(missing_ok=True)
-    return CommandResult(True, stdout=str(pdf_path)), pdf_path
+    return CommandResult(True, stdout=str(output_path)), output_path
