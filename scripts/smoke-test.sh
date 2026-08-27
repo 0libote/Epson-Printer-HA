@@ -35,10 +35,13 @@ s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", 9100))
 s.listen()
 open("/tmp/print-listener-ready", "w").close()
-c, _ = s.accept()
-data = b"".join(iter(lambda: c.recv(65536), b""))
-open("/tmp/print-output", "wb").write(data)
-c.close()
+while True:
+    c, _ = s.accept()
+    data = b"".join(iter(lambda: c.recv(65536), b""))
+    c.close()
+    if data:
+        open("/tmp/print-output", "wb").write(data)
+        break
 s.close()
 '
 
