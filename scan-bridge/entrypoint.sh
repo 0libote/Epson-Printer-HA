@@ -49,7 +49,7 @@ configure_ip() {
 configure_ip "$(get_printer_ip)"
 
 echo "[scan-bridge] Starting saned on localhost:6566."
-saned -l -b 127.0.0.1 -p 6566 -n &
+saned -l -b 127.0.0.1 -p 6566 &
 saned_pid=$!
 trap 'kill "$saned_pid" 2>/dev/null || true; wait "$saned_pid" 2>/dev/null || true' TERM INT EXIT
 
