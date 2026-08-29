@@ -13,7 +13,7 @@ A self-hosted Docker appliance that turns an awkward Epson network printer/scann
 - Records job metadata only: document name, user/device, source, status, size, pages and timestamps. Completed document files are not retained.
 - Tries fully open-source **AirScan/eSCL, WSD and SANE epsonds** scanning first.
 - Keeps Epson's proprietary network scanning component out of the main app entirely.
-- Includes an optional isolated **scan compatibility sidecar** for XP-2200 firmware that only works with Epson Scan 2's network protocol.
+- Includes an isolated **scan compatibility sidecar** for XP-2200 firmware that only works with Epson Scan 2's network protocol.
 - Advertises shared CUPS queues over mDNS/DNS-SD using Avahi.
 - Uses no cloud account, subscription or external database. A tiny SQLite file under `/data` stores print-history metadata.
 
@@ -40,7 +40,7 @@ The two GHCR packages must be public for anonymous ZimaOS pulls:
 
 GitHub Container Registry creates new packages as private by default, even when they are published from a public repository. The package owner must change each package visibility to **Public** once in GitHub Package settings. After that ZimaOS does not need a GitHub login or token.
 
-The ZimaOS stack uses dashboard port `8098`, host networking, `/DATA/AppData/epson-printer-ha/data` for settings/scans/history, and `/DATA/AppData/epson-printer-ha/epson-driver` for the optional Epson Scan 2 bundle.
+The ZimaOS stack uses dashboard port `8098`, host networking and `/DATA/AppData/epson-printer-ha/data` for settings, scans and history. Epson Scan 2 is fetched into the disposable sidecar at runtime, not stored in AppData or either image.
 
 ## Network printing setup
 
@@ -70,17 +70,17 @@ The scan path is intentionally layered:
 2. SANE's open-source `epsonds` backend is also enabled for XP-2200 firmware that exposes ESC/I-2.
 3. If either open-source backend finds the configured printer IP, the sidecar is irrelevant.
 4. Otherwise, the main container checks `127.0.0.1:6566` through SANE's standard `net` backend.
-5. The optional sidecar serves that localhost endpoint only after you provide Epson's Linux Scan 2 bundle.
+5. The compatibility sidecar downloads Epson Scan 2 directly from Epson at first start, verifies its checksum, installs it in the disposable container and serves it on localhost.
 
 The XP-2200 is a flatbed, so the dashboard currently exposes an A4 flatbed workflow.
 
-### Optional Epson compatibility sidecar
+### Epson compatibility sidecar
 
-Epson Scan 2 is distributed free of charge, but its network plug-in is proprietary. This repository **does not redistribute it**.
+Epson Scan 2 is distributed free of charge, but its network plug-in is proprietary. This repository and its container images **do not redistribute or modify it**. The sidecar downloads Epson's unchanged x64 Debian bundle from Epson at runtime, checks its pinned SHA-256 digest, accepts only the two expected Debian package names, and keeps the installed copy inside the disposable container filesystem.
 
-If AirScan/WSD does not work, download [Epson Scan 2 for Linux Deb (x64)](https://download-center.epson.com/softwares/?device_id=XP-2200+Series&language=en&os=DEBX64&region=GB) directly from Epson and place the archive or its two Debian packages in `./epson-driver/` for normal Docker or `/DATA/AppData/epson-printer-ha/epson-driver/` on ZimaOS.
+The ZimaOS stack enables this automatically. Other Docker installs must set `EPSON_EULA_ACCEPTED=true` after reading [Epson's licence agreement](https://download.ebz.epson.net/dsc/du/02/eula/global/LINUX_EN.html). No separate download, bind mount or host installation is required.
 
-The sidecar installer only accepts packages whose Debian package names are exactly `epsonscan2` and `epsonscan2-non-free-plugin`.
+If Epson removes or changes the pinned upstream file, the sidecar refuses to install it and retries rather than executing unverified code.
 
 ## Home Assistant
 
@@ -114,7 +114,7 @@ This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or 
 
 ## Status
 
-Household-ready printing has been verified against a physical XP-2200 over IPP. The dashboard and Compose stack are covered by unit, configuration and container smoke tests. Network scanning is ready once Epson's official Scan 2 Linux bundle is supplied; the XP-2200 does not expose a compatible open scanning protocol on the tested firmware.
+Household-ready printing has been verified against a physical XP-2200 over IPP. The dashboard and Compose stack are covered by unit, configuration and container smoke tests. The scanner service provisions Epson's required network plug-in automatically; a physical scan is the final integration check.
 
 ## Why this exists
 

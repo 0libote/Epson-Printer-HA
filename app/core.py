@@ -158,7 +158,7 @@ def _scanner_status_cached(printer_ip: str, _time_bucket: int) -> dict:
     return {
         "ok": False,
         "state": "not_detected",
-        "detail": "No Wi-Fi scanner detected. AirScan/WSD and the optional localhost compatibility bridge were checked.",
+        "detail": "No Wi-Fi scanner detected. AirScan/WSD and the localhost compatibility bridge were checked.",
         "backend": None,
         "device": None,
         "open_source": False,
@@ -178,7 +178,7 @@ def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str =
 
     device, _backend = detect_sane_device(printer_ip)
     if not device:
-        return CommandResult(False, stderr="No network scanner detected. The hub checked AirScan/WSD and the optional localhost SANE compatibility bridge."), None
+        return CommandResult(False, stderr="No network scanner detected. The hub checked AirScan/WSD and the localhost SANE compatibility bridge."), None
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = __import__("datetime").datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")

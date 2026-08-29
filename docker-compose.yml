@@ -31,6 +31,6 @@ services:
     restart: unless-stopped
     environment:
       PRINTER_IP: "${PRINTER_IP:-}"
+      EPSON_EULA_ACCEPTED: "${EPSON_EULA_ACCEPTED:-false}"
     volumes:
       - ./data:/data:ro
-      - ./epson-driver:/drivers:ro

@@ -25,9 +25,9 @@ services:
     restart: unless-stopped
     environment:
       PRINTER_IP: ""
+      EPSON_EULA_ACCEPTED: "true"
     volumes:
       - /DATA/AppData/epson-printer-ha/data:/data:ro
-      - /DATA/AppData/epson-printer-ha/epson-driver:/drivers:ro
 
 x-casaos:
   id: epson-printer-ha

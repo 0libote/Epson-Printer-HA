@@ -72,10 +72,6 @@ button:hover { background: var(--blue-dark); } button:active { transform: transl
 .help-text { margin: 17px 0; color: var(--muted); font-size: 13px; }
 .empty-action { min-height: 230px; display: flex; flex-direction: column; justify-content: center; padding: 20px; background: #fffaf1; border: 1px solid #f0d9ad; border-radius: 14px; }
 .empty-action > strong { font-size: 16px; }.empty-action > p { margin: 7px 0 14px; color: #735b31; }
-.driver-link { align-self: flex-start; margin: -2px 0 14px; color: #8a5a09; font-size: 12px; font-weight: 800; text-decoration: none; }.driver-link:hover { text-decoration: underline; }
-.empty-action details { border-top: 1px solid #ead5ae; padding-top: 12px; }
-.empty-action summary { color: #6d521f; font-weight: 800; cursor: pointer; }
-.empty-action ol { padding-left: 20px; margin: 12px 0 0; color: #735b31; font-size: 13px; }.empty-action li + li { margin-top: 6px; }
 code { font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
 
 .status-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 18px; padding: 5px 0; box-shadow: none; }

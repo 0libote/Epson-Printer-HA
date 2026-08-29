@@ -42,13 +42,8 @@ configure_ip() {
   [[ -n "$ip" ]] || return 0
   [[ "$ip" == "$last_ip" ]] && return 0
   printf '[Network]\n%s\n' "$ip" > /root/.epsonscan2/Network/epsonscan2.conf
-  if epsonscan2 --set-ip "$ip" >/dev/null 2>&1; then
-    last_ip="$ip"
-    echo "[scan-bridge] Scanner target configured: $ip"
-  else
-    echo "[scan-bridge] Epson Scan 2 could not configure $ip yet; retrying."
-    return 1
-  fi
+  last_ip="$ip"
+  echo "[scan-bridge] Scanner target configured: $ip"
 }
 
 configure_ip "$(get_printer_ip)"

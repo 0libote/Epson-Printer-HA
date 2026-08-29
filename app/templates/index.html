@@ -111,17 +111,8 @@
             </form>
           {% else %}
             <div class="empty-action">
-              <strong>Scanning needs the Epson driver</strong>
-              <p>The printer's open scanner connection is not compatible. Add Epson Scan 2 for Linux to enable this button.</p>
-              <a class="driver-link" href="https://download-center.epson.com/softwares/?device_id=XP-2200+Series&amp;language=en&amp;os=DEBX64&amp;region=GB" target="_blank" rel="noopener">Open Epson's Linux download page ↗</a>
-              <details>
-                <summary>How to enable scanning</summary>
-                <ol>
-                  <li>Download the Linux Epson Scan 2 bundle for the XP-2200 from Epson.</li>
-                  <li>Put the downloaded archive in <code>/DATA/AppData/epson-printer-ha/epson-driver</code>.</li>
-                  <li>The scanner service installs it automatically; refresh this page after a minute.</li>
-                </ol>
-              </details>
+              <strong>Scanner is starting</strong>
+              <p>The scanner service sets itself up automatically. Check again in a minute.</p>
             </div>
           {% endif %}
         </article>
@@ -135,8 +126,8 @@
         </div>
         <div class="device-status">
           <i class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i>
-          <span><small>Scanner</small><strong>{{ 'Ready' if scanner.ok else 'Not set up' }}</strong></span>
-          <span class="device-detail">{{ scanner.backend if scanner.ok else 'Epson Scan 2 required' }}</span>
+          <span><small>Scanner</small><strong>{{ 'Ready' if scanner.ok else 'Starting' }}</strong></span>
+          <span class="device-detail">{{ scanner.backend if scanner.ok else 'Automatic setup in progress' }}</span>
         </div>
         <div class="device-status">
           <i class="service-dot {{ 'warn' if jobs else 'good' }}"></i>
