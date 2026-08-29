@@ -105,7 +105,7 @@ def cancel_job(job_id: str) -> CommandResult:
 
 
 def detect_sane_device(printer_ip: str = "") -> tuple[str | None, str | None]:
-    result = run_command(["scanimage", "-L"], timeout=5)
+    result = run_command(["scanimage", "-L"], timeout=20)
     if not result.ok:
         return None, None
 
