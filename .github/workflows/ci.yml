@@ -119,6 +119,6 @@ jobs:
           docker exec scanner-smoke dpkg-query -W epsonscan2 epsonscan2-non-free-plugin
           docker exec scanner-smoke grep -qxF epsonscan2 /etc/sane.d/dll.conf
           docker exec scanner-smoke grep -qxF 192.0.2.10 /root/.epsonscan2/Network/epsonscan2.conf
-          docker exec scanner-smoke command -v killall
+          docker exec scanner-smoke sh -c 'command -v killall'
           docker exec scanner-smoke sh -c '! ldd /usr/lib/x86_64-linux-gnu/sane/libsane-epsonscan2.so.1 | grep "not found"'
           docker exec scanner-smoke python3 -c "import socket; socket.create_connection(('127.0.0.1', 6566), 2).close()"
