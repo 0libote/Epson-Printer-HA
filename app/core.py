@@ -144,21 +144,24 @@ def detect_sane_device(printer_ip: str = "") -> tuple[str | None, str | None]:
 
 @lru_cache(maxsize=16)
 def _scanner_status_cached(printer_ip: str, _time_bucket: int) -> dict:
-    device, backend = detect_sane_device(printer_ip)
-    if device:
+    # The compatibility container only opens this localhost port after the
+    # Epson runtime is installed and saned is running.  Do not run
+    # `scanimage -L` while rendering a page: Epson discovery can take 20
+    # seconds and used to block every dashboard request.
+    if tcp_open("127.0.0.1", 6566, timeout=0.2):
         return {
             "ok": True,
             "state": "ready",
-            "detail": f"{backend}: {device}",
-            "backend": backend,
-            "device": device,
-            "open_source": backend != "Epson compatibility bridge",
+            "detail": "Epson compatibility bridge is online",
+            "backend": "Epson compatibility bridge",
+            "device": None,
+            "open_source": False,
         }
 
     return {
         "ok": False,
-        "state": "not_detected",
-        "detail": "No Wi-Fi scanner detected. AirScan/WSD and the localhost compatibility bridge were checked.",
+        "state": "starting",
+        "detail": "The automatic scanner service is still starting.",
         "backend": None,
         "device": None,
         "open_source": False,
@@ -166,9 +169,7 @@ def _scanner_status_cached(printer_ip: str, _time_bucket: int) -> dict:
 
 
 def scanner_status(printer_ip: str) -> dict:
-    # Scanner discovery is network-broadcast based and can take a few seconds.
-    # Cache the result briefly so loading the household dashboard stays quick.
-    return _scanner_status_cached(printer_ip, int(time.monotonic() // 30))
+    return _scanner_status_cached(printer_ip, int(time.monotonic() // 5))
 
 
 def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:

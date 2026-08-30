@@ -97,12 +97,20 @@ def test_open_source_epsonds_backend_is_accepted_for_configured_ip(mock_run):
 
 
 @patch("app.core.time.monotonic", return_value=60)
-@patch("app.core.detect_sane_device", return_value=(None, None))
-def test_scanner_status_is_briefly_cached(mock_detect, _mock_time):
+@patch("app.core.tcp_open", return_value=True)
+def test_scanner_status_is_fast_and_briefly_cached(mock_tcp_open, _mock_time):
     _scanner_status_cached.cache_clear()
-    scanner_status("192.0.2.10")
-    scanner_status("192.0.2.10")
-    mock_detect.assert_called_once_with("192.0.2.10")
+    first = scanner_status("192.0.2.10")
+    second = scanner_status("192.0.2.10")
+    assert first == second
+    assert first["state"] == "ready"
+    mock_tcp_open.assert_called_once_with("127.0.0.1", 6566, timeout=0.2)
+
+
+@patch("app.core.tcp_open", return_value=False)
+def test_scanner_status_reports_starting_without_blocking(_mock_tcp_open):
+    _scanner_status_cached.cache_clear()
+    assert scanner_status("192.0.2.10")["state"] == "starting"
 
 
 @patch("app.core.detect_sane_device", return_value=("epsonds:net:192.0.2.10", "Open-source SANE"))
