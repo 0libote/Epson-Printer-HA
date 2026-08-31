@@ -33,8 +33,7 @@ COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
 RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh \
     && mkdir -p /data/scans /data/uploads \
-    && (grep -qxF net /etc/sane.d/dll.conf || printf '\nnet\n' >> /etc/sane.d/dll.conf) \
-    && (grep -qxF epsonds /etc/sane.d/dll.conf || printf '\nepsonds\n' >> /etc/sane.d/dll.conf)
+    && printf 'airscan\nepsonds\nnet\n' > /etc/sane.d/dll.conf
 
 ENV WEB_PORT=8080 \
     APP_DATA=/data \

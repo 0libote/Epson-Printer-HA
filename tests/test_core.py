@@ -1,9 +1,15 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
 
 from app.core import CommandResult, _scanner_status_cached, cancel_job, cups_printer_status, detect_sane_device, scan_document, scanner_status, submit_print
+
+
+def test_image_only_enables_supported_scanner_backends():
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    assert "printf 'airscan\\nepsonds\\nnet\\n' > /etc/sane.d/dll.conf" in dockerfile
 
 
 def test_cancel_rejects_bad_job_id():
