@@ -68,6 +68,15 @@ label { display: block; color: #566174; font-size: 12px; font-weight: 700; }
 button { border: 0; border-radius: 10px; padding: 11px 15px; color: white; background: var(--blue); font-weight: 800; cursor: pointer; transition: background .15s, transform .05s; }
 button:hover { background: var(--blue-dark); } button:active { transform: translateY(1px); } button:disabled { opacity: .62; cursor: wait; }
 .primary-action { width: 100%; min-height: 46px; }.primary-action.teal { background: var(--teal); }.primary-action.teal:hover { background: var(--teal-dark); }
+.operation-status { margin-top: 11px; color: var(--muted); }
+.operation-progress { height: 3px; overflow: hidden; border-radius: 2px; background: #e3e8ef; }
+.operation-progress > span { display: block; width: 34%; height: 100%; border-radius: inherit; background: var(--blue); animation: operation-progress 1.35s ease-in-out infinite; }
+.scan-card .operation-progress > span { background: var(--teal); }
+.operation-copy { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; font-size: 11px; }
+.operation-copy strong { color: #4c586a; font-weight: 700; }
+.operation-copy span { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.settings-form .operation-status { width: 100%; grid-column: 1 / -1; }
+@keyframes operation-progress { from { transform: translateX(-110%); } to { transform: translateX(305%); } }
 .scan-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .help-text { margin: 17px 0; color: var(--muted); font-size: 13px; }
 .empty-action { min-height: 230px; display: flex; flex-direction: column; justify-content: center; padding: 20px; background: #fffaf1; border: 1px solid #f0d9ad; border-radius: 14px; }
@@ -122,4 +131,7 @@ footer { padding: 24px 20px 34px; color: #8a93a1; text-align: center; font-size:
   .welcome { margin-top: 16px; }.welcome-copy, .setup-form { padding: 24px 20px; }.field-action { grid-template-columns: 1fr; }.field-action button { width: 100%; }
 }
 
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; }
+  .operation-progress > span { width: 100%; animation: none; opacity: .7; }
+}

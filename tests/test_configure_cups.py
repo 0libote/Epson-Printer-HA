@@ -27,6 +27,8 @@ def _run_configure(tmp_path: Path, protocol: str, python_body: str):
         "PRINT_PROTOCOL": protocol,
         "LPADMIN_RECORD": str(record),
         "PREFER_ENV_SETTINGS": "true",
+        "CUPS_LOCK_DIR": str(tmp_path),
+        "CUPS_READY_ATTEMPTS": "2",
     }
     result = subprocess.run(
         ["bash", "scripts/configure-cups.sh"],

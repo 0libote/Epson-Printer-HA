@@ -1,5 +1,6 @@
 import importlib.util
 import io
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -57,3 +58,22 @@ def test_download_rejects_changed_bundle(monkeypatch, tmp_path):
         scan_bridge_installer.download_bundle(target)
 
     assert not target.exists()
+
+
+def test_installer_rejects_archive_with_too_many_members(monkeypatch, tmp_path):
+    bundle = tmp_path / "bundle.tar.gz"
+    monkeypatch.setattr(scan_bridge_installer, "MAX_ARCHIVE_MEMBERS", 1)
+    with tarfile.open(bundle, "w:gz") as archive:
+        for name in ("one.txt", "two.txt"):
+            info = tarfile.TarInfo(name)
+            info.size = 0
+            archive.addfile(info, io.BytesIO())
+
+    with pytest.raises(scan_bridge_installer.PermanentSetupError, match="too many"):
+        scan_bridge_installer.collect_debs(bundle, tmp_path)
+
+
+def test_installer_rejects_unsupported_architecture(monkeypatch):
+    monkeypatch.setattr(scan_bridge_installer.platform, "machine", lambda: "aarch64")
+
+    assert scan_bridge_installer.main() == 3

@@ -5,6 +5,7 @@ import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
+from threading import Lock
 from urllib.parse import unquote, urlparse
 
 try:
@@ -14,6 +15,9 @@ except ImportError:  # Keeps unit tests/imports usable outside the container.
 
 APP_DIR = Path(os.getenv("APP_DATA", "/data"))
 HISTORY_DB = APP_DIR / "print_history.sqlite3"
+HISTORY_RETENTION_DAYS = os.getenv("HISTORY_RETENTION_DAYS", "90")
+_initialised_databases: set[Path] = set()
+_initialise_lock = Lock()
 
 STATE_NAMES = {
     3: "pending",
@@ -42,62 +46,74 @@ REQUESTED_ATTRIBUTES = [
 ]
 
 
-def _connect() -> sqlite3.Connection:
+def _connect(*, read_only: bool = False) -> sqlite3.Connection:
     APP_DIR.mkdir(parents=True, exist_ok=True)
-    db = sqlite3.connect(HISTORY_DB, timeout=10)
+    if read_only:
+        db = sqlite3.connect(f"file:{HISTORY_DB}?mode=ro", uri=True, timeout=10)
+    else:
+        db = sqlite3.connect(HISTORY_DB, timeout=10)
     db.row_factory = sqlite3.Row
-    try:
-        db.execute("BEGIN IMMEDIATE")
-        columns = {row["name"] for row in db.execute("PRAGMA table_info(print_history)")}
-        if columns and "history_key" not in columns:
-            db.execute("ALTER TABLE print_history RENAME TO print_history_legacy")
-        db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS print_history (
-                history_key TEXT PRIMARY KEY,
-                job_id INTEGER NOT NULL,
-                printer TEXT NOT NULL,
-                document TEXT NOT NULL DEFAULT '',
-                user_name TEXT NOT NULL DEFAULT '',
-                source TEXT NOT NULL DEFAULT 'Network device',
-                origin_host TEXT NOT NULL DEFAULT '',
-                state TEXT NOT NULL DEFAULT 'unknown',
-                size_bytes INTEGER NOT NULL DEFAULT 0,
-                pages INTEGER NOT NULL DEFAULT 0,
-                created_at INTEGER NOT NULL DEFAULT 0,
-                processing_at INTEGER NOT NULL DEFAULT 0,
-                completed_at INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        if columns and "history_key" not in columns:
-            db.execute(
-                """
-                INSERT INTO print_history (
-                    history_key, job_id, printer, document, user_name, source, origin_host,
-                    state, size_bytes, pages, created_at, processing_at, completed_at, updated_at
-                )
-                SELECT
-                    printer || ':' || job_id || ':' || CASE WHEN created_at > 0 THEN created_at ELSE updated_at END,
-                    job_id, printer, document, user_name, source, origin_host,
-                    state, size_bytes, pages, created_at, processing_at, completed_at, updated_at
-                FROM print_history_legacy
-                """
-            )
-            db.execute("DROP TABLE print_history_legacy")
-        db.execute("CREATE INDEX IF NOT EXISTS idx_print_history_created ON print_history(created_at DESC)")
-        db.commit()
-    except Exception:
-        db.rollback()
-        db.close()
-        raise
+    db.execute("PRAGMA busy_timeout = 10000")
+    if read_only:
+        db.execute("PRAGMA query_only = ON")
     return db
 
 
 def init_history() -> None:
-    with closing(_connect()) as db:
-        db.commit()
+    database = HISTORY_DB.resolve()
+    if database in _initialised_databases:
+        return
+    with _initialise_lock:
+        if database in _initialised_databases:
+            return
+        with closing(_connect()) as db:
+            try:
+                db.execute("PRAGMA journal_mode = WAL")
+                db.execute("BEGIN IMMEDIATE")
+                columns = {row["name"] for row in db.execute("PRAGMA table_info(print_history)")}
+                if columns and "history_key" not in columns:
+                    db.execute("ALTER TABLE print_history RENAME TO print_history_legacy")
+                db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS print_history (
+                        history_key TEXT PRIMARY KEY,
+                        job_id INTEGER NOT NULL,
+                        printer TEXT NOT NULL,
+                        document TEXT NOT NULL DEFAULT '',
+                        user_name TEXT NOT NULL DEFAULT '',
+                        source TEXT NOT NULL DEFAULT 'Network device',
+                        origin_host TEXT NOT NULL DEFAULT '',
+                        state TEXT NOT NULL DEFAULT 'unknown',
+                        size_bytes INTEGER NOT NULL DEFAULT 0,
+                        pages INTEGER NOT NULL DEFAULT 0,
+                        created_at INTEGER NOT NULL DEFAULT 0,
+                        processing_at INTEGER NOT NULL DEFAULT 0,
+                        completed_at INTEGER NOT NULL DEFAULT 0,
+                        updated_at INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+                )
+                if columns and "history_key" not in columns:
+                    db.execute(
+                        """
+                        INSERT INTO print_history (
+                            history_key, job_id, printer, document, user_name, source, origin_host,
+                            state, size_bytes, pages, created_at, processing_at, completed_at, updated_at
+                        )
+                        SELECT
+                            printer || ':' || job_id || ':' || CASE WHEN created_at > 0 THEN created_at ELSE updated_at END,
+                            job_id, printer, document, user_name, source, origin_host,
+                            state, size_bytes, pages, created_at, processing_at, completed_at, updated_at
+                        FROM print_history_legacy
+                        """
+                    )
+                    db.execute("DROP TABLE print_history_legacy")
+                db.execute("CREATE INDEX IF NOT EXISTS idx_print_history_created ON print_history(created_at DESC)")
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+        _initialised_databases.add(database)
 
 
 def _queue_from_uri(uri: str) -> str:
@@ -110,21 +126,29 @@ def _queue_from_uri(uri: str) -> str:
 def _source_for(user_name: str, origin_host: str) -> str:
     user = (user_name or "").strip().lower()
     host = (origin_host or "").strip().lower()
-    if user == "webui" or (user == "root" and host in {"localhost", "127.0.0.1", "::1"}):
+    if user == "webui" or (user in {"root", "epson"} and host in {"localhost", "127.0.0.1", "::1"}):
         return "WebUI"
     return "Network device"
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _normalise_job(job_id: int, attrs: dict, printer_name: str) -> dict:
-    state_value = int(attrs.get("job-state") or 0)
-    size_kb = int(attrs.get("job-k-octets") or 0)
-    pages = int(attrs.get("job-impressions-completed") or attrs.get("job-impressions") or 0)
+    job_id = _safe_int(job_id, -1)
+    state_value = _safe_int(attrs.get("job-state"))
+    size_kb = _safe_int(attrs.get("job-k-octets"))
+    pages = _safe_int(attrs.get("job-impressions-completed") or attrs.get("job-impressions"))
     user_name = str(attrs.get("job-originating-user-name") or "")
     origin_host = str(attrs.get("job-originating-host-name") or "")
-    created_at = int(attrs.get("time-at-creation") or 0)
+    created_at = _safe_int(attrs.get("time-at-creation"))
     return {
-        "history_key": f"{printer_name}:{int(job_id)}:{created_at}",
-        "job_id": int(job_id),
+        "history_key": f"{printer_name}:{job_id}:{created_at}",
+        "job_id": job_id,
         "printer": printer_name,
         "document": str(attrs.get("job-name") or "Untitled job"),
         "user_name": user_name,
@@ -134,8 +158,8 @@ def _normalise_job(job_id: int, attrs: dict, printer_name: str) -> dict:
         "size_bytes": max(0, size_kb * 1024),
         "pages": max(0, pages),
         "created_at": created_at,
-        "processing_at": int(attrs.get("time-at-processing") or 0),
-        "completed_at": int(attrs.get("time-at-completed") or 0),
+        "processing_at": _safe_int(attrs.get("time-at-processing")),
+        "completed_at": _safe_int(attrs.get("time-at-completed")),
         "updated_at": int(time.time()),
     }
 
@@ -155,28 +179,42 @@ def _fetch_jobs(which_jobs: str) -> dict[int, dict]:
         return connection.getJobs(which_jobs=which_jobs, my_jobs=False, limit=1000)
 
 
-def sync_print_history(printer_name: str) -> int:
+def sync_print_history(printer_name: str, *, include_completed: bool = True) -> int:
     if cups is None or not printer_name:
         return 0
+    init_history()
 
     snapshots: dict[int, dict] = {}
-    for which_jobs in ("not-completed", "completed"):
+    failures = []
+    job_sets = ("not-completed", "completed") if include_completed else ("not-completed",)
+    for which_jobs in job_sets:
         try:
             snapshots.update(_fetch_jobs(which_jobs))
-        except Exception:
-            continue
+        except Exception as exc:
+            failures.append(f"{which_jobs}: {exc}")
+
+    if len(failures) == len(job_sets):
+        raise RuntimeError("Unable to fetch CUPS jobs (" + "; ".join(failures) + ")")
+    if failures:
+        print("[history] Partial CUPS job fetch failed (" + "; ".join(failures) + ")", flush=True)
 
     rows = []
     for job_id, attrs in snapshots.items():
+        if not isinstance(attrs, dict):
+            continue
         if _queue_from_uri(str(attrs.get("job-printer-uri") or "")) != printer_name:
             continue
-        rows.append(_normalise_job(job_id, attrs, printer_name))
+        row = _normalise_job(job_id, attrs, printer_name)
+        if row["job_id"] >= 0:
+            rows.append(row)
 
     if not rows:
-        init_history()
+        if include_completed:
+            prune_print_history()
         return 0
 
     with closing(_connect()) as db:
+        before = db.total_changes
         db.executemany(
             """
             INSERT INTO print_history (
@@ -200,16 +238,57 @@ def sync_print_history(printer_name: str) -> int:
                 processing_at=CASE WHEN excluded.processing_at > 0 THEN excluded.processing_at ELSE print_history.processing_at END,
                 completed_at=CASE WHEN excluded.completed_at > 0 THEN excluded.completed_at ELSE print_history.completed_at END,
                 updated_at=excluded.updated_at
+            WHERE print_history.document != excluded.document
+               OR print_history.user_name != excluded.user_name
+               OR print_history.source != excluded.source
+               OR print_history.origin_host != excluded.origin_host
+               OR print_history.state != excluded.state
+               OR (excluded.size_bytes > 0 AND print_history.size_bytes != excluded.size_bytes)
+               OR (excluded.pages > 0 AND print_history.pages != excluded.pages)
+               OR (excluded.processing_at > 0 AND print_history.processing_at != excluded.processing_at)
+               OR (excluded.completed_at > 0 AND print_history.completed_at != excluded.completed_at)
             """,
             rows,
         )
+        changed = db.total_changes - before
+        if include_completed:
+            prune_print_history(db=db)
         db.commit()
-    return len(rows)
+    return changed
+
+
+def prune_print_history(*, retention_days: object = None, db: sqlite3.Connection | None = None) -> int:
+    days = _safe_int(HISTORY_RETENTION_DAYS if retention_days is None else retention_days, 90)
+    if days <= 0:
+        return 0
+    cutoff = int(time.time()) - days * 86400
+    owns_connection = db is None
+    if owns_connection:
+        init_history()
+        db = _connect()
+    assert db is not None
+    try:
+        cursor = db.execute(
+            """
+            DELETE FROM print_history
+            WHERE state IN ('cancelled', 'aborted', 'completed')
+              AND CASE WHEN completed_at > 0 THEN completed_at ELSE created_at END > 0
+              AND CASE WHEN completed_at > 0 THEN completed_at ELSE created_at END < ?
+            """,
+            (cutoff,),
+        )
+        if owns_connection:
+            db.commit()
+        return cursor.rowcount
+    finally:
+        if owns_connection:
+            db.close()
 
 
 def list_print_history(limit: int = 100) -> list[dict]:
     limit = max(1, min(int(limit), 1000))
-    with closing(_connect()) as db:
+    init_history()
+    with closing(_connect(read_only=True)) as db:
         rows = db.execute(
             """
             SELECT job_id, printer, document, user_name, source, origin_host, state,

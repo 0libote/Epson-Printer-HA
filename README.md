@@ -11,6 +11,7 @@ A self-hosted Docker appliance that turns an awkward Epson network printer/scann
 - Shows generated Windows/macOS IPP connection details directly in the dashboard.
 - Keeps a persistent **print history** for WebUI jobs and jobs submitted by Windows, macOS, Linux and other IPP clients.
 - Records job metadata only: document name, user/device, source, status, size, pages and timestamps. Completed document files are not retained.
+- Keeps pending CUPS jobs across ordinary container recreation using dedicated spool and cache volumes.
 - Tries fully open-source **AirScan/eSCL, WSD and SANE epsonds** scanning first.
 - Keeps Epson's proprietary network scanning component out of the main app entirely.
 - Includes an isolated **scan compatibility sidecar** for XP-2200 firmware that only works with Epson Scan 2's network protocol.
@@ -28,6 +29,8 @@ docker compose up -d --build
 Open `http://YOUR-SERVER-IP:8080`, enter the XP-2200 IPv4 address once, and the hub configures CUPS automatically.
 
 If you open the dashboard through a reverse proxy or a hostname that client devices cannot resolve, set `CLIENT_HOST` in `.env` to the server's LAN IP or resolvable hostname. This is the address shown in the generated IPP instructions.
+
+Useful `.env` controls include `WEB_USERNAME`/`WEB_PASSWORD` for dashboard authentication, `SESSION_COOKIE_SECURE=true` when the dashboard is served exclusively through HTTPS, `HISTORY_RETENTION_DAYS` (default `90`), and `MAX_SCAN_FILES` (default `100`). History polling defaults to five seconds for active jobs and 60 seconds for completed-job reconciliation; tune `HISTORY_POLL_SECONDS` and `HISTORY_COMPLETED_POLL_SECONDS` only if needed. Setting history retention to `0` disables age-based deletion.
 
 ## ZimaOS
 
@@ -58,9 +61,11 @@ When LAN sharing is enabled, the queue is shared through CUPS and advertised thr
 
 A background collector mirrors CUPS job metadata into `/data/print_history.sqlite3` every few seconds. This gives the dashboard one audit trail for both WebUI and network-client printing and means the history survives container updates/recreates.
 
-WebUI jobs are submitted to CUPS with the `webui` identity. Network clients retain the username and originating hostname/IP supplied to CUPS, where available. The dashboard shows the latest 100 jobs and `GET /api/history?limit=100` exposes the same data as JSON.
+WebUI jobs are submitted using the unprivileged `epson` service identity and labelled as WebUI jobs in history. Network clients retain the username and originating hostname/IP supplied to CUPS, where available. The dashboard shows the latest 100 jobs and `GET /api/history?limit=100` exposes the same data as JSON.
 
 CUPS is configured with `PreserveJobHistory Yes` but `PreserveJobFiles No`, so completed print documents are not deliberately archived by the appliance.
+
+Pending jobs use the `cups-spool` and `cups-cache` named volumes in the standard Compose stack. ZimaOS stores the equivalent state under `/DATA/AppData/epson-printer-ha/`. Removing those volumes/directories can discard jobs that have not reached the printer; completed document payloads are still removed by CUPS.
 
 ## Scanning
 
@@ -80,7 +85,7 @@ Epson Scan 2 is distributed free of charge, but its network plug-in is proprieta
 
 The ZimaOS stack enables this automatically. Other Docker installs must set `EPSON_EULA_ACCEPTED=true` after reading [Epson's licence agreement](https://download.ebz.epson.net/dsc/du/02/eula/global/LINUX_EN.html). No separate download, bind mount or host installation is required.
 
-If Epson removes or changes the pinned upstream file, the sidecar refuses to install it and retries rather than executing unverified code.
+If Epson's server is temporarily unavailable, the sidecar retries with capped exponential backoff. Licence, CPU-architecture, checksum, package-name and archive-safety failures are treated as permanent: the container exits with an actionable message rather than executing unverified code or looping internally. Compose caps these failed restarts at five, so correct the configuration and recreate the service. The published compatibility image supports `linux/amd64` because Epson's bundle is x86-64 only.
 
 ## Home Assistant
 
@@ -110,7 +115,7 @@ CI runs the Python tests, validates both Compose files, builds both images, boot
 
 ## Security
 
-This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or SANE to the internet. The scanner compatibility service binds `saned` to `127.0.0.1:6566`, not the LAN.
+This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or SANE to the internet. Basic authentication protects access but not transport confidentiality; use an HTTPS reverse proxy outside a fully trusted LAN. The scanner compatibility service binds `saned` to `127.0.0.1:6566`, not the LAN.
 
 ## Status
 

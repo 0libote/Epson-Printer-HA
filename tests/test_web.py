@@ -32,6 +32,20 @@ def test_mutating_routes_require_csrf(web):
     assert response.status_code == 400
 
 
+def test_repeated_authentication_failures_are_throttled(web, monkeypatch):
+    monkeypatch.setattr(web, "WEB_USERNAME", "admin")
+    monkeypatch.setattr(web, "WEB_PASSWORD", "correct-password")
+    web._auth_failures.clear()
+    client = web.app.test_client()
+
+    for _ in range(web.AUTH_FAILURE_LIMIT):
+        assert client.get("/", headers={"Authorization": "Basic YWRtaW46d3Jvbmc="}).status_code == 401
+
+    response = client.get("/", headers={"Authorization": "Basic YWRtaW46d3Jvbmc="})
+    assert response.status_code == 429
+    assert response.headers["Retry-After"] == str(web.AUTH_FAILURE_WINDOW_SECONDS)
+
+
 def test_failed_cups_setup_keeps_previous_printer_ip(web, monkeypatch):
     web._save_printer_ip("192.0.2.10")
     monkeypatch.setattr(web, "_configure_cups", lambda *_args, **_kwargs: (False, "missing PPD"))
@@ -91,6 +105,48 @@ def test_bad_print_count_is_rejected_without_submitting(web, monkeypatch):
 
     assert response.status_code == 302
     submitted.assert_not_called()
+
+
+def test_disguised_print_upload_is_rejected(web, monkeypatch):
+    web._save_printer_ip("192.0.2.10")
+    submitted = Mock()
+    monkeypatch.setattr(web, "submit_print", submitted)
+    client = web.app.test_client()
+    token = _set_csrf(client)
+
+    response = client.post(
+        "/print",
+        data={
+            "file": (BytesIO(b"this is not a PDF"), "document.pdf"),
+            "copies": "1",
+            "_csrf_token": token,
+        },
+        content_type="multipart/form-data",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"does not appear to be a valid PDF" in response.data
+    submitted.assert_not_called()
+
+
+def test_scan_rejects_a_concurrent_operation(web, monkeypatch):
+    web._save_printer_ip("192.0.2.10")
+    monkeypatch.setattr(web, "_operation_lock", lambda *_args, **_kwargs: __import__("contextlib").nullcontext(False))
+    scan = Mock()
+    monkeypatch.setattr(web, "scan_document", scan)
+    client = web.app.test_client()
+    token = _set_csrf(client)
+
+    response = client.post(
+        "/scan",
+        data={"dpi": "300", "mode": "Color", "format": "pdf", "_csrf_token": token},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b"scan is already in progress" in response.data
+    scan.assert_not_called()
 
 
 def test_client_host_can_be_overridden_for_reverse_proxy(web, monkeypatch):

@@ -41,7 +41,7 @@
           <h1>Connect your printer</h1>
           <p>Enter the IP address shown in your router or on the printer's network status sheet. After this, everyone at home can print from this page.</p>
         </div>
-        <form method="post" action="/setup" class="setup-form" data-busy-form>
+        <form method="post" action="/setup" class="setup-form" data-busy-form data-busy-stages="Checking the printer address|Configuring the print service|Waiting for the printer to respond">
           <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
           <label for="printer-ip">Printer IP address</label>
           <div class="field-action">
@@ -70,7 +70,7 @@
             <span class="task-icon print" aria-hidden="true">↥</span>
             <div><p class="kicker">Print</p><h2>Put a file on paper</h2></div>
           </div>
-          <form method="post" action="/print" enctype="multipart/form-data" data-busy-form>
+          <form method="post" action="/print" enctype="multipart/form-data" data-busy-form data-busy-stages="Uploading the file|Preparing the print job|Waiting for the printer queue">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <label class="file-picker" for="print-file">
               <input id="print-file" type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.txt" required data-file-input>
@@ -93,7 +93,7 @@
             <div><p class="kicker">Scan</p><h2>Make a digital copy</h2></div>
           </div>
           {% if scanner.ok %}
-            <form method="post" action="/scan" data-busy-form>
+            <form method="post" action="/scan" data-busy-form data-busy-stages="Contacting the scanner|Scanning the document|Preparing the download" data-busy-stage-seconds="15">
               <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
               <div class="scan-options">
                 <label for="mode">Colour
@@ -170,7 +170,7 @@
       <details class="panel fold">
         <summary><span><strong>Connect phones and computers</strong><small>Share this printer around the house</small></span><span class="summary-state {{ 'on' if share_printer else '' }}">{{ 'Sharing on' if share_printer else 'Sharing off' }}</span></summary>
         <div class="fold-content network-grid">
-          <form method="post" action="/client-settings" class="settings-form" data-busy-form>
+          <form method="post" action="/client-settings" class="settings-form" data-busy-form data-busy-stages="Validating the settings|Updating the print queue|Refreshing network sharing">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <label for="display-name">Printer name<input id="display-name" class="input" type="text" name="display_name" value="{{ display_name }}" maxlength="80" required></label>
             <label for="queue-name">Technical queue name<input id="queue-name" class="input" type="text" name="printer_name" value="{{ printer_name }}" pattern="[A-Za-z0-9._-]+" maxlength="127" required></label>
@@ -226,7 +226,7 @@
           {% if printer_ip_locked %}
             <p class="empty-copy">The printer address is managed by the ZimaOS app settings.</p>
           {% else %}
-            <form method="post" action="/setup" class="settings-form" data-busy-form>
+            <form method="post" action="/setup" class="settings-form" data-busy-form data-busy-stages="Checking the printer address|Updating the print service|Waiting for the printer to respond">
               <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
               <label for="change-printer-ip">Printer IP address<input id="change-printer-ip" class="input" type="text" inputmode="decimal" name="printer_ip" value="{{ printer_ip }}" required></label>
               <button type="submit" data-busy-text="Checking printer…">Save address</button>

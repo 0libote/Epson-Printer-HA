@@ -9,6 +9,23 @@ SHARE_PRINTER="${SHARE_PRINTER:-true}"
 OLD_PRINTER_NAME="${OLD_PRINTER_NAME:-}"
 PREFER_ENV_SETTINGS="${PREFER_ENV_SETTINGS:-false}"
 
+lock_root="${CUPS_LOCK_DIR:-/run/epson}"
+lock_dir="${lock_root}/configure-cups.lock"
+ready_attempts="${CUPS_READY_ATTEMPTS:-30}"
+lock_acquired=false
+for ((attempt = 0; attempt < ready_attempts; attempt++)); do
+  if mkdir "$lock_dir" 2>/dev/null; then
+    trap 'rmdir "$lock_dir"' EXIT
+    lock_acquired=true
+    break
+  fi
+  sleep 1
+done
+if [[ "$lock_acquired" != "true" ]]; then
+  echo "[cups] Another queue configuration is still running."
+  exit 1
+fi
+
 if [[ -z "$PRINTER_IP" && -f /data/settings.json ]]; then
   PRINTER_IP="$(python3 - <<'PY'
 import ipaddress, json
@@ -62,10 +79,18 @@ if [[ -z "$PRINTER_IP" ]]; then
   exit 0
 fi
 
-for _ in {1..30}; do
-  lpstat -r >/dev/null 2>&1 && break
+ready=false
+for ((attempt = 0; attempt < ready_attempts; attempt++)); do
+  if lpstat -r >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
   sleep 1
 done
+if [[ "$ready" != "true" ]]; then
+  echo "[cups] CUPS did not become ready after ${ready_attempts} checks."
+  exit 1
+fi
 
 MODEL="$(lpinfo -m 2>/dev/null | grep -iE 'XP[-_ ]?2200' | head -n1 | awk '{print $1}' || true)"
 if [[ -z "$MODEL" ]]; then

@@ -32,7 +32,9 @@ COPY config/net.conf /etc/sane.d/net.conf
 COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
 RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh \
-    && mkdir -p /data/scans /data/uploads \
+    && groupadd --system epson \
+    && useradd --system --gid epson --home-dir /nonexistent --shell /usr/sbin/nologin epson \
+    && mkdir -p /data/scans /data/uploads /var/cache/cups /var/spool/cups \
     && printf 'airscan\nepsonds\nnet\n' > /etc/sane.d/dll.conf
 
 ENV WEB_PORT=8080 \
@@ -42,6 +44,6 @@ ENV WEB_PORT=8080 \
     SANE_NET_TIMEOUT=1
 
 EXPOSE 8080 631
-VOLUME ["/data"]
+VOLUME ["/data", "/var/cache/cups", "/var/spool/cups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.getenv('WEB_PORT', '8080') + '/api/health', timeout=3)" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

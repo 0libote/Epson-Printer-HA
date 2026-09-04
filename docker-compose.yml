@@ -18,8 +18,15 @@ services:
       WEB_USERNAME: "${WEB_USERNAME:-}"
       WEB_PASSWORD: "${WEB_PASSWORD:-}"
       SECRET_KEY: "${SECRET_KEY:-}"
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      HISTORY_RETENTION_DAYS: "${HISTORY_RETENTION_DAYS:-90}"
+      HISTORY_POLL_SECONDS: "${HISTORY_POLL_SECONDS:-5}"
+      HISTORY_COMPLETED_POLL_SECONDS: "${HISTORY_COMPLETED_POLL_SECONDS:-60}"
+      MAX_SCAN_FILES: "${MAX_SCAN_FILES:-100}"
     volumes:
       - ./data:/data
+      - cups-spool:/var/spool/cups
+      - cups-cache:/var/cache/cups
 
   epson-scan-bridge:
     image: epson-printer-ha-scan-bridge:local
@@ -28,9 +35,14 @@ services:
       context: ./scan-bridge
     container_name: epson-printer-ha-scan-bridge
     network_mode: host
-    restart: unless-stopped
+    # Transient downloads retry inside the container; cap permanent config failures.
+    restart: on-failure:5
     environment:
       PRINTER_IP: "${PRINTER_IP:-}"
       EPSON_EULA_ACCEPTED: "${EPSON_EULA_ACCEPTED:-false}"
     volumes:
       - ./data:/data:ro
+
+volumes:
+  cups-spool:
+  cups-cache:

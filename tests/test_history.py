@@ -1,10 +1,14 @@
 import sqlite3
+import time
+
+import pytest
 
 from app import history
 
 
 def test_source_classification():
     assert history._source_for("webui", "localhost") == "WebUI"
+    assert history._source_for("epson", "localhost") == "WebUI"
     assert history._source_for("root", "127.0.0.1") == "WebUI"
     assert history._source_for("alice", "192.0.2.25") == "Network device"
 
@@ -37,6 +41,62 @@ def test_history_sync_persists_jobs(monkeypatch, tmp_path):
     assert rows[0]["origin_host"] == "192.0.2.25"
     assert rows[0]["state"] == "printing"
     assert rows[0]["size_bytes"] == 12 * 1024
+
+    assert history.sync_print_history("Home_Epson_XP2200") == 0
+
+
+def test_history_sync_tolerates_malformed_numeric_attributes(monkeypatch, tmp_path):
+    monkeypatch.setattr(history, "APP_DIR", tmp_path)
+    monkeypatch.setattr(history, "HISTORY_DB", tmp_path / "history.sqlite3")
+    monkeypatch.setattr(history, "cups", object())
+    monkeypatch.setattr(
+        history,
+        "_fetch_jobs",
+        lambda _which: {
+            7: {
+                "job-printer-uri": "ipp://localhost/printers/Printer",
+                "job-state": "bad",
+                "job-k-octets": object(),
+                "time-at-creation": "not-a-time",
+            }
+        },
+    )
+
+    assert history.sync_print_history("Printer", include_completed=False) == 1
+    row = history.list_print_history()[0]
+    assert row["state"] == "unknown"
+    assert row["size_bytes"] == 0
+    assert row["created_at"] == 0
+
+
+def test_history_sync_reports_total_cups_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(history, "APP_DIR", tmp_path)
+    monkeypatch.setattr(history, "HISTORY_DB", tmp_path / "history.sqlite3")
+    monkeypatch.setattr(history, "cups", object())
+
+    def fail(which):
+        raise OSError(f"{which} unavailable")
+
+    monkeypatch.setattr(history, "_fetch_jobs", fail)
+    with pytest.raises(RuntimeError, match="Unable to fetch CUPS jobs"):
+        history.sync_print_history("Printer")
+
+
+def test_history_retention_only_removes_old_terminal_jobs(monkeypatch, tmp_path):
+    database = tmp_path / "history.sqlite3"
+    monkeypatch.setattr(history, "APP_DIR", tmp_path)
+    monkeypatch.setattr(history, "HISTORY_DB", database)
+    history.init_history()
+    old = int(time.time()) - 10 * 86400
+    with sqlite3.connect(database) as db:
+        for key, state in (("old-complete", "completed"), ("old-active", "printing")):
+            db.execute(
+                "INSERT INTO print_history (history_key, job_id, printer, state, created_at, updated_at) VALUES (?, 1, 'Printer', ?, ?, ?)",
+                (key, state, old, old),
+            )
+
+    assert history.prune_print_history(retention_days=5) == 1
+    assert [row["state"] for row in history.list_print_history()] == ["printing"]
 
 
 def test_legacy_history_survives_reused_cups_job_id(monkeypatch, tmp_path):

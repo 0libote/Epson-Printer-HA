@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import hmac
 import ipaddress
 import json
@@ -8,17 +9,20 @@ import re
 import secrets
 import subprocess
 import tempfile
+import time
+from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
+from threading import Lock
 
 from flask import Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.utils import secure_filename
 
 from .core import (
+    cached_cups_printer_status,
+    cached_list_jobs,
+    cached_printer_reachable,
     cancel_job,
-    cups_printer_status,
-    list_jobs,
-    printer_reachable,
     run_command,
     scan_document,
     scanner_status,
@@ -34,9 +38,14 @@ DEFAULT_PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip() or
 DEFAULT_DISPLAY_NAME = os.getenv("PRINTER_DISPLAY_NAME", "Home Epson XP-2200").strip() or "Home Epson XP-2200"
 DEFAULT_SHARE_PRINTER = os.getenv("SHARE_PRINTER", "true").strip().lower() not in {"0", "false", "no", "off"}
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "128"))
+MAX_SCAN_FILES = max(1, int(os.getenv("MAX_SCAN_FILES", "100")))
 CLIENT_HOST = os.getenv("CLIENT_HOST", "").strip()
 WEB_USERNAME = os.getenv("WEB_USERNAME", "")
 WEB_PASSWORD = os.getenv("WEB_PASSWORD", "")
+AUTH_FAILURE_LIMIT = 10
+AUTH_FAILURE_WINDOW_SECONDS = 60
+_auth_failures: dict[str, list[float]] = {}
+_auth_failures_lock = Lock()
 
 if bool(WEB_USERNAME) != bool(WEB_PASSWORD):
     raise RuntimeError("WEB_USERNAME and WEB_PASSWORD must either both be set or both be blank")
@@ -46,6 +55,7 @@ app.secret_key = os.getenv("SECRET_KEY") or os.urandom(32)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("SESSION_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 for p in (APP_DIR, SCAN_DIR):
     p.mkdir(parents=True, exist_ok=True)
@@ -64,13 +74,32 @@ def _auth_valid() -> bool:
     )
 
 
+def _auth_failure_state(record_failure: bool = False) -> bool:
+    client = request.remote_addr or "unknown"
+    cutoff = time.monotonic() - AUTH_FAILURE_WINDOW_SECONDS
+    with _auth_failures_lock:
+        recent = [stamp for stamp in _auth_failures.get(client, []) if stamp >= cutoff]
+        if record_failure:
+            recent.append(time.monotonic())
+        if recent:
+            _auth_failures[client] = recent
+        else:
+            _auth_failures.pop(client, None)
+        return len(recent) >= AUTH_FAILURE_LIMIT
+
+
 def require_auth(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         if not _auth_required():
             return func(*args, **kwargs)
+        if _auth_failure_state():
+            return Response("Too many authentication attempts", 429, {"Retry-After": str(AUTH_FAILURE_WINDOW_SECONDS)})
         if not _auth_valid():
+            _auth_failure_state(record_failure=True)
             return Response("Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Epson Hub"'})
+        with _auth_failures_lock:
+            _auth_failures.pop(request.remote_addr or "unknown", None)
         return func(*args, **kwargs)
     return wrapper
 
@@ -150,6 +179,48 @@ def _save_settings(data: dict) -> None:
         temp.unlink(missing_ok=True)
 
 
+@contextmanager
+def _operation_lock(name: str, *, wait: bool = False):
+    """Coordinate hardware and configuration work across Gunicorn threads/processes."""
+    lock_path = APP_DIR / f".{name}.lock"
+    with lock_path.open("a+") as lock_file:
+        flags = fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock_file.fileno(), flags)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _validate_upload(path: Path, suffix: str) -> str | None:
+    """Reject empty or obviously disguised uploads before invoking print filters."""
+    try:
+        size = path.stat().st_size
+        if size == 0:
+            return "The selected file is empty."
+        with path.open("rb") as upload:
+            prefix = upload.read(16)
+        if suffix == ".pdf" and not prefix.startswith(b"%PDF-"):
+            return "That file does not appear to be a valid PDF."
+        if suffix == ".png" and not prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "That file does not appear to be a valid PNG image."
+        if suffix in {".jpg", ".jpeg"} and not prefix.startswith(b"\xff\xd8\xff"):
+            return "That file does not appear to be a valid JPEG image."
+        if suffix == ".txt":
+            with path.open("rb") as upload:
+                sample = upload.read(65536)
+            if b"\x00" in sample:
+                return "That file does not appear to be plain text."
+            sample.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return "The uploaded file could not be read in the expected format."
+    return None
+
+
 def current_printer_ip() -> str:
     if PRINTER_IP_ENV:
         return PRINTER_IP_ENV
@@ -158,6 +229,16 @@ def current_printer_ip() -> str:
         return _validate_ipv4(value) if value else ""
     except ValueError:
         return ""
+
+
+def _prune_scans() -> None:
+    files = sorted(
+        (path for path in SCAN_DIR.iterdir() if path.is_file() and not path.name.startswith(".")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for stale in files[MAX_SCAN_FILES:]:
+        stale.unlink(missing_ok=True)
 
 
 def current_printer_name() -> str:
@@ -241,7 +322,7 @@ def index():
     printer_name = current_printer_name()
     display_name = current_display_name()
     share_printer = network_sharing_enabled()
-    p_status = cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
+    p_status = cached_cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
     s_status = scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required", "detail": "Add the printer IP below"}
     return render_template(
         "index.html",
@@ -251,10 +332,10 @@ def index():
         display_name=display_name,
         share_printer=share_printer,
         client_setup=_client_setup(printer_name),
-        reachable=printer_reachable(printer_ip) if printer_ip else False,
+        reachable=cached_printer_reachable(printer_ip) if printer_ip else False,
         printer=p_status,
         scanner=s_status,
-        jobs=list_jobs(printer_name) if printer_ip else [],
+        jobs=cached_list_jobs(printer_name) if printer_ip else [],
         print_history=list_print_history(100),
         scans=recent_scans(),
         max_upload_mb=MAX_UPLOAD_MB,
@@ -273,12 +354,16 @@ def setup_printer():
         flash(str(exc), "error")
         return redirect(url_for("index"))
 
-    ok, log = _configure_cups(printer_ip)
-    if ok:
-        _save_printer_ip(printer_ip)
-        flash(f"Printer saved at {printer_ip}. CUPS is configured.", "success")
-    else:
-        flash(f"CUPS setup failed; the previous printer setting was kept: {log[-800:] or 'unknown error'}", "error")
+    with _operation_lock("cups-config") as acquired:
+        if not acquired:
+            flash("Printer settings are already being changed. Wait for that operation to finish.", "error")
+            return redirect(url_for("index"))
+        ok, log = _configure_cups(printer_ip)
+        if ok:
+            _save_printer_ip(printer_ip)
+            flash(f"Printer saved at {printer_ip}. CUPS is configured.", "success")
+        else:
+            flash(f"CUPS setup failed; the previous printer setting was kept: {log[-800:] or 'unknown error'}", "error")
     return redirect(url_for("index"))
 
 
@@ -290,7 +375,6 @@ def client_settings():
         flash("Set up the physical printer first.", "error")
         return redirect(url_for("index"))
 
-    old_name = current_printer_name()
     try:
         printer_name = _validate_queue_name(request.form.get("printer_name", ""))
         display_name = _validate_display_name(request.form.get("display_name", ""))
@@ -299,24 +383,29 @@ def client_settings():
         return redirect(url_for("index"))
 
     share_printer = request.form.get("share_printer") == "on"
-    ok, log = _configure_cups(
-        printer_ip,
-        printer_name=printer_name,
-        display_name=display_name,
-        share_printer=share_printer,
-        old_printer_name=old_name,
-    )
-    if not ok:
-        flash(f"Network printing settings were not applied: {log[-800:] or 'unknown error'}", "error")
-        return redirect(url_for("index"))
+    with _operation_lock("cups-config") as acquired:
+        if not acquired:
+            flash("Printer settings are already being changed. Wait for that operation to finish.", "error")
+            return redirect(url_for("index"))
+        old_name = current_printer_name()
+        ok, log = _configure_cups(
+            printer_ip,
+            printer_name=printer_name,
+            display_name=display_name,
+            share_printer=share_printer,
+            old_printer_name=old_name,
+        )
+        if not ok:
+            flash(f"Network printing settings were not applied: {log[-800:] or 'unknown error'}", "error")
+            return redirect(url_for("index"))
 
-    data = _saved_settings()
-    data.update({
-        "printer_name": printer_name,
-        "display_name": display_name,
-        "share_printer": share_printer,
-    })
-    _save_settings(data)
+        data = _saved_settings()
+        data.update({
+            "printer_name": printer_name,
+            "display_name": display_name,
+            "share_printer": share_printer,
+        })
+        _save_settings(data)
     flash("Network printing settings applied.", "success")
     return redirect(url_for("index"))
 
@@ -349,6 +438,10 @@ def print_file():
     with tempfile.TemporaryDirectory(dir=temp_dir, prefix="print-") as work_dir:
         target = Path(work_dir) / name
         upload.save(target)
+        validation_error = _validate_upload(target, Path(name).suffix.lower())
+        if validation_error:
+            flash(validation_error, "error")
+            return redirect(url_for("index"))
         result = submit_print(
             current_printer_name(),
             str(target),
@@ -376,15 +469,21 @@ def scan():
         flash("DPI must be 150, 200, 300 or 600.", "error")
         return redirect(url_for("index"))
 
-    result, path = scan_document(
-        printer_ip,
-        SCAN_DIR,
-        dpi=dpi,
-        mode=request.form.get("mode", "Color"),
-        fmt=request.form.get("format", "pdf"),
-    )
+    with _operation_lock("scanner") as acquired:
+        if not acquired:
+            flash("A scan is already in progress. Wait for it to finish before starting another.", "error")
+            return redirect(url_for("index"))
+        result, path = scan_document(
+            printer_ip,
+            SCAN_DIR,
+            dpi=dpi,
+            mode=request.form.get("mode", "Color"),
+            fmt=request.form.get("format", "pdf"),
+        )
     if result.ok and path:
-        flash(f"Scan saved as {path.name}.", "success")
+        _prune_scans()
+        message = result.stderr or f"Scan saved as {path.name}."
+        flash(message, "success")
     else:
         flash(result.stderr or "Scan failed.", "error")
     return redirect(url_for("index"))
@@ -414,10 +513,10 @@ def api_status():
         "printer_name": printer_name,
         "display_name": current_display_name(),
         "network_sharing": network_sharing_enabled(),
-        "reachable": printer_reachable(printer_ip) if printer_ip else False,
-        "printer": cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required"},
+        "reachable": cached_printer_reachable(printer_ip) if printer_ip else False,
+        "printer": cached_cups_printer_status(printer_name) if printer_ip else {"ok": False, "state": "setup_required"},
         "scanner": scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required"},
-        "queue": list_jobs(printer_name) if printer_ip else [],
+        "queue": cached_list_jobs(printer_name) if printer_ip else [],
         "recent_prints": list_print_history(10),
     })
 

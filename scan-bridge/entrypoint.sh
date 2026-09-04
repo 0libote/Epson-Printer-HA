@@ -20,17 +20,22 @@ except Exception:
 PY
 }
 
+retry_delay=15
 while true; do
   /usr/local/bin/install-epson-bundle
   rc=$?
   if [[ $rc -eq 0 ]]; then
     break
   fi
-  if [[ $rc -eq 2 ]]; then
-    sleep 20
-  else
-    echo "[scan-bridge] Package installation failed (exit $rc); retrying in 60 seconds."
-    sleep 60
+  if [[ $rc -eq 3 ]]; then
+    echo "[scan-bridge] Permanent setup failure; fix the message above and recreate the container."
+    exit "$rc"
+  fi
+  echo "[scan-bridge] Transient installation failure (exit $rc); retrying in ${retry_delay} seconds."
+  sleep "$retry_delay"
+  if (( retry_delay < 300 )); then
+    retry_delay=$((retry_delay * 2))
+    (( retry_delay > 300 )) && retry_delay=300
   fi
 done
 

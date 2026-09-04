@@ -15,14 +15,21 @@ services:
       WEB_USERNAME: ""
       WEB_PASSWORD: ""
       SECRET_KEY: ""
+      SESSION_COOKIE_SECURE: "false"
+      HISTORY_RETENTION_DAYS: "90"
+      HISTORY_POLL_SECONDS: "5"
+      HISTORY_COMPLETED_POLL_SECONDS: "60"
+      MAX_SCAN_FILES: "100"
     volumes:
       - /DATA/AppData/epson-printer-ha/data:/data
+      - /DATA/AppData/epson-printer-ha/cups-spool:/var/spool/cups
+      - /DATA/AppData/epson-printer-ha/cups-cache:/var/cache/cups
 
   epson-scan-bridge:
     image: ghcr.io/0libote/epson-printer-ha-scan-bridge:latest
     container_name: epson-printer-ha-scan-bridge
     network_mode: host
-    restart: unless-stopped
+    restart: on-failure:5
     environment:
       PRINTER_IP: ""
       EPSON_EULA_ACCEPTED: "true"

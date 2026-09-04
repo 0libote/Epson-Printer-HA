@@ -12,6 +12,17 @@ SETTINGS_FILE = APP_DIR / "settings.json"
 DEFAULT_PRINTER_NAME = os.getenv("PRINTER_NAME", "Home_Epson_XP2200").strip() or "Home_Epson_XP2200"
 
 
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+POLL_INTERVAL_SECONDS = _positive_env_int("HISTORY_POLL_SECONDS", 5)
+COMPLETED_POLL_SECONDS = max(POLL_INTERVAL_SECONDS, _positive_env_int("HISTORY_COMPLETED_POLL_SECONDS", 60))
+
+
 def current_printer_name() -> str:
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
@@ -24,12 +35,17 @@ def current_printer_name() -> str:
 def main() -> None:
     init_history()
     print("[history] Persistent print history collector started.", flush=True)
+    last_completed_poll = 0.0
     while True:
         try:
-            sync_print_history(current_printer_name())
+            now = time.monotonic()
+            include_completed = now - last_completed_poll >= COMPLETED_POLL_SECONDS
+            sync_print_history(current_printer_name(), include_completed=include_completed)
+            if include_completed:
+                last_completed_poll = now
         except Exception as exc:
             print(f"[history] Sync failed: {exc}", flush=True)
-        time.sleep(5)
+        time.sleep(POLL_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

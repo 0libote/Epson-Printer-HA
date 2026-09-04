@@ -47,6 +47,16 @@ def printer_reachable(host: str) -> bool:
     return any(tcp_open(host, port, timeout=0.6) for port in (631, 9100, 515))
 
 
+@lru_cache(maxsize=32)
+def _printer_reachable_cached(host: str, _time_bucket: int) -> bool:
+    return printer_reachable(host)
+
+
+def cached_printer_reachable(host: str) -> bool:
+    """Return a short-lived reachability result without stalling every request."""
+    return _printer_reachable_cached(host, int(time.monotonic() // 5))
+
+
 def cups_printer_status(printer_name: str) -> dict:
     result = run_command(["lpstat", "-p", printer_name, "-l"], timeout=8)
     text = (result.stdout or result.stderr).strip()
@@ -59,6 +69,15 @@ def cups_printer_status(printer_name: str) -> dict:
             state = "printing"
         return {"ok": True, "state": state, "detail": text}
     return {"ok": False, "state": "unconfigured", "detail": text or "CUPS queue not configured"}
+
+
+@lru_cache(maxsize=32)
+def _cups_printer_status_cached(printer_name: str, _time_bucket: int) -> dict:
+    return cups_printer_status(printer_name)
+
+
+def cached_cups_printer_status(printer_name: str) -> dict:
+    return _cups_printer_status_cached(printer_name, int(time.monotonic() // 3))
 
 
 def list_jobs(printer_name: str) -> list[dict]:
@@ -77,6 +96,15 @@ def list_jobs(printer_name: str) -> list[dict]:
     return jobs
 
 
+@lru_cache(maxsize=32)
+def _list_jobs_cached(printer_name: str, _time_bucket: int) -> list[dict]:
+    return list_jobs(printer_name)
+
+
+def cached_list_jobs(printer_name: str) -> list[dict]:
+    return _list_jobs_cached(printer_name, int(time.monotonic() // 2))
+
+
 def submit_print(
     printer_name: str,
     path: str,
@@ -87,7 +115,7 @@ def submit_print(
     title = (title or Path(path).name)[:255] or "WebUI print"
     args = [
         "lp",
-        "-U", "webui",
+        "-U", "epson",
         "-d", printer_name,
         "-t", title,
         "-n", str(max(1, min(copies, 99))),
@@ -220,7 +248,9 @@ def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str =
                     image = image.convert("RGB")
                 image.save(output_path, "PDF", resolution=float(dpi))
     except OSError as exc:
-        return CommandResult(False, stderr=f"Scan completed, but conversion failed: {exc}"), png_path
+        # The scanner did its job successfully. Keep the valid PNG as a useful
+        # fallback instead of reporting a total failure and leaving an orphan.
+        return CommandResult(True, stdout=str(png_path), stderr=f"Conversion failed; saved PNG instead: {exc}"), png_path
 
     png_path.unlink(missing_ok=True)
     return CommandResult(True, stdout=str(output_path)), output_path
