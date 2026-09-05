@@ -11,8 +11,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/scan-bridge
-COPY package.json bun.lock* ./
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
+COPY package.json ./
+RUN bun install --ignore-scripts 2>/dev/null || echo "no deps"
 
 COPY src ./src
 COPY install_bundle.py /usr/local/bin/install-epson-bundle-py

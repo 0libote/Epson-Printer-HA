@@ -27,11 +27,10 @@ WORKDIR /opt/epson-hub
 
 # Install JS dependencies with Bun 1.4 isolated linker (up to 7x faster warm installs)
 COPY package.json bun.lock bunfig.toml tsconfig.json ./
-RUN bun install --frozen-lockfile
+RUN bun install --frozen-lockfile --ignore-scripts
 
 # Copy source - Bun 1.4 native APIs (Bun.serve, bun:sqlite, Bun.Image)
 COPY src ./src
-COPY public ./public
 # Keep legacy app templates/static for fallback serving
 COPY app ./app
 COPY scripts/configure-cups.sh /usr/local/bin/configure-cups.sh
