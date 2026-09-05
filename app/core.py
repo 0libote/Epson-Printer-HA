@@ -231,15 +231,36 @@ def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str =
         "-y", "297",
         "--format=png",
     ]
-    try:
-        with png_path.open("wb") as fh:
-            proc = subprocess.run(args, stdout=fh, stderr=subprocess.PIPE, timeout=180, check=False)
-        if proc.returncode != 0:
+    # ponytail: retry once on Device busy - Epson bridge kills es2netif after each scan and needs ~1s to recover
+    last_exc = None
+    for attempt in range(2):
+        try:
+            with png_path.open("wb") as fh:
+                proc = subprocess.run(args, stdout=fh, stderr=subprocess.PIPE, timeout=180, check=False)
+            if proc.returncode == 0:
+                break
+            stderr = proc.stderr.decode("utf-8", errors="replace").strip()
+            # Epson's saned returns busy string variations; retry once after short settle
+            if "busy" in stderr.lower() and attempt == 0:
+                png_path.unlink(missing_ok=True)
+                time.sleep(2.0)
+                continue
             png_path.unlink(missing_ok=True)
-            return CommandResult(False, stderr=proc.stderr.decode("utf-8", errors="replace").strip(), returncode=proc.returncode), None
-    except (subprocess.SubprocessError, OSError) as exc:
-        png_path.unlink(missing_ok=True)
-        return CommandResult(False, stderr=str(exc), returncode=1), None
+            # ponytail: common busy after previous scan -> friendly HomeLab message
+            if "busy" in stderr.lower():
+                return CommandResult(False, stderr="Scanner is still finishing the previous job. Wait a few seconds and try again.", returncode=proc.returncode), None
+            return CommandResult(False, stderr=stderr, returncode=proc.returncode), None
+        except (subprocess.SubprocessError, OSError) as exc:
+            last_exc = exc
+            png_path.unlink(missing_ok=True)
+            if attempt == 0:
+                time.sleep(1.5)
+                continue
+            return CommandResult(False, stderr=str(exc), returncode=1), None
+    else:
+        # loop exhausted without break (should be unreachable)
+        if last_exc:
+            return CommandResult(False, stderr=str(last_exc), returncode=1), None
 
     if fmt == "png":
         return CommandResult(True, stdout=str(png_path)), png_path

@@ -53,8 +53,16 @@ configure_ip() {
 
 configure_ip "$(get_printer_ip)"
 
+# ponytail: suppress verbose Epson TRACE that clutters HomeLab logs (normal scan ~26M TRACE lines)
+export SANE_DEBUG_EPSONSCAN2=0
+export SANE_DEBUG_EPSON2=0
+export SANE_DEBUG_DLL=0
+export SANE_DEBUG_NET=0
+export ES2_DEBUG=0
+# Epson's backend ignores env when logging via backend.cpp TRACE; filter at source if still verbose
 echo "[scan-bridge] Starting saned on localhost:6566."
-saned -l -b 127.0.0.1 -p 6566 &
+# ponytail: saned TRACE still escapes via epsonscan2 backend; pipe through grep to drop TRACE lines but keep errors
+saned -l -b 127.0.0.1 -p 6566 2> >(grep -v -- "TRACE" >&2) &
 saned_pid=$!
 trap 'kill "$saned_pid" 2>/dev/null || true; wait "$saned_pid" 2>/dev/null || true' TERM INT EXIT
 

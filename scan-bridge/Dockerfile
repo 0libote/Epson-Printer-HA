@@ -18,6 +18,10 @@ RUN chmod +x /usr/local/bin/install-epson-bundle /usr/local/bin/entrypoint.sh \
     && mkdir -p /data
 
 VOLUME ["/data"]
-ENV QT_QPA_PLATFORM=offscreen
+ENV QT_QPA_PLATFORM=offscreen \
+    SANE_DEBUG_EPSONSCAN2=0 \
+    SANE_DEBUG_EPSON2=0 \
+    SANE_DEBUG_DLL=0 \
+    SANE_DEBUG_NET=0
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD python3 -c "import socket; socket.create_connection(('127.0.0.1', 6566), 3).close()" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
