@@ -76,6 +76,12 @@ button:hover { background: var(--blue-dark); } button:active { transform: transl
 .operation-copy strong { color: #4c586a; font-weight: 700; }
 .operation-copy span { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .settings-form .operation-status { width: 100%; grid-column: 1 / -1; }
+.field-error { margin-top: 8px; padding: 8px 10px; border-radius: 9px; background: #fff3f5; border: 1px solid #f0ccd2; color: #9e2f3f; font-size: 12px; font-weight: 700; }
+.live-indicator { display: flex; align-items: center; gap: 7px; margin-top: 10px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.live-indicator #live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(23,150,106,.12); }
+.live-indicator #live-dot.live-dot--error { background: var(--bad); box-shadow: 0 0 0 4px rgba(208,68,85,.12); }
+.live-time { font-weight: 400; font-variant-numeric: tabular-nums; }
+[hidden] { display: none !important; }
 @keyframes operation-progress { from { transform: translateX(-110%); } to { transform: translateX(305%); } }
 .scan-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .help-text { margin: 17px 0; color: var(--muted); font-size: 13px; }

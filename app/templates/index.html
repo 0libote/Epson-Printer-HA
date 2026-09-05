@@ -9,15 +9,15 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script defer src="{{ url_for('static', filename='app.js') }}"></script>
 </head>
-<body>
+<body {% if printer_ip %}data-printer-ip="{{ printer_ip }}" data-poll-interval="3000"{% endif %}>
   <nav class="topbar" aria-label="Home Print Hub">
     <a class="brand" href="/" aria-label="Home Print Hub home">
       <span class="brand-mark" aria-hidden="true">P</span>
       <span><strong>Home Print Hub</strong><small>Epson XP-2200</small></span>
     </a>
     {% if printer_ip %}
-      <span class="health {{ 'online' if reachable else 'offline' }}">
-        <span class="health-dot"></span>{{ 'Online' if reachable else 'Needs attention' }}
+      <span class="health {{ 'online' if reachable else 'offline' }}" id="health-badge" data-reachable="{{ '1' if reachable else '0' }}">
+        <span class="health-dot"></span><span id="health-text">{{ 'Online' if reachable else 'Needs attention' }}</span>
       </span>
     {% else %}
       <span class="health setup"><span class="health-dot"></span>Setup needed</span>
@@ -59,8 +59,8 @@
           <p>Print a file or scan a document without installing anything on this device.</p>
         </div>
         <div class="service-summary" aria-label="Service status">
-          <span><i class="service-dot {{ 'good' if printer.ok else 'bad' }}"></i>Printer {{ printer.state|replace('_', ' ') }}</span>
-          <span><i class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i>Scanner {{ 'ready' if scanner.ok else 'unavailable' }}</span>
+          <span><i id="summary-printer-dot" class="service-dot {{ 'good' if printer.ok else 'bad' }}"></i><span id="summary-printer-text">Printer {{ printer.state|replace('_', ' ') }}</span></span>
+          <span><i id="summary-scanner-dot" class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i><span id="summary-scanner-text">Scanner {{ 'ready' if scanner.ok else 'unavailable' }}</span></span>
         </div>
       </header>
 
@@ -73,10 +73,11 @@
           <form method="post" action="/print" enctype="multipart/form-data" data-busy-form data-busy-stages="Uploading the file|Preparing the print job|Waiting for the printer queue">
             <input type="hidden" name="_csrf_token" value="{{ csrf_token() }}">
             <label class="file-picker" for="print-file">
-              <input id="print-file" type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.txt" required data-file-input>
+              <input id="print-file" type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.txt" required data-file-input data-max-mb="{{ max_upload_mb }}">
               <span class="file-glyph" aria-hidden="true">＋</span>
               <span><strong data-file-label>Choose a file</strong><small>PDF, image or text · up to {{ max_upload_mb }} MB</small></span>
             </label>
+            <div id="file-inline-error" class="field-error" hidden role="alert"></div>
             <div class="options-row">
               <label for="copies">Copies
                 <input id="copies" class="input compact" type="number" name="copies" value="1" min="1" max="99">
@@ -120,28 +121,27 @@
 
       <section class="status-strip panel" aria-label="Current devices">
         <div class="device-status">
-          <i class="service-dot {{ 'good' if printer.ok else 'bad' }}"></i>
-          <span><small>Printer</small><strong>{{ printer.state|replace('_', ' ')|title }}</strong></span>
+          <i id="status-printer-dot" class="service-dot {{ 'good' if printer.ok else 'bad' }}"></i>
+          <span><small>Printer</small><strong id="status-printer-text">{{ printer.state|replace('_', ' ')|title }}</strong></span>
           <span class="device-detail">{{ display_name }} · {{ printer_ip }}</span>
         </div>
         <div class="device-status">
-          <i class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i>
-          <span><small>Scanner</small><strong>{{ 'Ready' if scanner.ok else 'Starting' }}</strong></span>
-          <span class="device-detail">{{ scanner.backend if scanner.ok else 'Automatic setup in progress' }}</span>
+          <i id="status-scanner-dot" class="service-dot {{ 'good' if scanner.ok else 'warn' }}"></i>
+          <span><small>Scanner</small><strong id="status-scanner-text">{{ 'Ready' if scanner.ok else 'Starting' }}</strong></span>
+          <span id="status-scanner-detail" class="device-detail">{{ scanner.backend if scanner.ok else 'Automatic setup in progress' }}</span>
         </div>
         <div class="device-status">
-          <i class="service-dot {{ 'warn' if jobs else 'good' }}"></i>
-          <span><small>Print queue</small><strong>{{ jobs|length }} {{ 'job' if jobs|length == 1 else 'jobs' }}</strong></span>
-          <span class="device-detail">{{ 'Working through the queue' if jobs else 'Nothing waiting' }}</span>
+          <i id="status-queue-dot" class="service-dot {{ 'warn' if jobs else 'good' }}"></i>
+          <span><small>Print queue</small><strong id="status-queue-text">{{ jobs|length }} {{ 'job' if jobs|length == 1 else 'jobs' }}</strong></span>
+          <span id="status-queue-detail" class="device-detail">{{ 'Working through the queue' if jobs else 'Nothing waiting' }}</span>
         </div>
       </section>
+      <div id="live-indicator" class="live-indicator" aria-live="polite" aria-atomic="true"><span id="live-dot"></span><span id="live-text">Live</span><span id="live-time" class="live-time"></span></div>
 
-      {% if jobs or scans %}
-      <section class="activity-grid">
-        {% if jobs %}
-        <article class="panel compact-panel">
+      <section class="activity-grid" id="activity-grid" {% if not (jobs or scans) %}hidden{% endif %}>
+        <article class="panel compact-panel" id="queue-panel" {% if not jobs %}hidden{% endif %}>
           <div class="section-heading"><div><p class="kicker">In progress</p><h2>Print queue</h2></div></div>
-          <div class="item-list">
+          <div class="item-list" id="queue-list">
             {% for job in jobs %}
             <div class="item-row">
               <span><strong>{{ job.id }}</strong><small>{{ job.owner }} · {{ job.size }}</small></span>
@@ -153,19 +153,15 @@
             {% endfor %}
           </div>
         </article>
-        {% endif %}
-        {% if scans %}
-        <article class="panel compact-panel">
+        <article class="panel compact-panel" id="scans-panel" {% if not scans %}hidden{% endif %}>
           <div class="section-heading"><div><p class="kicker">Downloads</p><h2>Recent scans</h2></div></div>
-          <div class="item-list">
+          <div class="item-list" id="scans-list">
             {% for scan in scans %}
               <a class="item-row" href="/scans/{{ scan.name }}"><span><strong>{{ scan.name }}</strong><small>Saved scan</small></span><span class="download">Download</span></a>
             {% endfor %}
           </div>
         </article>
-        {% endif %}
       </section>
-      {% endif %}
 
       <details class="panel fold">
         <summary><span><strong>Connect phones and computers</strong><small>Share this printer around the house</small></span><span class="summary-state {{ 'on' if share_printer else '' }}">{{ 'Sharing on' if share_printer else 'Sharing off' }}</span></summary>
@@ -196,14 +192,13 @@
         </div>
       </details>
 
-      <details class="panel fold">
-        <summary><span><strong>Print history</strong><small>{{ print_history|length }} recent {{ 'job' if print_history|length == 1 else 'jobs' }} · file contents are not stored</small></span></summary>
+      <details class="panel fold" id="history-fold">
+        <summary><span><strong>Print history</strong><small id="history-summary">{{ print_history|length }} recent {{ 'job' if print_history|length == 1 else 'jobs' }} · file contents are not stored</small></span></summary>
         <div class="fold-content history-content">
-          {% if print_history %}
-          <div class="history-wrap">
+          <div class="history-wrap" id="history-wrap" {% if not print_history %}hidden{% endif %}>
             <table>
               <thead><tr><th>Document</th><th>When</th><th>From</th><th>Status</th><th>Size</th></tr></thead>
-              <tbody>
+              <tbody id="history-tbody">
               {% for job in print_history %}
                 <tr>
                   <td data-label="Document"><strong>{{ job.document }}</strong><small>#{{ job.job_id }}</small></td>
@@ -216,7 +211,7 @@
               </tbody>
             </table>
           </div>
-          {% else %}<p class="empty-copy">No print history yet.</p>{% endif %}
+          <p class="empty-copy" id="history-empty" {% if print_history %}hidden{% endif %}>No print history yet.</p>
         </div>
       </details>
 

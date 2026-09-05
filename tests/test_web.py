@@ -15,6 +15,12 @@ def web(monkeypatch, tmp_path):
     monkeypatch.delenv("PRINTER_IP", raising=False)
     monkeypatch.delenv("WEB_USERNAME", raising=False)
     monkeypatch.delenv("WEB_PASSWORD", raising=False)
+    # ponytail: ensure history module uses tmp_path instead of /data after being imported earlier
+    import app.history
+
+    monkeypatch.setattr(app.history, "APP_DIR", tmp_path)
+    monkeypatch.setattr(app.history, "HISTORY_DB", tmp_path / "print_history.sqlite3")
+    app.history._initialised_databases.clear()
     sys.modules.pop("app.app", None)
     module = importlib.import_module("app.app")
     module.app.config.update(TESTING=True, SECRET_KEY="test-secret")

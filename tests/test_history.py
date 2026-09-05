@@ -104,6 +104,11 @@ def test_legacy_history_survives_reused_cups_job_id(monkeypatch, tmp_path):
     monkeypatch.setattr(history, "APP_DIR", tmp_path)
     monkeypatch.setattr(history, "HISTORY_DB", database)
     monkeypatch.setattr(history, "cups", object())
+    # ponytail: use recent timestamps so retention pruning doesn't delete the legacy row
+    now = int(time.time())
+    legacy_created = now - 1000
+    legacy_updated = now - 900
+    new_created = now
 
     with sqlite3.connect(database) as db:
         db.execute(
@@ -118,7 +123,8 @@ def test_legacy_history_survives_reused_cups_job_id(monkeypatch, tmp_path):
             """
         )
         db.execute(
-            "INSERT INTO print_history VALUES (1, 'Home_Epson_XP2200', 'old.pdf', '', 'WebUI', '', 'completed', 10, 1, 1000, 0, 1001, 1001)"
+            "INSERT INTO print_history VALUES (1, 'Home_Epson_XP2200', 'old.pdf', '', 'WebUI', '', 'completed', 10, 1, ?, 0, ?, ?)",
+            (legacy_created, legacy_updated, legacy_updated),
         )
 
     new_job = {
@@ -126,7 +132,7 @@ def test_legacy_history_survives_reused_cups_job_id(monkeypatch, tmp_path):
             "job-printer-uri": "ipp://localhost/printers/Home_Epson_XP2200",
             "job-state": 5,
             "job-name": "new.pdf",
-            "time-at-creation": 2000,
+            "time-at-creation": new_created,
         }
     }
     monkeypatch.setattr(history, "_fetch_jobs", lambda which: new_job if which == "not-completed" else {})

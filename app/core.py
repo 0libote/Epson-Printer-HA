@@ -44,7 +44,8 @@ def tcp_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def printer_reachable(host: str) -> bool:
-    return any(tcp_open(host, port, timeout=0.6) for port in (631, 9100, 515))
+    # ponytail: tighter timeout per port (was 0.6s) keeps offline case under 1.2s
+    return any(tcp_open(host, port, timeout=0.35) for port in (631, 9100, 515))
 
 
 @lru_cache(maxsize=32)
@@ -54,11 +55,12 @@ def _printer_reachable_cached(host: str, _time_bucket: int) -> bool:
 
 def cached_printer_reachable(host: str) -> bool:
     """Return a short-lived reachability result without stalling every request."""
-    return _printer_reachable_cached(host, int(time.monotonic() // 5))
+    # ponytail: 7s bucket reduces probes when dashboard polls every 3s
+    return _printer_reachable_cached(host, int(time.monotonic() // 7))
 
 
 def cups_printer_status(printer_name: str) -> dict:
-    result = run_command(["lpstat", "-p", printer_name, "-l"], timeout=8)
+    result = run_command(["lpstat", "-p", printer_name, "-l"], timeout=5)
     text = (result.stdout or result.stderr).strip()
     if result.ok:
         state = "ready"
@@ -81,7 +83,7 @@ def cached_cups_printer_status(printer_name: str) -> dict:
 
 
 def list_jobs(printer_name: str) -> list[dict]:
-    result = run_command(["lpstat", "-o", printer_name], timeout=8)
+    result = run_command(["lpstat", "-o", printer_name], timeout=5)
     if not result.ok or not result.stdout:
         return []
     jobs = []
@@ -198,6 +200,14 @@ def _scanner_status_cached(printer_ip: str, _time_bucket: int) -> dict:
 
 def scanner_status(printer_ip: str) -> dict:
     return _scanner_status_cached(printer_ip, int(time.monotonic() // 5))
+
+
+def clear_status_caches() -> None:
+    """Invalidate cached reachability/printer/queue results after a mutating operation."""
+    _printer_reachable_cached.cache_clear()
+    _cups_printer_status_cached.cache_clear()
+    _list_jobs_cached.cache_clear()
+    _scanner_status_cached.cache_clear()
 
 
 def scan_document(printer_ip: str, output_dir: Path, dpi: int = 300, mode: str = "Color", fmt: str = "pdf") -> tuple[CommandResult, Path | None]:

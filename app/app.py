@@ -23,6 +23,7 @@ from .core import (
     cached_list_jobs,
     cached_printer_reachable,
     cancel_job,
+    clear_status_caches,
     run_command,
     scan_document,
     scanner_status,
@@ -361,6 +362,7 @@ def setup_printer():
         ok, log = _configure_cups(printer_ip)
         if ok:
             _save_printer_ip(printer_ip)
+            clear_status_caches()
             flash(f"Printer saved at {printer_ip}. CUPS is configured.", "success")
         else:
             flash(f"CUPS setup failed; the previous printer setting was kept: {log[-800:] or 'unknown error'}", "error")
@@ -406,6 +408,7 @@ def client_settings():
             "share_printer": share_printer,
         })
         _save_settings(data)
+        clear_status_caches()
     flash("Network printing settings applied.", "success")
     return redirect(url_for("index"))
 
@@ -449,6 +452,7 @@ def print_file():
             grayscale=request.form.get("grayscale") == "on",
             title=name,
         )
+    clear_status_caches()
     message = "File added to the print queue." if result.ok else (result.stderr or "Print failed.")
     flash(message, "success" if result.ok else "error")
     return redirect(url_for("index"))
@@ -480,6 +484,7 @@ def scan():
             mode=request.form.get("mode", "Color"),
             fmt=request.form.get("format", "pdf"),
         )
+    clear_status_caches()
     if result.ok and path:
         _prune_scans()
         message = result.stderr or f"Scan saved as {path.name}."
@@ -493,6 +498,7 @@ def scan():
 @require_auth
 def cancel(job_id: str):
     result = cancel_job(job_id)
+    clear_status_caches()
     flash("Job cancelled." if result.ok else result.stderr or "Could not cancel job.", "success" if result.ok else "error")
     return redirect(url_for("index"))
 
@@ -508,6 +514,11 @@ def download_scan(filename: str):
 def api_status():
     printer_ip = current_printer_ip()
     printer_name = current_printer_name()
+    scans = []
+    try:
+        scans = [p.name for p in recent_scans(10)]
+    except OSError:
+        scans = []
     return jsonify({
         "printer_ip": printer_ip,
         "printer_name": printer_name,
@@ -518,6 +529,7 @@ def api_status():
         "scanner": scanner_status(printer_ip) if printer_ip else {"ok": False, "state": "setup_required"},
         "queue": cached_list_jobs(printer_name) if printer_ip else [],
         "recent_prints": list_print_history(10),
+        "scans": scans,
     })
 
 
