@@ -1,14 +1,20 @@
-FROM oven/bun:1.4-debian
+FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libltdl7 \
     libqt5widgets5 \
     psmisc \
     sane-utils \
+    unzip \
     && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"
+ENV BUN_INSTALL=/root/.bun
+ENV PATH=$BUN_INSTALL/bin:$PATH
 
 WORKDIR /opt/scan-bridge
 COPY package.json ./
@@ -30,6 +36,4 @@ ENV QT_QPA_PLATFORM=offscreen \
     SANE_DEBUG_NET=0 \
     BUN_VERSION=1.4.2
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD bun -e "await Bun.connect({hostname:'127.0.0.1', port:6566}).then(s=>s.end()).catch(()=>process.exit(1))" || exit 1
-# Fallback healthcheck via python if bun connect not available
-# HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD python3 -c "import socket; socket.create_connection(('127.0.0.1', 6566), 3).close()" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

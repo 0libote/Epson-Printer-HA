@@ -36,9 +36,7 @@ async function downloadBundle(target: string): Promise<void> {
   if ((process.env.EPSON_EULA_ACCEPTED || "").toLowerCase() !== "true") {
     throw new PermanentSetupError("EPSON_EULA_ACCEPTED=true is required before Epson Scan 2 can be installed");
   }
-  const res = await fetch(BUNDLE_URL, { headers: { "User-Agent": "Epson-Printer-HA/1" }, redirect: "manual" });
-  // Check redirect manually: fetch follows redirects by default, but we need to verify final URL
-  // Using manual redirect would require handling, simpler check: if redirected, Bun fetch will give final URL in res.url
+  const res = await fetch(BUNDLE_URL, { headers: { "User-Agent": "Epson-Printer-HA/1" } });
   if (res.url !== BUNDLE_URL) {
     throw new PermanentSetupError("Epson redirected the scanner bundle to an unexpected location");
   }
@@ -89,20 +87,25 @@ async function collectDebs(bundle: string, work: string): Promise<Record<string,
       const sizeProc = Bun.spawnSync(["tar", "--list", "--verbose", "-zf", bundle, member]);
       // parse size - simpler: just check after extract
     }
-    // Extract .deb files
+    // Extract .deb files - flatten nested dirs like Python's Path(member.name).name
     await $`mkdir -p ${work}`.quiet();
     await $`tar -xzf ${bundle} -C ${work}`.quiet();
-    // Now scan work for .deb
+    // Now recursively scan work for .deb (bundle may have subfolders)
     const { readdirSync, statSync } = await import("node:fs");
-    for (const f of readdirSync(work)) {
-      if (!f.endsWith(".deb")) continue;
-      const p = join(work, f);
-      const st = statSync(p);
-      if (st.size > MAX_DEB_BYTES) throw new PermanentSetupError("Epson scanner package is unexpectedly large");
-      extractedBytes += st.size;
-      if (extractedBytes > MAX_EXTRACTED_BYTES) throw new PermanentSetupError("Epson scanner archive expands beyond the safety limit");
-      candidates.push(p);
+    function walk(dir: string) {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, entry.name);
+        if (entry.isDirectory()) walk(p);
+        else if (entry.isFile() && entry.name.endsWith(".deb")) {
+          const st = statSync(p);
+          if (st.size > MAX_DEB_BYTES) throw new PermanentSetupError("Epson scanner package is unexpectedly large");
+          extractedBytes += st.size;
+          if (extractedBytes > MAX_EXTRACTED_BYTES) throw new PermanentSetupError("Epson scanner archive expands beyond the safety limit");
+          candidates.push(p);
+        }
+      }
     }
+    walk(work);
   } catch (e) {
     if (e instanceof PermanentSetupError) throw e;
     // Fallback to Bun.Archive if tar failed
