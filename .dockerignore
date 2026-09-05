@@ -7,8 +7,9 @@ __pycache__
 *.py[cod]
 data
 epson-driver
-scan-bridge
-tests
+node_modules
+public
+tests/bun
 compose*.yml
 README.md
 SECURITY.md
