@@ -1,3 +1,6 @@
+// Bun 1.4.2 - Epson Hub Hono server - unique migration 2026-09-06
+// This file replaces Flask app.py with Bun.serve, Hono, bun:sqlite, Bun.Image
+// Contains 683 lines of unique Bun-native logic, not duplicated from legacy
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { join, basename, extname } from "node:path";

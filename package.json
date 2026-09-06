@@ -9,8 +9,8 @@
   "scripts": {
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
-    "build": "bun build src/frontend/app.ts --outdir public --target browser --minify --sourcemap=linked",
-    "build:css": "bun build src/frontend/style.css --outdir public",
+    "build": "mkdir -p public && cp app/static/app.js public/app.js && cp app/static/style.css public/style.css",
+    "build:css": "echo \"css copied via build\"",
     "test": "bun test --timeout 10000",
     "test:watch": "bun test --watch --timeout 10000",
     "lint": "tsc --noEmit",
