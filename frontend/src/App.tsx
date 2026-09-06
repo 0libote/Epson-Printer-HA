@@ -1025,7 +1025,7 @@ export default function App() {
         <header {...stylex.props(s.intro)}>
           <div>
             <div {...stylex.props(s.kicker)}><Sparkles size={12} /> READY WHEN YOU ARE</div>
-            <h1 {...stylex.props(s.h1)}>WHAT DO YOU<BR />WANNA DO?</h1>
+            <h1 {...stylex.props(s.h1)}>WHAT DO YOU<br />WANNA DO?</h1>
             <p {...stylex.props(s.sub)}>Print a file or scan a doc — no drivers on this device. Everything stays on your LAN. <span style={{ background: vars.lime, padding: "2px 6px", border: "2px solid #111", borderRadius: 6, fontWeight: 700, fontFamily: `"Fragment Mono", monospace`, fontSize: 11 }}>FAST • PRIVATE • NO CLOUD</span></p>
           </div>
           <div {...stylex.props(s.chips)}>
