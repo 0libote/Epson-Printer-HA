@@ -91,9 +91,8 @@ async function readJson<T>(res: Response): Promise<T> {
 export async function fetchStatus(): Promise<StatusResponse> {
   return readJson<StatusResponse>(await fetch("/api/status", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
-export async function fetchHistory(limit = 100): Promise<HistoryResponse> {
-  const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
-  return readJson<HistoryResponse>(await fetch(`/api/history?limit=${safeLimit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+export async function fetchHistory(): Promise<HistoryResponse> {
+  return readJson<HistoryResponse>(await fetch("/api/history?limit=100", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function fetchHealth(): Promise<{ ok: boolean }> {
   return readJson<{ ok: boolean }>(await fetch("/api/health", { credentials: "same-origin", headers: { Accept: "application/json" } }));
@@ -155,9 +154,8 @@ export async function apiDelete(path: string): Promise<any> {
 }
 
 // — scan library helpers —
-export async function fetchScans(limit = 100): Promise<ScansResponse> {
-  const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
-  return readJson<ScansResponse>(await fetch(`/api/scans?limit=${safeLimit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+export async function fetchScans(): Promise<ScansResponse> {
+  return readJson<ScansResponse>(await fetch("/api/scans?limit=100", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function deleteScan(name: string): Promise<void> {
   await apiDelete(`/api/scans/${encodeURIComponent(name)}`);

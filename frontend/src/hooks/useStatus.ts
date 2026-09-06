@@ -25,7 +25,7 @@ export function useStatus(enabled = true) {
 export function useHistory(limit = 100) {
   return useQuery({
     queryKey: ["history", limit],
-    queryFn: () => fetchHistory(limit),
+    queryFn: fetchHistory,
     refetchInterval: 5000,
     staleTime: 2000,
   });
@@ -34,7 +34,7 @@ export function useHistory(limit = 100) {
 export function useScans(limit = 100, enabled = true) {
   return useQuery({
     queryKey: ["scans", limit],
-    queryFn: () => fetchScans(limit),
+    queryFn: fetchScans,
     enabled,
     refetchInterval: 5000,
     staleTime: 2000,
