@@ -1,0 +1,28 @@
+{
+  "name": "epson-printer-ha",
+  "version": "1.4.0",
+  "description": "Epson Printer Hub - Bun 1.4 migration",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "scripts": {
+    "dev": "bun --watch src/server.ts",
+    "start": "bun src/server.ts",
+    "build": "mkdir -p public && cp app/static/app.js public/app.js && cp app/static/style.css public/style.css",
+    "build:css": "echo \"css copied via build\"",
+    "test": "bun test --timeout 10000",
+    "test:watch": "bun test --watch --timeout 10000",
+    "lint": "tsc --noEmit",
+    "format": "bun x prettier --write ."
+  },
+  "dependencies": {
+    "hono": "^4.13.7",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.1",
+    "typescript": "^5.7.3"
+  },
+  "trustedDependencies": []
+}

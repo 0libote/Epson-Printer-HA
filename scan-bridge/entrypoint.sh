@@ -22,7 +22,12 @@ PY
 
 retry_delay=15
 while true; do
-  /usr/local/bin/install-epson-bundle
+  # Bun 1.4 native installer (uses fetch, Bun.Archive, Bun.hash) - fallback to python
+  if command -v bun >/dev/null 2>&1; then
+    bun /usr/local/bin/install-epson-bundle
+  else
+    /usr/local/bin/install-epson-bundle-py
+  fi
   rc=$?
   if [[ $rc -eq 0 ]]; then
     break
