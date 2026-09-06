@@ -1,6 +1,4 @@
 import { createConnection } from "node:net";
-import { spawn } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
 import { PDFDocument } from "pdf-lib";
 
 export interface CommandResult {
@@ -16,10 +14,11 @@ export function commandResult(ok: boolean, stdout = "", stderr = "", returncode 
 
 // Bun.spawn based runCommand with timeout
 export async function runCommand(args: string[], timeout = 30_000, cwd?: string): Promise<CommandResult> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeout);
+  let proc: any;
   try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeout);
-    const proc = Bun.spawn(args, {
+    proc = Bun.spawn(args, {
       stdout: "pipe",
       stderr: "pipe",
       cwd,
@@ -37,9 +36,8 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
       new Promise<never>((_, reject) =>
         ac.signal.addEventListener("abort", () => reject(new Error("timeout")), { once: true })
       ),
-    ]).finally(() => clearTimeout(timer));
+    ]);
 
-    // ensure proc killed if timeout
     if (ac.signal.aborted) {
       try { proc.kill(); } catch {}
       return commandResult(false, "", "timeout", 1);
@@ -48,9 +46,13 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
     const { out, err, code } = result as { out: string; err: string; code: number };
     return commandResult(code === 0, out, err, code);
   } catch (exc: any) {
-    // handle abort or other
-    if (exc?.message === "timeout") return commandResult(false, "", "timeout", 1);
+    if (exc?.message === "timeout") {
+      try { proc?.kill(); } catch {}
+      return commandResult(false, "", "timeout", 1);
+    }
     return commandResult(false, "", String(exc), 1);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -73,9 +75,12 @@ export function tcpOpen(host: string, port: number, timeout = 1000): Promise<boo
       socket.end();
       resolve(true);
     });
-    socket.on("error", () => resolve(false));
+    socket.on("error", () => {
+      try { socket.destroy(); } catch {}
+      resolve(false);
+    });
     socket.on("timeout", () => {
-      socket.destroy();
+      try { socket.destroy(); } catch {}
       resolve(false);
     });
   });

@@ -39,5 +39,5 @@ ENV QT_QPA_PLATFORM=offscreen \
     SANE_DEBUG_DLL=0 \
     SANE_DEBUG_NET=0 \
     BUN_VERSION=1.4.2
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD bun -e "await Bun.connect({hostname:'127.0.0.1', port:6566}).then(s=>s.end()).catch(()=>process.exit(1))" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD bun -e "Bun.connect({hostname:'127.0.0.1', port:6566}).then(s=>s.end()).catch(()=>process.exit(1))" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

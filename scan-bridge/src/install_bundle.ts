@@ -2,9 +2,8 @@
 
 import { $ } from "bun";
 import { createHash } from "node:crypto";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 const ALLOWED_PACKAGES = ["epsonscan2", "epsonscan2-non-free-plugin"] as const;
 const BUNDLE_URL = "https://download3.ebz.epson.net/dsc/f/03/00/17/08/12/9f3fec0ae80aa5c36f5170377ebcc38c93251e23/epsonscan2-bundle-6.7.80.0.x86_64.deb.tar.gz";
@@ -42,7 +41,7 @@ async function downloadBundle(target: string): Promise<void> {
   }
   if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
   const len = res.headers.get("Content-Length");
-  if (len && parseInt(len, 10) > MAX_BUNDLE_BYTES) throw new PermanentSetupError("Epson scanner bundle is unexpectedly large");
+  if (len && Number.parseInt(len, 10) > MAX_BUNDLE_BYTES) throw new PermanentSetupError("Epson scanner bundle is unexpectedly large");
 
   const hash = createHash("sha256");
   const file = Bun.file(target);
@@ -82,10 +81,9 @@ async function collectDebs(bundle: string, work: string): Promise<Record<string,
     const members = Buffer.from(listProc.stdout).toString("utf-8").split("\n").filter(Boolean);
     if (members.length > MAX_ARCHIVE_MEMBERS) throw new PermanentSetupError("Epson scanner archive contains too many entries");
     for (const member of members) {
-      if (!member.endsWith(".deb")) continue;
-      // Get size via tar tvf
-      const sizeProc = Bun.spawnSync(["tar", "--list", "--verbose", "-zf", bundle, member]);
-      // parse size - simpler: just check after extract
+      if (member.includes("..") || member.startsWith("/") || member.startsWith("\\")) {
+        throw new PermanentSetupError("Epson scanner archive contains unsafe path");
+      }
     }
     // Extract .deb files - flatten nested dirs like Python's Path(member.name).name
     await $`mkdir -p ${work}`.quiet();
@@ -123,9 +121,6 @@ async function collectDebs(bundle: string, work: string): Promise<Record<string,
 }
 
 export async function main(): Promise<number> {
-  const machine = process.arch; // node arch
-  // Map node arch to platform.machine check
-  const bunArch = Bun.which("dpkg") ? "x64" : machine; // simplified
   // Check x86_64 via uname
   try {
     const proc = Bun.spawnSync(["uname", "-m"]);
@@ -153,11 +148,6 @@ export async function main(): Promise<number> {
   try {
     await downloadBundle(bundle);
     const packages = await collectDebs(bundle, work);
-    const missing = (ALLOWED_PACKAGES as readonly string[]).filter(p => !(p in packages) && !installedSync(p));
-    function installedSync(p: string): boolean {
-      const proc = Bun.spawnSync(["dpkg-query", "-W", "-f=${Status}", p]);
-      return proc.exitCode === 0 && Buffer.from(proc.stdout).toString("utf-8").includes("install ok installed");
-    }
     // Re-check async for missing
     const missingAsync: string[] = [];
     for (const pkg of ALLOWED_PACKAGES) {

@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export let APP_DIR = process.env.APP_DATA || "/data";
@@ -190,6 +190,9 @@ function normaliseJob(jobId: number, attrs: Record<string, any>, printerName: st
 
 // Fetch jobs via python cups bridge - keeps pycups dependency but called from Bun
 async function fetchJobs(whichJobs: string): Promise<Record<number, Record<string, any>>> {
+  if (!["not-completed", "completed"].includes(whichJobs)) {
+    throw new Error(`Invalid whichJobs: ${whichJobs}`);
+  }
   // Use python3 to call cups, returns JSON
   const pythonScript = `
 import json, sys
@@ -406,12 +409,12 @@ export function listPrintHistory(limit = 100): Array<Record<string, any>> {
     return rows.map((row) => {
       const item: Record<string, any> = { ...row };
       const stamp = item["created_at"] || item["updated_at"];
-      item["created_display"] = stamp ? new Date(stamp * 1000).toLocaleString("sv-SE").replace("T", " ") : "Unknown";
-      // Use time.strftime equivalent? Use local display like YYYY-MM-DD HH:MM:SS
       if (stamp) {
         const d = new Date(stamp * 1000);
         const pad = (n: number) => String(n).padStart(2, "0");
         item["created_display"] = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      } else {
+        item["created_display"] = "Unknown";
       }
       item["size_display"] = formatBytes(item["size_bytes"]);
       item["device_display"] = item["origin_host"] || item["user_name"] || "Unknown device";

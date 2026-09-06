@@ -19,6 +19,11 @@ import {
 } from "./core.ts";
 import { listPrintHistory } from "./history.ts";
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? String(fallback), 10);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
 export let APP_DIR = process.env.APP_DATA || "/data";
 export let SCAN_DIR = join(APP_DIR, "scans");
 export let SETTINGS_FILE = join(APP_DIR, "settings.json");
@@ -26,8 +31,8 @@ export let PRINTER_IP_ENV_RAW = (process.env.PRINTER_IP || "").trim();
 export let DEFAULT_PRINTER_NAME = (process.env.PRINTER_NAME || "Home_Epson_XP2200").trim() || "Home_Epson_XP2200";
 export let DEFAULT_DISPLAY_NAME = (process.env.PRINTER_DISPLAY_NAME || "Home Epson XP-2200").trim() || "Home Epson XP-2200";
 export let DEFAULT_SHARE_PRINTER = !["0", "false", "no", "off"].includes((process.env.SHARE_PRINTER || "true").trim().toLowerCase());
-export let MAX_UPLOAD_MB = parseInt(process.env.MAX_UPLOAD_MB || "128", 10);
-export let MAX_SCAN_FILES = Math.max(1, parseInt(process.env.MAX_SCAN_FILES || "100", 10));
+export let MAX_UPLOAD_MB = Math.max(1, parsePositiveInt(process.env.MAX_UPLOAD_MB, 128));
+export let MAX_SCAN_FILES = Math.max(1, parsePositiveInt(process.env.MAX_SCAN_FILES, 100));
 export let CLIENT_HOST = (process.env.CLIENT_HOST || "").trim();
 export let WEB_USERNAME = process.env.WEB_USERNAME || "";
 export let WEB_PASSWORD = process.env.WEB_PASSWORD || "";
@@ -54,6 +59,16 @@ if (Boolean(WEB_USERNAME) !== Boolean(WEB_PASSWORD)) {
 
 mkdirSync(APP_DIR, { recursive: true });
 mkdirSync(SCAN_DIR, { recursive: true });
+// Cleanup stale operation locks from previous crash (older than 5 min)
+for (const lockName of ["cups-config", "scanner"]) {
+  const lockPath = join(APP_DIR, `.${lockName}.lock`);
+  try {
+    const st = statSync(lockPath);
+    if (Date.now() - st.mtimeMs > 5 * 60 * 1000) {
+      try { require("node:fs").rmdirSync(lockPath); } catch {}
+    }
+  } catch {}
+}
 
 const AUTH_FAILURE_LIMIT = 10;
 const AUTH_FAILURE_WINDOW_SECONDS = 60;
@@ -67,11 +82,11 @@ function validateIPv4(value: string): string {
   if (parts.length !== 4) throw new Error("Use the printer's normal IPv4 address");
   for (const p of parts) {
     if (!/^\d+$/.test(p)) throw new Error("Use the printer's normal IPv4 address");
-    const n = parseInt(p, 10);
+    const n = Number.parseInt(p, 10);
     if (n < 0 || n > 255) throw new Error("Use the printer's normal IPv4 address");
   }
   const ip = parts.join(".");
-  const first = parseInt(parts[0], 10);
+  const first = Number.parseInt(parts[0], 10);
   if (ip === "0.0.0.0" || ip === "127.0.0.1" || (first >= 224 && first <= 239)) throw new Error("Use the printer's normal IPv4 address");
   if (first === 127) throw new Error("Use the printer's normal IPv4 address");
   return ip;
@@ -79,7 +94,7 @@ function validateIPv4(value: string): string {
 
 let PRINTER_IP_ENV = "";
 if (PRINTER_IP_ENV_RAW) {
-  try { PRINTER_IP_ENV = validateIPv4(PRINTER_IP_ENV_RAW); } catch { PRINTER_IP_ENV = PRINTER_IP_ENV_RAW; }
+  try { PRINTER_IP_ENV = validateIPv4(PRINTER_IP_ENV_RAW); } catch { PRINTER_IP_ENV = ""; }
 }
 
 function validateQueueName(value: string): string {
@@ -112,7 +127,22 @@ const operationLocks = new Map<string, boolean>();
 async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise<{ acquired: boolean; result?: T }> {
   const lockPath = join(APP_DIR, `.${name}.lock`);
   if (operationLocks.get(name)) return { acquired: false };
-  try { mkdirSync(lockPath); } catch { return { acquired: false }; }
+  try {
+    mkdirSync(lockPath);
+  } catch {
+    // Check for stale lock older than 5 minutes
+    try {
+      const st = statSync(lockPath);
+      if (Date.now() - st.mtimeMs > 5 * 60 * 1000) {
+        try { require("node:fs").rmdirSync(lockPath); } catch {}
+        mkdirSync(lockPath);
+      } else {
+        return { acquired: false };
+      }
+    } catch {
+      return { acquired: false };
+    }
+  }
   operationLocks.set(name, true);
   try { const result = await fn(); return { acquired: true, result }; }
   finally { operationLocks.delete(name); try { require("node:fs").rmdirSync(lockPath); } catch {} }
@@ -141,7 +171,11 @@ async function validateUpload(path: string, suffix: string): Promise<string | nu
   } catch { return "The uploaded file could not be read in the expected format."; }
   return null;
 }
-function startsWith(a: Uint8Array, b: Uint8Array): boolean { if (a.length < b.length) return false; for (let i=0;i<b.length;i++) if(a[i]!==b[i]) return false; return true; }
+function startsWith(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length < b.length) return false;
+  for (let i = 0; i < b.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 export function currentPrinterIp(): string {
   if (PRINTER_IP_ENV) return PRINTER_IP_ENV;
@@ -151,14 +185,31 @@ export function currentPrinterIp(): string {
 }
 function pruneScans(): void {
   try {
-    const files = readdirSync(SCAN_DIR).filter(f=>!f.startsWith(".")).map(f=>{ const p=join(SCAN_DIR,f); try{return {p, mtime:statSync(p).mtimeMs, isFile:statSync(p).isFile()};}catch{return null;}}).filter(Boolean) as Array<{p:string;mtime:number;isFile:boolean}>;
-    const sorted = files.filter(f=>f.isFile).sort((a,b)=>b.mtime-a.mtime);
-    for(const stale of sorted.slice(MAX_SCAN_FILES)) try{unlinkSync(stale.p);}catch{}
+    const files = readdirSync(SCAN_DIR)
+      .filter((f) => !f.startsWith("."))
+      .map((f) => {
+        const p = join(SCAN_DIR, f);
+        try { return { p, mtime: statSync(p).mtimeMs, isFile: statSync(p).isFile() }; } catch { return null; }
+      })
+      .filter(Boolean) as Array<{ p: string; mtime: number; isFile: boolean }>;
+    const sorted = files.filter((f) => f.isFile).sort((a, b) => b.mtime - a.mtime);
+    for (const stale of sorted.slice(MAX_SCAN_FILES)) { try { unlinkSync(stale.p); } catch {} }
   } catch {}
 }
-export function currentPrinterName(): string { const v=String(savedSettingsSync().printer_name ?? DEFAULT_PRINTER_NAME).trim(); try{return validateQueueName(v);}catch{return DEFAULT_PRINTER_NAME;}}
-export function currentDisplayName(): string { const v=String(savedSettingsSync().display_name ?? DEFAULT_DISPLAY_NAME).trim(); try{return validateDisplayName(v);}catch{return DEFAULT_DISPLAY_NAME;}}
-function networkSharingEnabledSync(): boolean { const v=savedSettingsSync().share_printer; if(typeof v==="boolean") return v; const s=String(v ?? (DEFAULT_SHARE_PRINTER?"true":"false")).trim().toLowerCase(); return ["1","true","yes","on"].includes(s); }
+export function currentPrinterName(): string {
+  const v = String(savedSettingsSync().printer_name ?? DEFAULT_PRINTER_NAME).trim();
+  try { return validateQueueName(v); } catch { return DEFAULT_PRINTER_NAME; }
+}
+export function currentDisplayName(): string {
+  const v = String(savedSettingsSync().display_name ?? DEFAULT_DISPLAY_NAME).trim();
+  try { return validateDisplayName(v); } catch { return DEFAULT_DISPLAY_NAME; }
+}
+function networkSharingEnabledSync(): boolean {
+  const v = savedSettingsSync().share_printer;
+  if (typeof v === "boolean") return v;
+  const s = String(v ?? (DEFAULT_SHARE_PRINTER ? "true" : "false")).trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(s);
+}
 function savePrinterIp(ip:string){ const data=savedSettingsSync(); data.printer_ip=ip; saveSettingsSync(data); }
 async function configureCups(printerIp:string, opts:{printerName?:string|null;displayName?:string|null;sharePrinter?:boolean|null;oldPrinterName?:string}={}):Promise<[boolean,string]>{
   const env:Record<string,string>={...(process.env as Record<string,string>)};
@@ -202,7 +253,7 @@ function setFlash(c:any, category:string, message:string){
   const existing=getFlash(c);
   existing.push({category,message});
   const encoded=Buffer.from(JSON.stringify(existing)).toString("base64");
-  setCookie(c,"flash",encoded,{path:"/", httpOnly:false, sameSite:"Lax"});
+  setCookie(c,"flash",encoded,{path:"/", httpOnly:false, sameSite:"Lax", secure: SESSION_COOKIE_SECURE});
 }
 function consumeFlash(c:any):Array<{category:string;message:string}>{
   const msgs=getFlash(c);
@@ -229,7 +280,7 @@ function authValid(c:any):boolean{
 function authFailureState(c:any, recordFailure=false):boolean{
   const client=c.req.header("x-forwarded-for")||c.req.header("x-real-ip")||"unknown";
   const ip=String(client).split(",")[0].trim()||"unknown";
-  const now=performance.now()/1000;
+  const now=Date.now()/1000;
   const cutoff=now - AUTH_FAILURE_WINDOW_SECONDS;
   let recent=( _authFailures.get(ip)||[] ).filter(t=>t>=cutoff);
   if(recordFailure) recent.push(now);
@@ -237,7 +288,10 @@ function authFailureState(c:any, recordFailure=false):boolean{
   return recent.length>=AUTH_FAILURE_LIMIT;
 }
 export const app=new Hono();
-app.use("*", async(c,next)=>{ if(c.req.method==="GET") getCsrfToken(c); await next();});
+app.use("*", async(c,next)=>{
+  if(c.req.method==="GET") getCsrfToken(c);
+  await next();
+});
 
 function requireAuth(c:any):Response|null{
   if(!authRequired()) return null;
@@ -522,7 +576,8 @@ app.post("/client-settings", async(c)=>{
   if(!printerIp){ setFlash(c,"error","Set up the physical printer first."); return c.redirect("/",302); }
   const body=await c.req.parseBody();
   const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  if(token!==(getCookie(c,"csrf_token")||"")) return c.text("Invalid or missing CSRF token",400);
+  const expected=getCookie(c,"csrf_token")||"";
+  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
   let printerName:string, displayName:string;
   try{
     printerName=validateQueueName(String(body["printer_name"]||""));
@@ -551,14 +606,15 @@ app.post("/print", async(c)=>{
   if(!currentPrinterIp()){ setFlash(c,"error","Set up the printer first."); return c.redirect("/",302); }
   const body:any=await c.req.parseBody();
   const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  if(token!==(getCookie(c,"csrf_token")||"")) return c.text("Invalid or missing CSRF token",400);
+  const expected=getCookie(c,"csrf_token")||"";
+  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
   const file=body["file"] as File|undefined;
   if(!file||!(file instanceof File)||!file.name){ setFlash(c,"error","Choose a file first."); return c.redirect("/",302); }
   const name=secureFilename(file.name);
   const suffix=extname(name).toLowerCase();
   if(![".pdf",".png",".jpg",".jpeg",".txt"].includes(suffix)){ setFlash(c,"error","Supported files: PDF, PNG, JPG and TXT."); return c.redirect("/",302); }
   let copies=1;
-  try{ copies=parseInt(String(body["copies"]||"1"),10); if(!(copies>=1 && copies<=99)) throw new Error(); }catch{ setFlash(c,"error","Copies must be a whole number between 1 and 99."); return c.redirect("/",302); }
+  try{ copies=Number.parseInt(String(body["copies"]||"1"),10); if(!(copies>=1 && copies<=99) || Number.isNaN(copies)) throw new Error(); }catch{ setFlash(c,"error","Copies must be a whole number between 1 and 99."); return c.redirect("/",302); }
   const grayscale=body["grayscale"]==="on";
   if(file.size> MAX_UPLOAD_MB*1024*1024){ setFlash(c,"error",`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`); return c.redirect("/",302); }
   const uploadDir=join(APP_DIR,"uploads");
@@ -585,8 +641,9 @@ app.post("/scan", async(c)=>{
   if(!printerIp){ setFlash(c,"error","Set up the printer first."); return c.redirect("/",302); }
   const body=await c.req.parseBody();
   const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  if(token!==(getCookie(c,"csrf_token")||"")) return c.text("Invalid or missing CSRF token",400);
-  let dpi=parseInt(String(body["dpi"]||"300"),10);
+  const expected=getCookie(c,"csrf_token")||"";
+  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
+  let dpi=Number.parseInt(String(body["dpi"]||"300"),10);
   if(![150,200,300,600].includes(dpi)){ setFlash(c,"error","DPI must be 150, 200, 300 or 600."); return c.redirect("/",302); }
   const lock=await withOperationLock("scanner", async()=>{
     const [result, path]=await scanDocument(printerIp, SCAN_DIR, {dpi, mode:String(body["mode"]||"Color"), fmt:String(body["format"]||"pdf")});
@@ -617,11 +674,15 @@ app.get("/scans/:filename", async(c)=>{
   if(auth) return auth;
   const filename=c.req.param("filename");
   const safe=basename(filename);
+  if(!safe || safe.startsWith(".") || safe.includes("..")) return c.text("Not found",404);
   const path=join(SCAN_DIR, safe);
   const file=Bun.file(path);
   if(!(await file.exists())) return c.text("Not found",404);
   const buf=await file.arrayBuffer();
-  return new Response(buf, {headers:{"Content-Disposition":`attachment; filename="${safe}"`, "Content-Type": (file as any).type || "application/octet-stream"}});
+  const ext=extname(safe).toLowerCase();
+  const mimeMap:Record<string,string>={".pdf":"application/pdf", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg"};
+  const contentType=mimeMap[ext] || (file as any).type || "application/octet-stream";
+  return new Response(buf, {headers:{"Content-Disposition":`attachment; filename="${safe}"`, "Content-Type": contentType}});
 });
 
 app.get("/api/status", async(c)=>{
@@ -631,15 +692,23 @@ app.get("/api/status", async(c)=>{
   const printerName=currentPrinterName();
   let scans:string[]=[];
   try{scans=recentScans(10).map(s=>s.name);}catch{scans=[];}
+  const [reachable, printer, scanner, queue] = printerIp
+    ? await Promise.all([
+        cachedPrinterReachable(printerIp),
+        cachedCupsPrinterStatus(printerName),
+        scannerStatus(printerIp),
+        cachedListJobs(printerName),
+      ])
+    : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
   const data:any={
     printer_ip:printerIp,
     printer_name:printerName,
     display_name:currentDisplayName(),
     network_sharing:networkSharingEnabledSync(),
-    reachable: printerIp?await cachedPrinterReachable(printerIp):false,
-    printer: printerIp?await cachedCupsPrinterStatus(printerName):{ok:false, state:"setup_required"},
-    scanner: printerIp?await scannerStatus(printerIp):{ok:false, state:"setup_required"},
-    queue: printerIp?await cachedListJobs(printerName):[],
+    reachable,
+    printer,
+    scanner,
+    queue,
     recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
     scans,
   };
@@ -650,7 +719,8 @@ app.get("/api/history", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   let limit=100;
-  try{limit=parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
+  try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
+  if(Number.isNaN(limit)) limit=100;
   let history:any[]=[];
   try{history=listPrintHistory(limit);}catch{history=[];}
   return c.json({history});
@@ -662,17 +732,27 @@ app.get("/api/health", async(c)=>{
 });
 
 app.get("/static/*", async(c)=>{
-  const path=c.req.path.replace("/static/","");
-  const safe=path.replace(/\.\./g,"");
+  const raw=c.req.path.replace(/^\/static\//, "");
+  const decoded=decodeURIComponent(raw);
+  const safe=basename(decoded);
+  if(!safe || safe.includes("..") || decoded.includes("..") || decoded.includes("/") || decoded.includes("\\")){
+    return c.text("Not found",404);
+  }
+  const mimeMap:Record<string,string>={".js":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8", ".svg":"image/svg+xml", ".html":"text/html; charset=utf-8"};
   for(const cand of [join(process.cwd(),"public",safe), join(process.cwd(),"src/frontend",safe), join(process.cwd(),"app/static",safe)]){
     const f=Bun.file(cand);
-    if(await f.exists()) return new Response(f);
+    if(await f.exists()){
+      const ext=safe.slice(safe.lastIndexOf(".")).toLowerCase();
+      const contentType=mimeMap[ext] || (f as any).type || "application/octet-stream";
+      const buf=await f.arrayBuffer();
+      return new Response(buf,{headers:{"Content-Type":contentType, "Cache-Control":"public, max-age=300"}});
+    }
   }
   return c.text("Not found",404);
 });
 
 app.onError((err,c)=>{
-  if((err as any).message?.includes("413") || (c.req.header("content-length") && parseInt(c.req.header("content-length")!) > MAX_UPLOAD_MB*1024*1024)){
+  if((err as any).message?.includes("413") || (c.req.header("content-length") && Number.parseInt(c.req.header("content-length")!) > MAX_UPLOAD_MB*1024*1024)){
     setFlash(c,"error",`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`);
     return c.redirect("/",302);
   }

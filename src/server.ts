@@ -1,14 +1,19 @@
 import app from "./app.ts";
 import { main as historyMain } from "./history_worker.ts";
 
-const port = parseInt(process.env.WEB_PORT || "8080", 10);
+const port = Number.parseInt(process.env.WEB_PORT || "8080", 10);
 
 console.log(`[server] Starting Epson Hub on port ${port} with Bun ${Bun.version}`);
 
-// Start history worker in background (non-blocking)
-historyMain().catch((e) => console.error("[history] worker failed", e));
-
 if (import.meta.main) {
+  // Start history worker in background only when run as main entrypoint.
+  // When deployed via supervisord, the history worker runs as a separate program
+  // (config/supervisord.conf [program:history]), so avoid duplicate workers
+  // when this module is imported for testing.
+  if (!process.env.SUPERVISORD_HISTORY_MANAGED) {
+    historyMain().catch((e) => console.error("[history] worker failed", e));
+  }
+
   Bun.serve({
     port,
     hostname: "0.0.0.0",

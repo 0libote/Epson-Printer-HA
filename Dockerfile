@@ -61,5 +61,5 @@ ENV WEB_PORT=8080 \
 
 EXPOSE 8080 631
 VOLUME ["/data", "/var/cache/cups", "/var/spool/cups"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD bun -e "await fetch('http://127.0.0.1:'+(process.env.WEB_PORT||'8080')+'/api/health').then(r=>{if(!r.ok)process.exit(1)})" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD bun -e "fetch('http://127.0.0.1:'+(process.env.WEB_PORT||'8080')+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

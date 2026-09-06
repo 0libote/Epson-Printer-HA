@@ -8,7 +8,7 @@ const DEFAULT_PRINTER_NAME = (process.env.PRINTER_NAME || "Home_Epson_XP2200").t
 function positiveEnvInt(name: string, def: number): number {
   const raw = process.env[name];
   if (raw === undefined) return def;
-  const n = parseInt(raw, 10);
+  const n = Number.parseInt(raw, 10);
   if (Number.isNaN(n)) return def;
   return Math.max(1, n);
 }
@@ -30,10 +30,10 @@ export async function currentPrinterName(): Promise<string> {
 export async function main(): Promise<void> {
   initHistory();
   console.log("[history] Persistent print history collector started.");
-  let lastCompletedPoll = 0;
+  let lastCompletedPoll = -COMPLETED_POLL_SECONDS;
   while (true) {
     try {
-      const now = performance.now() / 1000; // seconds monotonic approx
+      const now = Date.now() / 1000;
       const includeCompleted = now - lastCompletedPoll >= COMPLETED_POLL_SECONDS;
       const name = await currentPrinterName();
       await syncPrintHistory(name, { includeCompleted });
