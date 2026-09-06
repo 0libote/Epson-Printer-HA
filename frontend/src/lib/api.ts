@@ -83,12 +83,20 @@ export async function ensureCsrf(): Promise<string> {
   return t;
 }
 
-export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
-  const safePath = path.match(/^\/api\/[A-Za-z0-9/_-]+(?:\?[A-Za-z0-9_=&-]+)?$/)?.[0];
-  if (!safePath) throw new Error("Invalid API path");
-  const res = await fetch(safePath, { credentials: "same-origin", headers: { Accept: "application/json", ...(init?.headers || {}) }, ...init });
+async function readJson<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
+}
+
+export async function fetchStatus(): Promise<StatusResponse> {
+  return readJson<StatusResponse>(await fetch("/api/status", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+}
+export async function fetchHistory(limit = 100): Promise<HistoryResponse> {
+  const safeLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+  return readJson<HistoryResponse>(await fetch(`/api/history?limit=${safeLimit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+}
+export async function fetchHealth(): Promise<{ ok: boolean }> {
+  return readJson<{ ok: boolean }>(await fetch("/api/health", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
 export async function apiPostForm(path: string, form: FormData): Promise<{ ok: boolean; message?: string; redirect?: string }> {
@@ -148,7 +156,8 @@ export async function apiDelete(path: string): Promise<any> {
 
 // — scan library helpers —
 export async function fetchScans(limit = 100): Promise<ScansResponse> {
-  return apiGet<ScansResponse>(`/api/scans?limit=${limit}`);
+  const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+  return readJson<ScansResponse>(await fetch(`/api/scans?limit=${safeLimit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function deleteScan(name: string): Promise<void> {
   await apiDelete(`/api/scans/${encodeURIComponent(name)}`);
@@ -170,7 +179,8 @@ export async function startScanJob(opts: { dpi: string; mode: string; format: st
   return data as ScanJobResponse;
 }
 export async function pollScanJob(jobId: string): Promise<ScanJobStatus["job"]> {
-  const data = await apiGet<ScanJobStatus>(`/api/scan/jobs/${encodeURIComponent(jobId)}`);
+  if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error("Invalid scan job id");
+  const data = await readJson<ScanJobStatus>(await fetch(`/api/scan/jobs/${jobId}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
   return data.job;
 }
 export async function cancelScanJob(jobId: string): Promise<void> {
