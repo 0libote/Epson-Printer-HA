@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, type StatusResponse, type HistoryResponse } from "../lib/api";
+import { apiGet, fetchScans, type StatusResponse, type HistoryResponse, type ScansResponse } from "../lib/api";
 
 export function useStatus(enabled = true) {
   return useQuery({
@@ -26,6 +26,16 @@ export function useHistory(limit = 100) {
   return useQuery({
     queryKey: ["history", limit],
     queryFn: () => apiGet<HistoryResponse>(`/api/history?limit=${limit}`),
+    refetchInterval: 5000,
+    staleTime: 2000,
+  });
+}
+
+export function useScans(limit = 100, enabled = true) {
+  return useQuery({
+    queryKey: ["scans", limit],
+    queryFn: () => fetchScans(limit),
+    enabled,
     refetchInterval: 5000,
     staleTime: 2000,
   });

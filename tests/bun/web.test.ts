@@ -252,6 +252,17 @@ describe("web - Bun Hono", () => {
     try { rmSync(join(tmp, ".scanner.lock"), { recursive: true }); } catch {}
   });
 
+  test("scan preview streams the stored file", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(tmp, "scans", "sample.pdf"), "%PDF-1.4\nstream\nexample\nendstream\n");
+    const client = createClient(appModule.app);
+    const res = await client.request("/scans/sample.pdf?preview=1", {});
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/pdf");
+    expect(res.headers.get("content-disposition")).toContain("inline");
+    expect(await res.text()).toContain("example");
+  });
+
   test("client host can be overridden for reverse proxy", async () => {
     appModule._setClientHostForTest("printer.home");
     // Need to get printer name first

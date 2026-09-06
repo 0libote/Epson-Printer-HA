@@ -1,3 +1,18 @@
+export type ScanItem = {
+  name: string;
+  path?: string;
+  size: number;
+  sizeDisplay: string;
+  mtime: number;
+  mtimeMs: number;
+  mtimeRel: string;
+  mtimeIso: string;
+  ext: string;
+};
+export type ScansResponse = { scans: ScanItem[]; total: number; limit: number; max: number };
+export type ScanJobResponse = { ok: boolean; jobId: string; state: string; pollUrl: string; message?: string };
+export type ScanJobStatus = { ok: boolean; job: { id: string; state: string; dpi: number; mode: string; fmt: string; createdAt: number; startedAt?: number; finishedAt?: number; elapsed: number; progress: string; resultName?: string; error?: string } };
+
 export type StatusResponse = {
   printer_ip: string;
   printer_name: string;
@@ -100,4 +115,63 @@ export async function apiPostForm(path: string, form: FormData): Promise<{ ok: b
     throw new Error(txt.slice(0, 400) || `Request failed ${res.status}`);
   }
   return { ok: true };
+}
+
+export async function apiPostJson(path: string, body: Record<string, any>): Promise<any> {
+  const csrf = await ensureCsrf();
+  const res = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
+    body: JSON.stringify({ ...body, _csrf_token: csrf }),
+  });
+  const ct = res.headers.get("content-type") || "";
+  const isJson = ct.includes("application/json");
+  const data = isJson ? await res.json().catch(() => ({})) : { text: await res.text().catch(() => "") };
+  if (!res.ok) throw new Error((data as any).error || (data as any).message || `Request failed ${res.status}`);
+  return data;
+}
+export async function apiDelete(path: string): Promise<any> {
+  const csrf = await ensureCsrf();
+  const res = await fetch(path, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
+  });
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+  if (!res.ok) throw new Error((data as any).error || `Request failed ${res.status}`);
+  return data;
+}
+
+// — scan library helpers —
+export async function fetchScans(limit = 100): Promise<ScansResponse> {
+  return apiGet<ScansResponse>(`/api/scans?limit=${limit}`);
+}
+export async function deleteScan(name: string): Promise<void> {
+  await apiDelete(`/api/scans/${encodeURIComponent(name)}`);
+}
+export async function renameScan(oldName: string, newName: string): Promise<{ name: string }> {
+  const data = await apiPostJson(`/api/scans/${encodeURIComponent(oldName)}/rename`, { name: newName });
+  return data;
+}
+export async function startScanJob(opts: { dpi: string; mode: string; format: string }): Promise<ScanJobResponse> {
+  const csrf = await ensureCsrf();
+  const res = await fetch("/api/scan", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
+    body: JSON.stringify({ dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, _csrf_token: csrf }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || `Scan failed ${res.status}`);
+  return data as ScanJobResponse;
+}
+export async function pollScanJob(jobId: string): Promise<ScanJobStatus["job"]> {
+  const data = await apiGet<ScanJobStatus>(`/api/scan/jobs/${encodeURIComponent(jobId)}`);
+  return data.job;
+}
+export async function cancelScanJob(jobId: string): Promise<void> {
+  const form = new FormData();
+  await apiPostForm(`/api/scan/jobs/${encodeURIComponent(jobId)}/cancel`, form);
 }
