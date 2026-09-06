@@ -38,13 +38,14 @@ RUN bun install --frozen-lockfile --ignore-scripts
 
 COPY src ./src
 COPY app ./app
+COPY frontend ./frontend
 COPY scripts/configure-cups.sh /usr/local/bin/configure-cups.sh
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY config/cupsd.conf /etc/cups/cupsd.conf
 COPY config/net.conf /etc/sane.d/net.conf
 COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
-RUN bun run build || echo "build fallback - using src/frontend directly"
+RUN bun run build
 
 RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh \
     && groupadd --system epson 2>/dev/null || true \

@@ -8,21 +8,37 @@
   },
   "scripts": {
     "dev": "bun --watch src/server.ts",
+    "dev:web": "vite --config frontend/vite.config.ts",
+    "dev:all": "bun --watch src/server.ts & vite --config frontend/vite.config.ts --host 0.0.0.0 --port 5173",
     "start": "bun src/server.ts",
-    "build": "mkdir -p public && cp app/static/app.js public/app.js && cp app/static/style.css public/style.css",
-    "build:css": "echo \"css copied via build\"",
+    "build": "vite build --config frontend/vite.config.ts",
+    "build:legacy": "mkdir -p public && cp app/static/app.js public/app.js && cp app/static/style.css public/style.css",
+    "preview": "vite preview --config frontend/vite.config.ts",
     "test": "bun test --timeout 10000",
     "test:watch": "bun test --watch --timeout 10000",
     "lint": "tsc --noEmit",
+    "typecheck:web": "tsc --project frontend/tsconfig.json --noEmit",
     "format": "bun x prettier --write ."
   },
   "dependencies": {
+    "@stylexjs/stylex": "^0.19.0",
+    "@tanstack/react-query": "^5.102.8",
     "hono": "^4.13.7",
-    "pdf-lib": "^1.17.1"
+    "lucide-react": "^1.41.0",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@stylexjs/babel-plugin": "^0.19.0",
+    "@stylexjs/eslint-plugin": "^0.19.0",
+    "@stylexjs/unplugin": "^0.19.0",
     "@types/bun": "^1.4.1",
-    "typescript": "^5.7.3"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
   },
   "trustedDependencies": []
 }
