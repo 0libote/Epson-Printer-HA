@@ -38,7 +38,7 @@ jobs:
       - name: Legacy Python tests (if still present)
         run: |
           if [ -f requirements.txt ]; then
-            pip install -q pytest 2>/dev/null || true
+            pip install -q --only-binary :all: pytest==8.3.5 2>/dev/null || true
             pytest -q 2>/dev/null || echo "legacy pytest skipped"
           fi
 

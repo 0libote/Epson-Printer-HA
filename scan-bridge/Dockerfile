@@ -13,10 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip -o /tmp/bun.zip && \
+    echo "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913  /tmp/bun.zip" | sha256sum -c && \
+    unzip /tmp/bun.zip -d /tmp && mv /tmp/bun-linux-x64/bun /usr/local/bin/bun && chmod +x /usr/local/bin/bun && rm -rf /tmp/bun.zip /tmp/bun-linux-x64 && \
+    mkdir -p /root/.bun/bin && ln -sf /usr/local/bin/bun /root/.bun/bin/bun
 ENV BUN_INSTALL=/root/.bun
-ENV PATH=$BUN_INSTALL/bin:$PATH
-RUN ln -sf /root/.bun/bin/bun /usr/local/bin/bun
+ENV PATH=/usr/local/bin:$BUN_INSTALL/bin:$PATH
 
 WORKDIR /opt/scan-bridge
 COPY package.json ./
