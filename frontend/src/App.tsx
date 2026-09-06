@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "./styles/tokens.stylex";
 import { useStatus, useHistory, useScans } from "./hooks/useStatus";
-import { apiPostForm, ensureCsrf, startScanJob, pollScanJob, cancelScanJob, deleteScan, renameScan, type ScanItem } from "./lib/api";
+import { postClientSettings, postPrint, postScan, postSetup, cancelPrintJob, ensureCsrf, startScanJob, pollScanJob, cancelScanJob, deleteScan, renameScan, type ScanItem } from "./lib/api";
 import { useToast } from "./components/Toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "./styles/ThemeProvider";
@@ -947,7 +947,7 @@ export default function App() {
     setPrintBusy(true); setPrintStage(0);
     try {
       const fd = new FormData(); fd.set("file", file); fd.set("copies", String(copies)); if (grayscale) fd.set("grayscale", "on");
-      await apiPostForm("/print", fd);
+      await postPrint(fd);
       push({ kind: "success", title: "File added to the print queue", desc: `${file.name} · ${copies} ${copies === 1 ? "copy" : "copies"}` });
       setFile(null); if (fileRef.current) fileRef.current.value = "";
       await qc.invalidateQueries({ queryKey: ["status"] }); await qc.invalidateQueries({ queryKey: ["history"] });
@@ -997,7 +997,7 @@ export default function App() {
       if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
         try {
           const fd = new FormData(); fd.set("dpi", scanDpi); fd.set("mode", scanMode); fd.set("format", scanFmt);
-          await apiPostForm("/scan", fd);
+          await postScan(fd);
           push({ kind: "success", title: "Scan complete", desc: `Saved as ${scanFmt.toUpperCase()} · ${scanDpi} dpi` });
           await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
           await scansQ.refetch();
@@ -1071,7 +1071,7 @@ export default function App() {
     setNetBusy(true); setNetStage(0);
     try {
       const fd = new FormData(); fd.set("display_name", displayNameEdit.trim()); fd.set("printer_name", queueNameEdit.trim()); if (shareEdit) fd.set("share_printer", "on");
-      await apiPostForm("/client-settings", fd);
+      await postClientSettings(fd);
       push({ kind: "success", title: "Network sharing settings applied" });
       await qc.invalidateQueries({ queryKey: ["status"] });
     } catch (err: any) { push({ kind: "error", title: "Could not save sharing settings", desc: String(err.message || err).slice(0, 220) }); } finally { setNetBusy(false); }
@@ -1080,12 +1080,12 @@ export default function App() {
   const handleChangeIp = async (e: React.FormEvent) => {
     e.preventDefault(); const ip = changeIp.trim(); if (!ip) return;
     setSetupBusy(true); setSetupStage(0);
-    try { const fd = new FormData(); fd.set("printer_ip", ip); await apiPostForm("/setup", fd); push({ kind: "success", title: `Printer address updated`, desc: ip }); await qc.invalidateQueries({ queryKey: ["status"] }); }
+    try { const fd = new FormData(); fd.set("printer_ip", ip); await postSetup(fd); push({ kind: "success", title: `Printer address updated`, desc: ip }); await qc.invalidateQueries({ queryKey: ["status"] }); }
     catch (err: any) { push({ kind: "error", title: "Could not update address", desc: String(err.message || err).slice(0, 220) }); } finally { setSetupBusy(false); }
   };
 
   const handleCancel = async (jobId: string) => {
-    try { const fd = new FormData(); await apiPostForm(`/jobs/${encodeURIComponent(jobId)}/cancel`, fd); push({ kind: "success", title: "Job cancelled", desc: jobId }); await qc.invalidateQueries({ queryKey: ["status"] }); await qc.invalidateQueries({ queryKey: ["history"] }); }
+    try { await cancelPrintJob(jobId); push({ kind: "success", title: "Job cancelled", desc: jobId }); await qc.invalidateQueries({ queryKey: ["status"] }); await qc.invalidateQueries({ queryKey: ["history"] }); }
     catch (err: any) { push({ kind: "error", title: "Could not cancel job", desc: String(err.message || err).slice(0, 200) }); }
   };
 

@@ -98,16 +98,7 @@ export async function fetchHealth(): Promise<{ ok: boolean }> {
   return readJson<{ ok: boolean }>(await fetch("/api/health", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
-export async function apiPostForm(path: string, form: FormData): Promise<{ ok: boolean; message?: string; redirect?: string }> {
-  const csrf = await ensureCsrf();
-  // ensure token in form
-  if (!form.has("_csrf_token") && csrf) form.set("_csrf_token", csrf);
-  const res = await fetch(path, {
-    method: "POST",
-    body: form,
-    credentials: "same-origin",
-    headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
-  });
+async function parseFormResponse(res: Response): Promise<{ ok: boolean; message?: string; redirect?: string }> {
   // server may return JSON for accept json, or redirect
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) {
@@ -115,10 +106,7 @@ export async function apiPostForm(path: string, form: FormData): Promise<{ ok: b
     if (!res.ok) throw new Error(j.error || j.message || `Request failed ${res.status}`);
     return j;
   }
-  if (res.redirected || res.status === 302 || res.status === 303) {
-    // follow redirect to get flash? Instead treat as success
-    return { ok: res.ok, redirect: res.url };
-  }
+  if (res.redirected || res.status === 302 || res.status === 303) return { ok: res.ok, redirect: res.url };
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     throw new Error(txt.slice(0, 400) || `Request failed ${res.status}`);
@@ -126,13 +114,52 @@ export async function apiPostForm(path: string, form: FormData): Promise<{ ok: b
   return { ok: true };
 }
 
-export async function apiPostJson(path: string, body: Record<string, any>): Promise<any> {
+async function formRequest(res: Promise<Response>): Promise<{ ok: boolean; message?: string; redirect?: string }> {
+  return parseFormResponse(await res);
+}
+
+async function addCsrf(form: FormData): Promise<string> {
   const csrf = await ensureCsrf();
-  const res = await fetch(path, {
+  if (!form.has("_csrf_token") && csrf) form.set("_csrf_token", csrf);
+  return csrf;
+}
+
+export async function postPrint(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(fetch("/print", {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
+  }));
+}
+export async function postScan(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(fetch("/scan", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
+}
+export async function postClientSettings(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(fetch("/client-settings", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
+}
+export async function postSetup(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(fetch("/setup", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
+}
+export async function cancelPrintJob(jobId: string) {
+  if (!/^[A-Za-z0-9_.-]+-\d+$/.test(jobId)) throw new Error("Invalid print job id");
+  const form = new FormData();
+  const csrf = await addCsrf(form);
+  return formRequest(fetch(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
+}
+
+export async function renameScan(oldName: string, newName: string): Promise<{ name: string }> {
+  const csrf = await ensureCsrf();
+  const safeName = encodeURIComponent(oldName);
+  const res = await fetch(`/api/scans/${safeName}/rename`, {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
-    body: JSON.stringify({ ...body, _csrf_token: csrf }),
+    body: JSON.stringify({ name: newName, _csrf_token: csrf }),
   });
   const ct = res.headers.get("content-type") || "";
   const isJson = ct.includes("application/json");
@@ -140,9 +167,9 @@ export async function apiPostJson(path: string, body: Record<string, any>): Prom
   if (!res.ok) throw new Error((data as any).error || (data as any).message || `Request failed ${res.status}`);
   return data;
 }
-export async function apiDelete(path: string): Promise<any> {
+export async function deleteScan(name: string): Promise<void> {
   const csrf = await ensureCsrf();
-  const res = await fetch(path, {
+  const res = await fetch(`/api/scans/${encodeURIComponent(name)}`, {
     method: "DELETE",
     credentials: "same-origin",
     headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
@@ -156,13 +183,6 @@ export async function apiDelete(path: string): Promise<any> {
 // — scan library helpers —
 export async function fetchScans(): Promise<ScansResponse> {
   return readJson<ScansResponse>(await fetch("/api/scans?limit=100", { credentials: "same-origin", headers: { Accept: "application/json" } }));
-}
-export async function deleteScan(name: string): Promise<void> {
-  await apiDelete(`/api/scans/${encodeURIComponent(name)}`);
-}
-export async function renameScan(oldName: string, newName: string): Promise<{ name: string }> {
-  const data = await apiPostJson(`/api/scans/${encodeURIComponent(oldName)}/rename`, { name: newName });
-  return data;
 }
 export async function startScanJob(opts: { dpi: string; mode: string; format: string }): Promise<ScanJobResponse> {
   const csrf = await ensureCsrf();
@@ -183,5 +203,7 @@ export async function pollScanJob(jobId: string): Promise<ScanJobStatus["job"]> 
 }
 export async function cancelScanJob(jobId: string): Promise<void> {
   const form = new FormData();
-  await apiPostForm(`/api/scan/jobs/${encodeURIComponent(jobId)}/cancel`, form);
+  if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error("Invalid scan job id");
+  const csrf = await addCsrf(form);
+  await formRequest(fetch(`/api/scan/jobs/${jobId}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
 }
