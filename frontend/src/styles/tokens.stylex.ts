@@ -1,19 +1,17 @@
 import * as stylex from "@stylexjs/stylex";
 
-// Playful Retro — Neubrutalist / Memphis for HomeLab
-// Thick black strokes, hard shadows, paper textures, bold cheerful accents
+// ————————————————— Base vars —————————————————
+// Every theme overrides these. Components only ever read `vars.*`.
 export const vars = stylex.defineVars({
-  // base paper
-  bg: "#FFF8E7", // warm cream
-  bgSubtle: "#FFEDC2", // pale mustard wash
+  bg: "#FFF8E7",
+  bgSubtle: "#FFEDC2",
   panel: "#ffffff",
   panelSoft: "#FFF8E7",
-  text: "#111111", // near-black for contrast
+  text: "#111111",
   textMuted: "#3A3A3A",
   textFaint: "#6B6B6B",
-  line: "#111111", // brutalist stroke
+  line: "#111111",
   lineStrong: "#111111",
-  // cheerful Memphis palette
   yellow: "#FFCC02",
   yellowDark: "#E8B900",
   pink: "#FF5A8A",
@@ -25,14 +23,12 @@ export const vars = stylex.defineVars({
   blueSoft: "#E6EFFF",
   lilac: "#A78BFA",
   lime: "#B8FF66",
-  // semantic aliases mapped to palette
   good: "#00C950",
   goodSoft: "#E6F9EC",
   warn: "#FF9F1C",
   warnSoft: "#FFF4DE",
   bad: "#FF3B30",
   badSoft: "#FFE9E8",
-  // brutalist shadows & radii
   shadowSm: "2px 2px 0px #111",
   shadowMd: "4px 4px 0px #111",
   shadowLg: "8px 8px 0px #111",
@@ -42,9 +38,19 @@ export const vars = stylex.defineVars({
   radiusLg: "20px",
   radiusXl: "28px",
   radiusFull: "9999px",
+  // typography — swapped per vibe
+  fontDisplay: `"Space Grotesk", system-ui, sans-serif`,
+  fontBody: `"Space Grotesk", system-ui, sans-serif`,
+  fontMono: `"Fragment Mono", monospace`,
+  // decorative
+  bgImage: `radial-gradient(#111 1px, transparent 1.5px)`,
 });
 
-export const lightTheme = stylex.createTheme(vars, {
+// ————————————————— Themes —————————————————
+// Each is a *real* vibe, not just a palette swap.
+// Shadows, radii, fonts and patterns all change.
+
+export const retroTheme = stylex.createTheme(vars, {
   bg: "#FFF8E7",
   bgSubtle: "#FFEDC2",
   panel: "#ffffff",
@@ -54,7 +60,158 @@ export const lightTheme = stylex.createTheme(vars, {
   textFaint: "#6B6B6B",
   line: "#111111",
   lineStrong: "#111111",
+  yellow: "#FFCC02",
+  pink: "#FF5A8A",
+  teal: "#2EC4B6",
+  blue: "#3A86FF",
+  lilac: "#A78BFA",
+  lime: "#B8FF66",
+  good: "#00C950",
+  bad: "#FF3B30",
+  shadowSm: "2px 2px 0px #111",
+  shadowMd: "4px 4px 0px #111",
+  shadowLg: "8px 8px 0px #111",
+  shadowHard: "6px 6px 0px #111",
+  radiusSm: "12px",
+  radiusMd: "16px",
+  radiusLg: "20px",
+  radiusXl: "28px",
+  fontDisplay: `"Space Grotesk", system-ui, sans-serif`,
+  fontBody: `"Space Grotesk", system-ui, sans-serif`,
+  fontMono: `"Fragment Mono", monospace`,
+  bgImage: `radial-gradient(#111 1px, transparent 1.5px)`,
 });
+
+export const industrialTheme = stylex.createTheme(vars, {
+  bg: "#0f1115",
+  bgSubtle: "#1a1d24",
+  panel: "#1e222b",
+  panelSoft: "#1a1d24",
+  text: "#e6e8ec",
+  textMuted: "#8b95a5",
+  textFaint: "#5a6475",
+  line: "#2a303c",
+  lineStrong: "#343b4a",
+  yellow: "#ffb000",
+  pink: "#ff4d6a",
+  teal: "#00d0a0",
+  blue: "#3b82f6",
+  lilac: "#8b7cf8",
+  lime: "#a3e635",
+  good: "#22c55e",
+  bad: "#ef4444",
+  shadowSm: "0 1px 2px rgba(0,0,0,.5)",
+  shadowMd: "0 4px 12px rgba(0,0,0,.6)",
+  shadowLg: "0 12px 32px rgba(0,0,0,.7)",
+  shadowHard: "0 4px 12px rgba(0,0,0,.6)",
+  radiusSm: "6px",
+  radiusMd: "8px",
+  radiusLg: "10px",
+  radiusXl: "12px",
+  fontDisplay: `"JetBrains Mono", ui-monospace, monospace`,
+  fontBody: `"JetBrains Mono", ui-monospace, monospace`,
+  fontMono: `"JetBrains Mono", ui-monospace, monospace`,
+  bgImage: `linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.02) 1px, transparent 1px)`,
+});
+
+export const minimalTheme = stylex.createTheme(vars, {
+  bg: "#fcfcf9",
+  bgSubtle: "#f5f5f0",
+  panel: "#ffffff",
+  panelSoft: "#f9f9f7",
+  text: "#0a0a0a",
+  textMuted: "#6b7280",
+  textFaint: "#9ca3af",
+  line: "#e5e7eb",
+  lineStrong: "#d1d5db",
+  yellow: "#0ea5e9",
+  pink: "#ec4899",
+  teal: "#06b6d4",
+  blue: "#0ea5e9",
+  lilac: "#a78bfa",
+  lime: "#e5e7eb",
+  good: "#059669",
+  bad: "#dc2626",
+  shadowSm: "0 1px 2px rgba(0,0,0,.05)",
+  shadowMd: "0 4px 24px rgba(0,0,0,.06)",
+  shadowLg: "0 12px 40px rgba(0,0,0,.08)",
+  shadowHard: "0 4px 24px rgba(0,0,0,.06)",
+  radiusSm: "12px",
+  radiusMd: "16px",
+  radiusLg: "20px",
+  radiusXl: "24px",
+  fontDisplay: `"Inter", system-ui, -apple-system, sans-serif`,
+  fontBody: `"Inter", system-ui, -apple-system, sans-serif`,
+  fontMono: `"Fragment Mono", monospace`,
+  bgImage: `none`,
+});
+
+export const paperTheme = stylex.createTheme(vars, {
+  bg: "#fdf6e3",
+  bgSubtle: "#f5e6c8",
+  panel: "#fffbf0",
+  panelSoft: "#fdf6e3",
+  text: "#1c1917",
+  textMuted: "#57534e",
+  textFaint: "#857f77",
+  line: "#44403c",
+  lineStrong: "#292524",
+  yellow: "#d97706",
+  pink: "#be123c",
+  teal: "#0f766e",
+  blue: "#57534e",
+  lilac: "#78716c",
+  lime: "#a18072",
+  good: "#365314",
+  bad: "#991b1b",
+  shadowSm: "0 1px 0 rgba(28,25,23,.06)",
+  shadowMd: "0 4px 12px rgba(28,25,23,.08)",
+  shadowLg: "0 12px 24px rgba(28,25,23,.1)",
+  shadowHard: "0 2px 8px rgba(28,25,23,.08)",
+  radiusSm: "8px",
+  radiusMd: "12px",
+  radiusLg: "16px",
+  radiusXl: "20px",
+  fontDisplay: `"Newsreader", Georgia, serif`,
+  fontBody: `"Newsreader", Georgia, serif`,
+  fontMono: `"Fragment Mono", monospace`,
+  bgImage: `repeating-linear-gradient(transparent, transparent 28px, rgba(28,25,23,.04) 28px, rgba(28,25,23,.04) 29px)`,
+});
+
+export const midnightTheme = stylex.createTheme(vars, {
+  bg: "#000000",
+  bgSubtle: "#0a0a0a",
+  panel: "#0a0a0a",
+  panelSoft: "#141414",
+  text: "#fafafa",
+  textMuted: "#a1a1aa",
+  textFaint: "#52525b",
+  line: "#27272a",
+  lineStrong: "#3f3f46",
+  yellow: "#facc15",
+  pink: "#f472b6",
+  teal: "#2dd4bf",
+  blue: "#38bdf8",
+  lilac: "#c084fc",
+  lime: "#bef264",
+  good: "#4ade80",
+  bad: "#f87171",
+  shadowSm: "0 0 0 1px rgba(255,255,255,.08), 0 0 20px rgba(236,72,153,.15)",
+  shadowMd: "0 0 0 1px rgba(255,255,255,.08), 0 0 30px rgba(56,189,248,.15)",
+  shadowLg: "0 0 0 1px rgba(255,255,255,.08), 0 0 40px rgba(250,204,21,.12)",
+  shadowHard: "0 0 0 1px rgba(255,255,255,.1), 0 0 24px rgba(250,204,21,.2)",
+  radiusSm: "14px",
+  radiusMd: "18px",
+  radiusLg: "22px",
+  radiusXl: "28px",
+  fontDisplay: `"Space Grotesk", system-ui, sans-serif`,
+  fontBody: `"Space Grotesk", system-ui, sans-serif`,
+  fontMono: `"Fragment Mono", monospace`,
+  bgImage: `radial-gradient(rgba(255,255,255,.06) 1px, transparent 1.5px)`,
+});
+
+// keep old export for compat
+export const lightTheme = retroTheme;
 
 export const spacing = {
   xs: "6px",
@@ -63,3 +220,13 @@ export const spacing = {
   lg: "24px",
   xl: "32px",
 } as const;
+
+export const themes = {
+  retro: retroTheme,
+  industrial: industrialTheme,
+  minimal: minimalTheme,
+  paper: paperTheme,
+  midnight: midnightTheme,
+} as const;
+
+export type ThemeName = keyof typeof themes;

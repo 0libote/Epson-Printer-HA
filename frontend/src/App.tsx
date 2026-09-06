@@ -4,6 +4,8 @@ import { useStatus, useHistory } from "./hooks/useStatus";
 import { apiPostForm, ensureCsrf } from "./lib/api";
 import { useToast } from "./components/Toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTheme } from "./styles/ThemeProvider";
+import { ThemePicker, ThemePickerCard } from "./components/ThemePicker";
 import { useEffect, useState, useRef, useMemo } from "react";
 import {
   Printer,
@@ -34,19 +36,17 @@ import {
 const s = stylex.create({
   page: {
     backgroundColor: vars.bg,
-    // subtle warm dot grid + paper
-    backgroundImage: `radial-gradient(#111 1px, transparent 1.5px)`,
+    backgroundImage: vars.bgImage,
     backgroundSize: `22px 22px`,
     backgroundPosition: `0 0`,
     color: vars.text,
     minHeight: "100vh",
-    fontFamily: `"Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif`,
+    fontFamily: vars.fontBody,
     lineHeight: 1.5,
     WebkitFontSmoothing: "antialiased",
   },
   pageInner: {
-    // wash overlay to soften dots
-    backgroundColor: "rgba(255,248,231,.92)",
+    backgroundColor: "transparent",
     minHeight: "100vh",
   },
   topbar: {
@@ -85,7 +85,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     color: vars.text,
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontWeight: 700,
     fontSize: "18px",
     boxShadow: `3px 3px 0 ${vars.line}`,
@@ -93,14 +93,14 @@ const s = stylex.create({
   },
   brandText: { display: "flex", flexDirection: "column", lineHeight: 1 },
   brandName: {
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontSize: "15px",
     fontWeight: 700,
     letterSpacing: "-.02em",
     textTransform: "uppercase",
   },
   brandSub: {
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     color: vars.text,
     fontWeight: 500,
@@ -119,7 +119,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     backgroundColor: "white",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     fontWeight: 700,
     textTransform: "uppercase",
@@ -168,7 +168,7 @@ const s = stylex.create({
     backgroundColor: vars.text,
     padding: "6px 10px",
     borderRadius: vars.radiusFull,
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     fontWeight: 700,
     letterSpacing: ".08em",
@@ -181,7 +181,7 @@ const s = stylex.create({
   },
   h1: {
     margin: "10px 0 0",
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontSize: "clamp(32px, 5vw, 48px)",
     lineHeight: 0.95,
     letterSpacing: "-.04em",
@@ -218,7 +218,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     backgroundColor: "white",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     fontWeight: 700,
     color: vars.text,
@@ -261,7 +261,7 @@ const s = stylex.create({
   taskIconScan: { backgroundColor: vars.lilac, color: "white" },
   cardTitle: {
     margin: 0,
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontSize: "20px",
     fontWeight: 700,
     letterSpacing: "-.02em",
@@ -269,7 +269,7 @@ const s = stylex.create({
   },
   cardKicker: {
     margin: "0 0 4px",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     fontWeight: 700,
     letterSpacing: ".09em",
@@ -321,8 +321,8 @@ const s = stylex.create({
     flexShrink: 0,
     transform: "rotate(-3deg)",
   },
-  fileStrong: { display: "block", fontFamily: `"Space Grotesk", sans-serif`, fontSize: "15px", fontWeight: 700, color: vars.text, lineHeight: 1 },
-  fileSmall: { display: "block", fontFamily: `"Fragment Mono", monospace`, fontSize: "11px", color: vars.text, opacity: 0.7, marginTop: "4px" },
+  fileStrong: { display: "block", fontFamily: vars.fontDisplay, fontSize: "15px", fontWeight: 700, color: vars.text, lineHeight: 1 },
+  fileSmall: { display: "block", fontFamily: vars.fontMono, fontSize: "11px", color: vars.text, opacity: 0.7, marginTop: "4px" },
   selectedFile: {
     marginTop: "12px",
     display: "flex",
@@ -336,7 +336,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     boxShadow: `3px 3px 0 ${vars.line}`,
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "12px",
     transform: "rotate(0.3deg)",
   },
@@ -349,7 +349,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     color: "white",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "12px",
     fontWeight: 700,
     display: "flex",
@@ -367,7 +367,7 @@ const s = stylex.create({
   },
   fieldLabel: {
     display: "block",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     fontWeight: 700,
     color: vars.text,
@@ -386,7 +386,7 @@ const s = stylex.create({
     borderColor: vars.line,
     backgroundColor: "white",
     color: vars.text,
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontSize: "14px",
     fontWeight: 700,
     outlineWidth: "0px",
@@ -405,7 +405,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     backgroundColor: "white",
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontSize: "13px",
     fontWeight: 700,
     color: vars.text,
@@ -423,7 +423,7 @@ const s = stylex.create({
     borderRadius: "14px",
     backgroundColor: vars.yellow,
     color: vars.text,
-    fontFamily: `"Space Grotesk", sans-serif`,
+    fontFamily: vars.fontDisplay,
     fontWeight: 700,
     fontSize: "15px",
     letterSpacing: "-.01em",
@@ -454,7 +454,7 @@ const s = stylex.create({
     borderColor: vars.line,
     borderRadius: "10px",
     padding: "8px 12px",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer",
@@ -480,7 +480,7 @@ const s = stylex.create({
     animationIterationCount: "infinite",
   },
   progressBarTeal: { backgroundColor: vars.pink },
-  opCopy: { display: "flex", justifyContent: "space-between", gap: "10px", marginTop: "8px", fontFamily: `"Fragment Mono", monospace`, fontSize: "10px", fontWeight: 700, color: vars.text, textTransform: "uppercase" },
+  opCopy: { display: "flex", justifyContent: "space-between", gap: "10px", marginTop: "8px", fontFamily: vars.fontMono, fontSize: "10px", fontWeight: 700, color: vars.text, textTransform: "uppercase" },
   opCopyStrong: { fontWeight: 700, color: vars.text },
   scanOptions: {
     display: "grid",
@@ -488,7 +488,7 @@ const s = stylex.create({
     gap: "10px",
     "@media (max-width:560px)": { gridTemplateColumns: "1fr 1fr" },
   },
-  helpText: { margin: "12px 0", color: vars.text, opacity: 0.7, fontFamily: `"Fragment Mono", monospace`, fontSize: "11px", lineHeight: 1.5 },
+  helpText: { margin: "12px 0", color: vars.text, opacity: 0.7, fontFamily: vars.fontMono, fontSize: "11px", lineHeight: 1.5 },
   emptyScan: {
     minHeight: "220px",
     display: "flex",
@@ -534,7 +534,7 @@ const s = stylex.create({
   },
   deviceLabelSmall: {
     display: "block",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "9px",
     fontWeight: 700,
     letterSpacing: ".08em",
@@ -543,9 +543,9 @@ const s = stylex.create({
     opacity: 0.6,
     lineHeight: 1.2,
   },
-  deviceLabelStrong: { display: "block", fontFamily: `"Space Grotesk", sans-serif`, fontSize: "13px", fontWeight: 700, lineHeight: 1.1 },
+  deviceLabelStrong: { display: "block", fontFamily: vars.fontDisplay, fontSize: "13px", fontWeight: 700, lineHeight: 1.1 },
   deviceDetail: {
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     color: vars.text,
     opacity: 0.6,
@@ -559,7 +559,7 @@ const s = stylex.create({
     alignItems: "center",
     gap: "8px",
     marginTop: "14px",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     fontWeight: 700,
     color: vars.text,
@@ -570,7 +570,7 @@ const s = stylex.create({
   activityGrid: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: "22px", marginTop: "18px", "@media (max-width:860px)": { gridTemplateColumns: "1fr" } },
   compactHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", marginBottom: "14px" },
   sectionKicker: {
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     fontWeight: 700,
     letterSpacing: ".08em",
@@ -595,7 +595,7 @@ const s = stylex.create({
     color: vars.text,
   },
   downloadLink: {
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     fontWeight: 700,
     color: "white",
@@ -627,10 +627,10 @@ const s = stylex.create({
     cursor: "pointer",
     listStyle: "none",
   },
-  foldTitle: { fontFamily: `"Space Grotesk", sans-serif`, fontSize: "15px", fontWeight: 700 },
-  foldSub: { fontFamily: `"Fragment Mono", monospace`, fontSize: "11px", color: vars.text, opacity: 0.6, marginTop: "3px" },
+  foldTitle: { fontFamily: vars.fontDisplay, fontSize: "15px", fontWeight: 700 },
+  foldSub: { fontFamily: vars.fontMono, fontSize: "11px", color: vars.text, opacity: 0.6, marginTop: "3px" },
   foldBadge: {
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     fontWeight: 700,
     padding: "6px 12px",
@@ -679,7 +679,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     backgroundColor: "white",
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     overflowX: "auto",
     whiteSpace: "nowrap",
@@ -732,7 +732,7 @@ const s = stylex.create({
     borderWidth: "2.5px",
     borderStyle: "solid",
     borderColor: vars.line,
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "11px",
     fontWeight: 700,
     letterSpacing: ".05em",
@@ -747,7 +747,7 @@ const s = stylex.create({
     textAlign: "center",
     color: vars.text,
     opacity: 0.5,
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     textTransform: "uppercase",
     letterSpacing: ".06em",
@@ -763,7 +763,7 @@ const s = stylex.create({
     borderStyle: "solid",
     borderColor: vars.line,
     borderRadius: vars.radiusFull,
-    fontFamily: `"Fragment Mono", monospace`,
+    fontFamily: vars.fontMono,
     fontSize: "10px",
     fontWeight: 700,
     boxShadow: `2px 2px 0 ${vars.line}`,
@@ -978,7 +978,7 @@ export default function App() {
     return (
       <div {...stylex.props(s.page)}><div {...stylex.props(s.pageInner)}>
         <nav {...stylex.props(s.topbar)}><a {...stylex.props(s.brand)} href="/"><span {...stylex.props(s.brandMark)}>P</span><span {...stylex.props(s.brandText)}><strong {...stylex.props(s.brandName)}>HOME PRINT HUB</strong><small {...stylex.props(s.brandSub)}>Epson XP-2200</small></span></a><span {...stylex.props(s.health, s.healthSetup)}><ShieldAlert size={14} /> PRIVATE</span></nav>
-        <main {...stylex.props(s.shell)}><div {...stylex.props(s.card, s.cardPad)} style={{ maxWidth: 560, margin: "40px auto", textAlign: "center", background: "white" }}><div style={{ width: 64, height: 64, borderRadius: 16, display: "grid", placeItems: "center", background: vars.bad, color: "white", margin: "0 auto 16px", border: "3px solid #111", boxShadow: `4px 4px 0 #111`, transform: "rotate(-2deg)" }}><ShieldAlert size={28} /></div><h1 style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 24, fontWeight: 700, margin: 0 }}>{isAuth ? "Authentication required" : "Could not reach Home Print Hub"}</h1><p style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 12, marginTop: 8, opacity: .7 }}>{isAuth ? "Check WEB_USERNAME / WEB_PASSWORD." : msg || "Network unavailable."}</p><button {...stylex.props(s.buttonPrimary)} style={{ marginTop: 18, width: "auto", padding: "12px 22px" }} onClick={() => refetch()}><RefreshCw size={16} /> RETRY</button></div></main>
+        <main {...stylex.props(s.shell)}><div {...stylex.props(s.card, s.cardPad)} style={{ maxWidth: 560, margin: "40px auto", textAlign: "center", background: "white" }}><div style={{ width: 64, height: 64, borderRadius: 16, display: "grid", placeItems: "center", background: vars.bad, color: "white", margin: "0 auto 16px", border: "3px solid #111", boxShadow: `4px 4px 0 #111`, transform: "rotate(-2deg)" }}><ShieldAlert size={28} /></div><h1 style={{ fontFamily: vars.fontDisplay, fontSize: 24, fontWeight: 700, margin: 0 }}>{isAuth ? "Authentication required" : "Could not reach Home Print Hub"}</h1><p style={{ fontFamily: vars.fontMono, fontSize: 12, marginTop: 8, opacity: .7 }}>{isAuth ? "Check WEB_USERNAME / WEB_PASSWORD." : msg || "Network unavailable."}</p><button {...stylex.props(s.buttonPrimary)} style={{ marginTop: 18, width: "auto", padding: "12px 22px" }} onClick={() => refetch()}><RefreshCw size={16} /> RETRY</button></div></main>
       </div></div>
     );
   }
@@ -992,8 +992,8 @@ export default function App() {
             <div {...stylex.props(s.welcomeCopy)}>
               <div {...stylex.props(s.welcomeCopyInner)}>
                 <span {...stylex.props(s.stepPill)}><Sparkles size={12} /> ONE-TIME SETUP</span>
-                <h1 id="setup-title" style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: "clamp(28px, 5vw, 40px)", fontWeight: 700, lineHeight: .95, margin: "14px 0 0", letterSpacing: "-.03em" }}>CONNECT YOUR<br /><span style={{ background: vars.yellow, padding: "2px 10px", border: "3px solid #111", borderRadius: 8, boxShadow: `3px 3px 0 #111`, display: "inline-block", transform: "rotate(-1deg)" }}>PRINTER</span></h1>
-                <p style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 14, fontWeight: 500, margin: "14px 0 0", lineHeight: 1.4 }}>Enter the IP on your router or the printer's network sheet. After this, everyone at home prints from here — no Epson suite.</p>
+                <h1 id="setup-title" style={{ fontFamily: vars.fontDisplay, fontSize: "clamp(28px, 5vw, 40px)", fontWeight: 700, lineHeight: .95, margin: "14px 0 0", letterSpacing: "-.03em" }}>CONNECT YOUR<br /><span style={{ background: vars.yellow, padding: "2px 10px", border: "3px solid #111", borderRadius: 8, boxShadow: `3px 3px 0 #111`, display: "inline-block", transform: "rotate(-1deg)" }}>PRINTER</span></h1>
+                <p style={{ fontFamily: vars.fontDisplay, fontSize: 14, fontWeight: 500, margin: "14px 0 0", lineHeight: 1.4 }}>Enter the IP on your router or the printer's network sheet. After this, everyone at home prints from here — no Epson suite.</p>
               </div>
             </div>
             <form onSubmit={handleSetup} {...stylex.props(s.cardPad)} style={{ display: "grid", gap: 14, background: "white" }}>
@@ -1005,7 +1005,7 @@ export default function App() {
                 </button>
               </div>
               {setupBusy ? <div><div {...stylex.props(s.progress)}><span {...stylex.props(s.progressBar)} /></div><div {...stylex.props(s.opCopy)}><strong {...stylex.props(s.opCopyStrong)}>{setupStages[setupStage]}</strong><span>…</span></div></div> : null}
-              <small style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 11, opacity: .6 }}>Tip: reserve this IP in your router so it never moves ✦</small>
+              <small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6 }}>Tip: reserve this IP in your router so it never moves ✦</small>
             </form>
           </section>
           <div {...stylex.props(s.footer)}>PRIVATE HOME SERVICE • KEEP ON LOCAL NETWORK • MADE FOR HOMELAB ✦</div>
@@ -1018,15 +1018,21 @@ export default function App() {
     <div {...stylex.props(s.page)}><div {...stylex.props(s.pageInner)}>
       <nav {...stylex.props(s.topbar)}>
         <a {...stylex.props(s.brand)} href="/"><span {...stylex.props(s.brandMark)}>P</span><span {...stylex.props(s.brandText)}><strong {...stylex.props(s.brandName)}>HOME PRINT HUB</strong><small {...stylex.props(s.brandSub)}>Epson XP-2200 • Homelab Edition</small></span></a>
-        <HealthBadge reachable={reachable} printerIp={printerIp} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <ThemePicker compact />
+          <HealthBadge reachable={reachable} printerIp={printerIp} />
+        </div>
       </nav>
 
       <main {...stylex.props(s.shell)}>
+        <section {...stylex.props(s.card, s.cardPad)} style={{ marginBottom: 18, transform: "rotate(-0.2deg)" }}>
+          <ThemePickerCard />
+        </section>
         <header {...stylex.props(s.intro)}>
           <div>
             <div {...stylex.props(s.kicker)}><Sparkles size={12} /> READY WHEN YOU ARE</div>
             <h1 {...stylex.props(s.h1)}>WHAT DO YOU<br />WANNA DO?</h1>
-            <p {...stylex.props(s.sub)}>Print a file or scan a doc — no drivers on this device. Everything stays on your LAN. <span style={{ background: vars.lime, padding: "2px 6px", border: "2px solid #111", borderRadius: 6, fontWeight: 700, fontFamily: `"Fragment Mono", monospace`, fontSize: 11 }}>FAST • PRIVATE • NO CLOUD</span></p>
+            <p {...stylex.props(s.sub)}>Print a file or scan a doc — no drivers on this device. Everything stays on your LAN. <span style={{ background: vars.lime, padding: "2px 6px", border: "2px solid #111", borderRadius: 6, fontWeight: 700, fontFamily: vars.fontMono, fontSize: 11 }}>FAST • PRIVATE • NO CLOUD</span></p>
           </div>
           <div {...stylex.props(s.chips)}>
             <span {...stylex.props(s.chip)} style={{ background: printer.ok ? vars.lime : vars.pink, color: printer.ok ? vars.text : "white" }}><Dot ok={!!printer.ok} /> PRINTER — {printer.state.replace("_", " ").toUpperCase()}</span>
@@ -1081,8 +1087,8 @@ export default function App() {
               </form>
             ) : (
               <div {...stylex.props(s.emptyScan)}>
-                <strong style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={18} className="spin" /> SCANNER NAPPING</strong>
-                <p style={{ margin: "8px 0 0", fontFamily: `"Fragment Mono", monospace`, fontSize: 11, lineHeight: 1.5, fontWeight: 700 }}>Wakes up automatically. Check back in a minute — or smash scan anyway, we’ll validate.</p>
+                <strong style={{ fontFamily: vars.fontDisplay, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={18} className="spin" /> SCANNER NAPPING</strong>
+                <p style={{ margin: "8px 0 0", fontFamily: vars.fontMono, fontSize: 11, lineHeight: 1.5, fontWeight: 700 }}>Wakes up automatically. Check back in a minute — or smash scan anyway, we’ll validate.</p>
                 <form onSubmit={handleScan} style={{ marginTop: 14, opacity: .9 }}>
                   <div {...stylex.props(s.scanOptions)}>
                     <label {...stylex.props(s.fieldLabel)}>COLOUR <select {...stylex.props(s.input)} value={scanMode} onChange={e => setScanMode(e.target.value)}><option>Color</option><option>Gray</option><option>Lineart</option></select></label>
@@ -1106,12 +1112,12 @@ export default function App() {
 
         <section {...stylex.props(s.activityGrid)}>
           <article {...stylex.props(s.card, s.cardPad)} hidden={queue.length === 0} style={{ display: queue.length === 0 ? "none" : undefined, transform: "rotate(-0.3deg)" }}>
-            <div {...stylex.props(s.compactHead)}><div><span {...stylex.props(s.sectionKicker)}>IN PROGRESS</span><h2 style={{ margin: "8px 0 0", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 18, fontWeight: 700 }}>PRINT QUEUE ✦</h2></div><span style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 11, fontWeight: 700, background: vars.text, color: "white", padding: "4px 10px", borderRadius: 999, border: "2px solid #111" }}>{queue.length}</span></div>
-            <div {...stylex.props(s.itemList)}>{queue.map(j => <div key={j.id} {...stylex.props(s.itemRow)}><span style={{ minWidth: 0 }}><strong style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 13, display: "block" }}>{j.id}</strong><small style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 11, opacity: .6 }}>{j.owner} • {j.size}</small></span><button {...stylex.props(s.buttonQuiet, s.buttonDanger)} onClick={() => handleCancel(j.id)}><Trash2 size={12} /> CANCEL</button></div>)}</div>
+            <div {...stylex.props(s.compactHead)}><div><span {...stylex.props(s.sectionKicker)}>IN PROGRESS</span><h2 style={{ margin: "8px 0 0", fontFamily: vars.fontDisplay, fontSize: 18, fontWeight: 700 }}>PRINT QUEUE ✦</h2></div><span style={{ fontFamily: vars.fontMono, fontSize: 11, fontWeight: 700, background: vars.text, color: "white", padding: "4px 10px", borderRadius: 999, border: "2px solid #111" }}>{queue.length}</span></div>
+            <div {...stylex.props(s.itemList)}>{queue.map(j => <div key={j.id} {...stylex.props(s.itemRow)}><span style={{ minWidth: 0 }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block" }}>{j.id}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6 }}>{j.owner} • {j.size}</small></span><button {...stylex.props(s.buttonQuiet, s.buttonDanger)} onClick={() => handleCancel(j.id)}><Trash2 size={12} /> CANCEL</button></div>)}</div>
           </article>
           <article {...stylex.props(s.card, s.cardPad)} hidden={scans.length === 0} style={{ display: scans.length === 0 ? "none" : undefined, transform: "rotate(0.3deg)" }}>
-            <div {...stylex.props(s.compactHead)}><div><span {...stylex.props(s.sectionKicker)} style={{ background: vars.pink }}>DOWNLOADS</span><h2 style={{ margin: "8px 0 0", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 18, fontWeight: 700 }}>RECENT SCANS ✦</h2></div></div>
-            <div {...stylex.props(s.itemList)}>{scans.map(name => <a key={name} href={`/scans/${encodeURIComponent(name)}`} {...stylex.props(s.itemRow)}><span style={{ minWidth: 0 }}><strong style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 13 }}>{name}</strong><small style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 11, opacity: .6 }}>Saved scan</small></span><span {...stylex.props(s.downloadLink)}>DOWNLOAD ↗</span></a>)}</div>
+            <div {...stylex.props(s.compactHead)}><div><span {...stylex.props(s.sectionKicker)} style={{ background: vars.pink }}>DOWNLOADS</span><h2 style={{ margin: "8px 0 0", fontFamily: vars.fontDisplay, fontSize: 18, fontWeight: 700 }}>RECENT SCANS ✦</h2></div></div>
+            <div {...stylex.props(s.itemList)}>{scans.map(name => <a key={name} href={`/scans/${encodeURIComponent(name)}`} {...stylex.props(s.itemRow)}><span style={{ minWidth: 0 }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13 }}>{name}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6 }}>Saved scan</small></span><span {...stylex.props(s.downloadLink)}>DOWNLOAD ↗</span></a>)}</div>
           </article>
         </section>
 
@@ -1122,29 +1128,29 @@ export default function App() {
               <form onSubmit={handleNetworkSave} {...stylex.props(s.stack)}>
                 <label {...stylex.props(s.fieldLabel)} htmlFor="display-name">PRINTER NAME <input id="display-name" {...stylex.props(s.input)} value={displayNameEdit} onChange={e => setDisplayNameEdit(e.target.value)} maxLength={80} required /></label>
                 <label {...stylex.props(s.fieldLabel)} htmlFor="queue-name">TECH QUEUE NAME <input id="queue-name" {...stylex.props(s.input)} value={queueNameEdit} onChange={e => setQueueNameEdit(e.target.value)} pattern="[A-Za-z0-9._-]+" maxLength={127} required /></label>
-                <label {...stylex.props(s.toggle)} htmlFor="share-toggle"><input id="share-toggle" type="checkbox" checked={shareEdit} onChange={e => setShareEdit(e.target.checked)} style={{ width: 20, height: 20, accentColor: "#111" }} /><span><strong style={{ display: "block", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 13 }}>SHARE ON HOME NETWORK</strong><small style={{ display: "block", opacity: .6, fontFamily: `"Fragment Mono", monospace`, fontSize: 11 }}>AirPrint + Windows + Linux via Bonjour/mDNS</small></span></label>
+                <label {...stylex.props(s.toggle)} htmlFor="share-toggle"><input id="share-toggle" type="checkbox" checked={shareEdit} onChange={e => setShareEdit(e.target.checked)} style={{ width: 20, height: 20, accentColor: "#111" }} /><span><strong style={{ display: "block", fontFamily: vars.fontDisplay, fontSize: 13 }}>SHARE ON HOME NETWORK</strong><small style={{ display: "block", opacity: .6, fontFamily: vars.fontMono, fontSize: 11 }}>AirPrint + Windows + Linux via Bonjour/mDNS</small></span></label>
                 <button type="submit" disabled={netBusy} {...stylex.props(s.buttonPrimary)} style={{ justifySelf: "start", width: "auto", padding: "12px 20px", backgroundColor: vars.yellow }}>{netBusy ? <><Loader2 size={14} className="spin" /> SAVING…</> : "SAVE SHARING →"}</button>
                 {netBusy ? <div><div {...stylex.props(s.progress)}><span {...stylex.props(s.progressBar)} /></div><div {...stylex.props(s.opCopy)}><strong {...stylex.props(s.opCopyStrong)}>{netStages[netStage]}</strong></div></div> : null}
               </form>
               <div>
                 {networkSharing ? <>
-                  <h3 style={{ margin: "0 0 6px", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 14, fontWeight: 700 }}>AUTOMATIC SETUP ✦</h3><p style={{ margin: "0 0 14px", fontFamily: `"Fragment Mono", monospace`, fontSize: 12, opacity: .7 }}>On most devices, add a printer and choose <strong style={{ background: vars.yellow, padding: "2px 6px", border: "2px solid #111", borderRadius: 6 }}>{displayName}</strong> from the list.</p>
-                  <h3 style={{ margin: "0 0 6px", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 14, fontWeight: 700 }}>MANUAL ADDRESS</h3><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><code {...stylex.props(s.codeBox)}>{ippUri}</code><button type="button" {...stylex.props(s.buttonQuiet)} onClick={() => copy(ippUri, "Manual URI copied")}><Copy size={12} /> COPY</button></div>
-                  <details style={{ marginTop: 16, border: "2px dashed #111", borderRadius: 12, padding: 12, background: "white" }}><summary style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>WINDOWS + MAC STEPS →</summary><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } as any}><div><h4 style={{ margin: "0 0 4px", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 12 }}>Windows</h4><p style={{ margin: 0, fontFamily: `"Fragment Mono", monospace`, fontSize: 11, lineHeight: 1.5 }}>Settings → Bluetooth & devices → Printers → Add device. Manual: <code>{httpUri}</code></p></div><div><h4 style={{ margin: "0 0 4px", fontFamily: `"Space Grotesk", sans-serif`, fontSize: 12 }}>Mac</h4><p style={{ margin: 0, fontFamily: `"Fragment Mono", monospace`, fontSize: 11, lineHeight: 1.5 }}>System Settings → Printers & Scanners → Add Printer → <strong>{displayName}</strong></p></div></div></details>
-                </> : <><h3 style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 14 }}>SHARING IS OFF</h3><p style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 12, opacity: .7 }}>Turn it on to let other devices find this printer over IPP.</p></>}
+                  <h3 style={{ margin: "0 0 6px", fontFamily: vars.fontDisplay, fontSize: 14, fontWeight: 700 }}>AUTOMATIC SETUP ✦</h3><p style={{ margin: "0 0 14px", fontFamily: vars.fontMono, fontSize: 12, opacity: .7 }}>On most devices, add a printer and choose <strong style={{ background: vars.yellow, padding: "2px 6px", border: "2px solid #111", borderRadius: 6 }}>{displayName}</strong> from the list.</p>
+                  <h3 style={{ margin: "0 0 6px", fontFamily: vars.fontDisplay, fontSize: 14, fontWeight: 700 }}>MANUAL ADDRESS</h3><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><code {...stylex.props(s.codeBox)}>{ippUri}</code><button type="button" {...stylex.props(s.buttonQuiet)} onClick={() => copy(ippUri, "Manual URI copied")}><Copy size={12} /> COPY</button></div>
+                  <details style={{ marginTop: 16, border: "2px dashed #111", borderRadius: 12, padding: 12, background: "white" }}><summary style={{ fontFamily: vars.fontMono, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>WINDOWS + MAC STEPS →</summary><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } as any}><div><h4 style={{ margin: "0 0 4px", fontFamily: vars.fontDisplay, fontSize: 12 }}>Windows</h4><p style={{ margin: 0, fontFamily: vars.fontMono, fontSize: 11, lineHeight: 1.5 }}>Settings → Bluetooth & devices → Printers → Add device. Manual: <code>{httpUri}</code></p></div><div><h4 style={{ margin: "0 0 4px", fontFamily: vars.fontDisplay, fontSize: 12 }}>Mac</h4><p style={{ margin: 0, fontFamily: vars.fontMono, fontSize: 11, lineHeight: 1.5 }}>System Settings → Printers & Scanners → Add Printer → <strong>{displayName}</strong></p></div></div></details>
+                </> : <><h3 style={{ fontFamily: vars.fontDisplay, fontSize: 14 }}>SHARING IS OFF</h3><p style={{ fontFamily: vars.fontMono, fontSize: 12, opacity: .7 }}>Turn it on to let other devices find this printer over IPP.</p></>}
               </div>
             </div>
           </div>
         </details>
 
         <details {...stylex.props(s.fold)} open>
-          <summary {...stylex.props(s.foldSummary)}><span><strong {...stylex.props(s.foldTitle)} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><History size={16} strokeWidth={2.5} /> PRINT HISTORY ✦</strong><small {...stylex.props(s.foldSub)}>{history.length} recent {history.length === 1 ? "job" : "jobs"} · file contents not stored</small></span><span style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 11, fontWeight: 700, background: vars.yellow, padding: "4px 10px", border: "2.5px solid #111", borderRadius: 999, boxShadow: `2px 2px 0 #111` }}>{history.length}</span><ChevronDown size={18} strokeWidth={2.5} /></summary>
+          <summary {...stylex.props(s.foldSummary)}><span><strong {...stylex.props(s.foldTitle)} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><History size={16} strokeWidth={2.5} /> PRINT HISTORY ✦</strong><small {...stylex.props(s.foldSub)}>{history.length} recent {history.length === 1 ? "job" : "jobs"} · file contents not stored</small></span><span style={{ fontFamily: vars.fontMono, fontSize: 11, fontWeight: 700, background: vars.yellow, padding: "4px 10px", border: "2.5px solid #111", borderRadius: 999, boxShadow: `2px 2px 0 #111` }}>{history.length}</span><ChevronDown size={18} strokeWidth={2.5} /></summary>
           <div {...stylex.props(s.foldContent)} style={{ padding: 0 }}>
             <div style={{ padding: "14px 16px", display: "flex", gap: 10, alignItems: "center", borderBottom: `3px solid #111`, background: "white" }}>
-              <div style={{ position: "relative", flex: 1 }}><Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} /><input {...stylex.props(s.input)} placeholder="SEARCH DOCS, USERS, STATUS…" value={historyFilter} onChange={e => setHistoryFilter(e.target.value)} style={{ marginTop: 0, paddingLeft: 36, minHeight: 40, fontFamily: `"Fragment Mono", monospace`, textTransform: "uppercase", fontSize: 11 }} /></div>
+              <div style={{ position: "relative", flex: 1 }}><Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} /><input {...stylex.props(s.input)} placeholder="SEARCH DOCS, USERS, STATUS…" value={historyFilter} onChange={e => setHistoryFilter(e.target.value)} style={{ marginTop: 0, paddingLeft: 36, minHeight: 40, fontFamily: vars.fontMono, textTransform: "uppercase", fontSize: 11 }} /></div>
               {history.length > 30 ? <button {...stylex.props(s.buttonQuiet)} onClick={() => setShowAllHistory(v => !v)}>{showAllHistory ? "SHOW LESS" : `SHOW ALL (${filteredHistory.length})`}</button> : null}
             </div>
-            {visibleHistory.length ? <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: vars.text, color: "white", fontFamily: `"Fragment Mono", monospace`, fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase" }}><th style={{ padding: "10px 14px", textAlign: "left" }}>Document</th><th style={{ padding: "10px 14px", textAlign: "left" }}>When</th><th style={{ padding: "10px 14px", textAlign: "left" }}>From</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Status</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Size</th></tr></thead><tbody>{visibleHistory.map(j => <tr key={`${j.job_id}-${j.created_at}`} style={{ borderBottom: "2px solid #111", background: "white" }}><td style={{ padding: "12px 14px" }}><strong style={{ fontFamily: `"Space Grotesk", sans-serif`, fontSize: 13, display: "block" }}>{j.document}</strong><small style={{ fontFamily: `"Fragment Mono", monospace`, fontSize: 10, opacity: .6 }}>#{j.job_id}</small></td><td style={{ padding: "12px 14px", fontFamily: `"Fragment Mono", monospace`, fontSize: 11, whiteSpace: "nowrap" }}>{j.created_display}</td><td style={{ padding: "12px 14px", fontFamily: `"Fragment Mono", monospace`, fontSize: 11, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>{j.origin_host || j.user_name || j.source}</td><td style={{ padding: "12px 14px" }}><span style={{ display: "inline-block", padding: "4px 8px", borderRadius: 999, fontFamily: `"Fragment Mono", monospace`, fontSize: 10, fontWeight: 700, border: "2px solid #111", background: j.state === "completed" ? vars.lime : j.state === "pending" || j.state === "printing" ? vars.yellow : j.state === "cancelled" || j.state === "aborted" ? vars.pink : j.state === "held" ? vars.warnSoft : "white", color: vars.text }}>{j.state.replace("_", " ").toUpperCase()}</span></td><td style={{ padding: "12px 14px", fontFamily: `"Fragment Mono", monospace`, fontSize: 11, whiteSpace: "nowrap" }}>{j.size_display}</td></tr>)}</tbody></table></div> : <p style={{ margin: 0, padding: "20px 16px", fontFamily: `"Fragment Mono", monospace`, fontSize: 12, opacity: .6, textAlign: "center" }}>{historyFilter ? `NO JOBS MATCH “${historyFilter.toUpperCase()}”.` : "NO PRINT HISTORY YET — JOBS FROM PHONES + LAPTOPS WILL POP HERE ✦"}</p>}
+            {visibleHistory.length ? <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: vars.text, color: "white", fontFamily: vars.fontMono, fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase" }}><th style={{ padding: "10px 14px", textAlign: "left" }}>Document</th><th style={{ padding: "10px 14px", textAlign: "left" }}>When</th><th style={{ padding: "10px 14px", textAlign: "left" }}>From</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Status</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Size</th></tr></thead><tbody>{visibleHistory.map(j => <tr key={`${j.job_id}-${j.created_at}`} style={{ borderBottom: "2px solid #111", background: "white" }}><td style={{ padding: "12px 14px" }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block" }}>{j.document}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 10, opacity: .6 }}>#{j.job_id}</small></td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, whiteSpace: "nowrap" }}>{j.created_display}</td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>{j.origin_host || j.user_name || j.source}</td><td style={{ padding: "12px 14px" }}><span style={{ display: "inline-block", padding: "4px 8px", borderRadius: 999, fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, border: "2px solid #111", background: j.state === "completed" ? vars.lime : j.state === "pending" || j.state === "printing" ? vars.yellow : j.state === "cancelled" || j.state === "aborted" ? vars.pink : j.state === "held" ? vars.warnSoft : "white", color: vars.text }}>{j.state.replace("_", " ").toUpperCase()}</span></td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, whiteSpace: "nowrap" }}>{j.size_display}</td></tr>)}</tbody></table></div> : <p style={{ margin: 0, padding: "20px 16px", fontFamily: vars.fontMono, fontSize: 12, opacity: .6, textAlign: "center" }}>{historyFilter ? `NO JOBS MATCH “${historyFilter.toUpperCase()}”.` : "NO PRINT HISTORY YET — JOBS FROM PHONES + LAPTOPS WILL POP HERE ✦"}</p>}
           </div>
         </details>
 

@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { ToastProvider } from "./components/Toast";
+import { ThemeProvider } from "./styles/ThemeProvider";
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -16,9 +17,11 @@ const root = document.getElementById("root")!;
 createRoot(root).render(
   <React.StrictMode>
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <App />
-      </ToastProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <App />
+        </ToastProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   </React.StrictMode>
 );
