@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "types": ["vite/client"],
+    "noEmit": true,
+    "allowImportingTsExtensions": false,
+    "paths": {}
+  },
+  "include": ["src/**/*", "vite.config.ts", "index.html"],
+  "exclude": ["node_modules", "../public", "../dist"]
+}

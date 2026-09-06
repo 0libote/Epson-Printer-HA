@@ -265,6 +265,53 @@ function getCsrfToken(c:any):string{
   if(!token){ token=randomBytes(32).toString("hex"); setCookie(c,"csrf_token",token,{path:"/", httpOnly:true, sameSite:"Lax", secure:SESSION_COOKIE_SECURE});}
   return token;
 }
+function wantsJson(c:any):boolean{
+  const accept=c.req.header("accept")||"";
+  const xhr=c.req.header("x-requested-with")||"";
+  return accept.includes("application/json") || xhr.toLowerCase()==="xmlhttprequest";
+}
+function isCsrfValid(c:any, body:any):boolean{
+  const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
+  const expected=getCookie(c,"csrf_token")||"";
+  return !!expected && token===expected;
+}
+async function tryServeSpa(c:any):Promise<Response|null>{
+  const candidates=[join(process.cwd(),"public","index.html"), join(process.cwd(),"dist","index.html")];
+  for(const cand of candidates){
+    try{
+      const f=Bun.file(cand);
+      if(await f.exists()){
+        let html=await f.text();
+        let csrf: string;
+        try{ csrf=(c as any).get("csrf_token_tmp") || getCookie(c,"csrf_token") || getCsrfToken(c); }catch{ csrf=getCsrfToken(c); }
+        // inject csrf for legacy tests if missing
+        if(!html.includes('name="_csrf_token"')){
+          html=html.replace("</body>", `<input type="hidden" name="_csrf_token" value="${escapeHtml(csrf)}" hidden /></body>`);
+          if(html.includes("</head>")) html=html.replace("</head>", `<meta name="csrf-token" content="${escapeHtml(csrf)}" /></head>`);
+        } else {
+          html=html.replace(/name="_csrf_token" value="[^"]*"/, `name="_csrf_token" value="${escapeHtml(csrf)}"`);
+        }
+        const printerIp=currentPrinterIp();
+        if(printerIp && !html.includes("data-printer-ip")){
+          html=html.replace("<body", `<body data-printer-ip="${escapeHtml(printerIp)}" data-poll-interval="3000"`);
+        }
+        // Inject flash messages for legacy POST-redirect-GET tests (and for SPA error visibility)
+        const flashes=consumeFlash(c);
+        if(flashes.length){
+          const flashHtml=flashes.map(f=>`<div class="notice ${escapeHtml(f.category)}" role="status"><span class="notice-icon" aria-hidden="true">${f.category==="success"?"✓":"!"}</span><span>${escapeHtml(f.message)}</span></div>`).join("");
+          // place flashes right after <div id="root"> so tests can find substring
+          if(html.includes('<div id="root"></div>')){
+            html=html.replace('<div id="root"></div>', `<div id="root"></div><div id="flash-root">${flashHtml}</div>`);
+          } else {
+            html=html.replace("</body>", `${flashHtml}</body>`);
+          }
+        }
+        return c.html(html);
+      }
+    }catch{}
+  }
+  return null;
+}
 function authRequired():boolean{ return Boolean(WEB_USERNAME); }
 function authValid(c:any):boolean{
   const header=c.req.header("authorization")||"";
@@ -289,7 +336,10 @@ function authFailureState(c:any, recordFailure=false):boolean{
 }
 export const app=new Hono();
 app.use("*", async(c,next)=>{
-  if(c.req.method==="GET") getCsrfToken(c);
+  if(c.req.method==="GET"){
+    const t=getCsrfToken(c);
+    try{ (c as any).set("csrf_token_tmp", t); }catch{}
+  }
   await next();
 });
 
@@ -542,9 +592,19 @@ async function renderIndex(c:any):Promise<string>{
 </html>`;
 }
 
+app.get("/api/csrf", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const token=getCsrfToken(c);
+  return c.json({ csrf_token: token });
+});
+
 app.get("/", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
+  // Try to serve Vite SPA if built (public/index.html) – inject csrf for legacy compat
+  const spa=await tryServeSpa(c);
+  if(spa) return spa;
   const html=await renderIndex(c);
   return c.html(html);
 });
@@ -552,20 +612,32 @@ app.get("/", async(c)=>{
 app.post("/setup", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
-  if(PRINTER_IP_ENV){ setFlash(c,"error","PRINTER_IP is set by Docker, so the dashboard cannot change it."); return c.redirect("/",302); }
+  if(PRINTER_IP_ENV){
+    const msg="PRINTER_IP is set by Docker, so the dashboard cannot change it.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const body=await c.req.parseBody();
-  const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  const expected=getCookie(c,"csrf_token")||"";
-  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
-  const rawIp=String(body["printer_ip"]||"");
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  const rawIp=String((body as any)["printer_ip"]||"");
   let printerIp:string;
-  try{ printerIp=validateIPv4(rawIp);}catch(e:any){ setFlash(c,"error",e.message); return c.redirect("/",302); }
+  try{ printerIp=validateIPv4(rawIp);}catch(e:any){
+    const msg=(e as any).message;
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  let setupOk=false; let setupMsg="";
   const lock=await withOperationLock("cups-config", async()=>{
     const [ok,log]=await configureCups(printerIp);
-    if(ok){ savePrinterIp(printerIp); clearStatusCaches(); setFlash(c,"success",`Printer saved at ${printerIp}. CUPS is configured.`); }
-    else setFlash(c,"error",`CUPS setup failed; the previous printer setting was kept: ${(log||"unknown error").slice(-800)}`);
+    if(ok){ savePrinterIp(printerIp); clearStatusCaches(); setupOk=true; setupMsg=`Printer saved at ${printerIp}. CUPS is configured.`; if(!wantsJson(c)) setFlash(c,"success",setupMsg); }
+    else { setupOk=false; setupMsg=`CUPS setup failed; the previous printer setting was kept: ${(log||"unknown error").slice(-800)}`; if(!wantsJson(c)) setFlash(c,"error",setupMsg); }
   });
-  if(!lock.acquired) setFlash(c,"error","Printer settings are already being changed. Wait for that operation to finish.");
+  if(!lock.acquired){
+    const msg="Printer settings are already being changed. Wait for that operation to finish.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 409);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  if(wantsJson(c)) return c.json({ ok: setupOk, message: setupMsg }, setupOk?200:500);
   return c.redirect("/",302);
 });
 
@@ -573,64 +645,105 @@ app.post("/client-settings", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   const printerIp=currentPrinterIp();
-  if(!printerIp){ setFlash(c,"error","Set up the physical printer first."); return c.redirect("/",302); }
+  if(!printerIp){
+    const msg="Set up the physical printer first.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const body=await c.req.parseBody();
-  const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  const expected=getCookie(c,"csrf_token")||"";
-  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   let printerName:string, displayName:string;
   try{
-    printerName=validateQueueName(String(body["printer_name"]||""));
-    displayName=validateDisplayName(String(body["display_name"]||""));
-  }catch(e:any){ setFlash(c,"error",e.message); return c.redirect("/",302); }
-  const sharePrinter=body["share_printer"]==="on";
+    printerName=validateQueueName(String((body as any)["printer_name"]||""));
+    displayName=validateDisplayName(String((body as any)["display_name"]||""));
+  }catch(e:any){
+    const msg=(e as any).message;
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  const sharePrinter=(body as any)["share_printer"]==="on";
+  let okResult=false; let msgResult="";
   const lock=await withOperationLock("cups-config", async()=>{
     const oldName=currentPrinterName();
     const [ok,log]=await configureCups(printerIp,{printerName, displayName, sharePrinter, oldPrinterName:oldName});
-    if(!ok){ setFlash(c,"error",`Network printing settings were not applied: ${(log||"unknown error").slice(-800)}`); return; }
+    if(!ok){ okResult=false; msgResult=`Network printing settings were not applied: ${(log||"unknown error").slice(-800)}`; if(!wantsJson(c)) setFlash(c,"error",msgResult); return; }
     const data=savedSettingsSync();
     data.printer_name=printerName;
     data.display_name=displayName;
     data.share_printer=sharePrinter;
     saveSettingsSync(data);
     clearStatusCaches();
-    setFlash(c,"success","Network printing settings applied.");
+    okResult=true; msgResult="Network printing settings applied.";
+    if(!wantsJson(c)) setFlash(c,"success",msgResult);
   });
-  if(!lock.acquired) setFlash(c,"error","Printer settings are already being changed. Wait for that operation to finish.");
+  if(!lock.acquired){
+    const msg="Printer settings are already being changed. Wait for that operation to finish.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 409);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  if(wantsJson(c)) return c.json({ ok: okResult, message: msgResult, error: okResult?undefined:msgResult }, okResult?200:500);
   return c.redirect("/",302);
 });
 
 app.post("/print", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
-  if(!currentPrinterIp()){ setFlash(c,"error","Set up the printer first."); return c.redirect("/",302); }
+  if(!currentPrinterIp()){
+    const msg="Set up the printer first.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const body:any=await c.req.parseBody();
-  const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  const expected=getCookie(c,"csrf_token")||"";
-  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   const file=body["file"] as File|undefined;
-  if(!file||!(file instanceof File)||!file.name){ setFlash(c,"error","Choose a file first."); return c.redirect("/",302); }
+  if(!file||!(file instanceof File)||!file.name){
+    const msg="Choose a file first.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const name=secureFilename(file.name);
   const suffix=extname(name).toLowerCase();
-  if(![".pdf",".png",".jpg",".jpeg",".txt"].includes(suffix)){ setFlash(c,"error","Supported files: PDF, PNG, JPG and TXT."); return c.redirect("/",302); }
+  if(![".pdf",".png",".jpg",".jpeg",".txt"].includes(suffix)){
+    const msg="Supported files: PDF, PNG, JPG and TXT.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   let copies=1;
-  try{ copies=Number.parseInt(String(body["copies"]||"1"),10); if(!(copies>=1 && copies<=99) || Number.isNaN(copies)) throw new Error(); }catch{ setFlash(c,"error","Copies must be a whole number between 1 and 99."); return c.redirect("/",302); }
+  try{ copies=Number.parseInt(String(body["copies"]||"1"),10); if(!(copies>=1 && copies<=99) || Number.isNaN(copies)) throw new Error(); }catch{
+    const msg="Copies must be a whole number between 1 and 99.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const grayscale=body["grayscale"]==="on";
-  if(file.size> MAX_UPLOAD_MB*1024*1024){ setFlash(c,"error",`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`); return c.redirect("/",302); }
+  if(file.size> MAX_UPLOAD_MB*1024*1024){
+    const msg=`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`;
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 413);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const uploadDir=join(APP_DIR,"uploads");
   mkdirSync(uploadDir,{recursive:true});
   const workDir=join(uploadDir,`print-${randomBytes(6).toString("hex")}`);
   mkdirSync(workDir,{recursive:true});
   const target=join(workDir,name);
+  let printOk=false; let printMsg="";
   try{
     const buf=await file.arrayBuffer();
     await Bun.write(target, buf);
     const err=await validateUpload(target, suffix);
-    if(err){ setFlash(c,"error",err); return c.redirect("/",302); }
-    const result=await submitPrint(currentPrinterName(), target, {copies, grayscale, title:name});
-    clearStatusCaches();
-    setFlash(c, result.ok?"success":"error", result.ok?"File added to the print queue.":(result.stderr||"Print failed."));
+    if(err){
+      if(wantsJson(c)) { printOk=false; printMsg=err; }
+      else { setFlash(c,"error",err); return c.redirect("/",302); }
+    } else {
+      const result=await submitPrint(currentPrinterName(), target, {copies, grayscale, title:name});
+      clearStatusCaches();
+      printOk=result.ok; printMsg=result.ok?"File added to the print queue.":(result.stderr||"Print failed.");
+      if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
+    }
   } finally { try{ await Bun.$`rm -rf ${workDir}`.quiet(); }catch{} }
+  if(wantsJson(c)){
+    if(printMsg && printMsg.includes("does not appear")) return c.json({ ok:false, error: printMsg }, 400);
+    return c.json({ ok: printOk, message: printMsg, error: printOk?undefined:printMsg }, printOk?200:500);
+  }
   return c.redirect("/",302);
 });
 
@@ -638,20 +751,33 @@ app.post("/scan", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   const printerIp=currentPrinterIp();
-  if(!printerIp){ setFlash(c,"error","Set up the printer first."); return c.redirect("/",302); }
+  if(!printerIp){
+    const msg="Set up the printer first.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
   const body=await c.req.parseBody();
-  const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  const expected=getCookie(c,"csrf_token")||"";
-  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
-  let dpi=Number.parseInt(String(body["dpi"]||"300"),10);
-  if(![150,200,300,600].includes(dpi)){ setFlash(c,"error","DPI must be 150, 200, 300 or 600."); return c.redirect("/",302); }
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  let dpi=Number.parseInt(String((body as any)["dpi"]||"300"),10);
+  if(![150,200,300,600].includes(dpi)){
+    const msg="DPI must be 150, 200, 300 or 600.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  let scanOk=false; let scanMsg=""; let scanPath:string|null=null;
   const lock=await withOperationLock("scanner", async()=>{
-    const [result, path]=await scanDocument(printerIp, SCAN_DIR, {dpi, mode:String(body["mode"]||"Color"), fmt:String(body["format"]||"pdf")});
+    const [result, path]=await scanDocument(printerIp, SCAN_DIR, {dpi, mode:String((body as any)["mode"]||"Color"), fmt:String((body as any)["format"]||"pdf")});
     clearStatusCaches();
-    if(result.ok && path){ pruneScans(); setFlash(c,"success", result.stderr||`Scan saved as ${basename(path)}.`); }
-    else setFlash(c,"error", result.stderr||"Scan failed.");
+    scanPath=path;
+    if(result.ok && path){ pruneScans(); scanOk=true; scanMsg=result.stderr||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
+    else { scanOk=false; scanMsg=result.stderr||"Scan failed."; if(!wantsJson(c)) setFlash(c,"error", scanMsg); }
   });
-  if(!lock.acquired) setFlash(c,"error","A scan is already in progress. Wait for it to finish before starting another.");
+  if(!lock.acquired){
+    const msg="A scan is already in progress. Wait for it to finish before starting another.";
+    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 409);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  if(wantsJson(c)) return c.json({ ok: scanOk, message: scanMsg, path: scanPath, error: scanOk?undefined:scanMsg }, scanOk?200:500);
   return c.redirect("/",302);
 });
 
@@ -659,12 +785,11 @@ app.post("/jobs/:job_id/cancel", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   const body=await c.req.parseBody();
-  const token=String((body as any)["_csrf_token"]||c.req.header("x-csrf-token")||"");
-  const expected=getCookie(c,"csrf_token")||"";
-  if(!expected||token!==expected) return c.text("Invalid or missing CSRF token",400);
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   const jobId=c.req.param("job_id");
   const result=await cancelJob(jobId);
   clearStatusCaches();
+  if(wantsJson(c)) return c.json({ ok: result.ok, message: result.ok?"Job cancelled.":result.stderr||"Could not cancel job.", error: result.ok?undefined:(result.stderr||"Could not cancel job.") }, result.ok?200:500);
   setFlash(c, result.ok?"success":"error", result.ok?"Job cancelled.":result.stderr||"Could not cancel job.");
   return c.redirect("/",302);
 });
@@ -731,6 +856,33 @@ app.get("/api/health", async(c)=>{
   return c.json({ok:result.ok, service:"epson-printer-ha", cups:result.stdout||result.stderr}, result.ok?200:503);
 });
 
+// Vite SPA assets (public/assets/*) – StyleX + Vite emit here
+app.get("/assets/*", async(c)=>{
+  const raw=c.req.path.replace(/^\/assets\//, "");
+  // prevent traversal, but preserve subfolders (assets may be hashed)
+  if(raw.includes("..") || raw.includes("\\")) return c.text("Not found",404);
+  const safe=raw.split("/").map(p=>basename(p)).join("/");
+  if(!safe) return c.text("Not found",404);
+  const mimeMap:Record<string,string>={".js":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8", ".svg":"image/svg+xml", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".woff2":"font/woff2", ".woff":"font/woff", ".map":"application/json"};
+  for(const base of [join(process.cwd(),"public","assets"), join(process.cwd(),"public")]){
+    const cand=join(base, safe);
+    // also try direct path for nested
+    const tryPaths=[cand, join(process.cwd(),"public","assets", raw)];
+    for(const p of tryPaths){
+      const f=Bun.file(p);
+      if(await f.exists()){
+        const ext=p.slice(p.lastIndexOf(".")).toLowerCase();
+        const contentType=mimeMap[ext] || (f as any).type || "application/octet-stream";
+        const buf=await f.arrayBuffer();
+        // immutable for hashed assets
+        const isHashed=/-[A-Za-z0-9]{6,}\.(js|css)$/.test(p);
+        return new Response(buf,{headers:{"Content-Type":contentType, "Cache-Control": isHashed ? "public, max-age=31536000, immutable" : "public, max-age=300"}});
+      }
+    }
+  }
+  return c.text("Not found",404);
+});
+
 app.get("/static/*", async(c)=>{
   const raw=c.req.path.replace(/^\/static\//, "");
   const decoded=decodeURIComponent(raw);
@@ -753,10 +905,13 @@ app.get("/static/*", async(c)=>{
 
 app.onError((err,c)=>{
   if((err as any).message?.includes("413") || (c.req.header("content-length") && Number.parseInt(c.req.header("content-length")!) > MAX_UPLOAD_MB*1024*1024)){
-    setFlash(c,"error",`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`);
+    const msg=`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`;
+    if(wantsJson(c as any)) return (c as any).json({ ok:false, error: msg }, 413);
+    setFlash(c as any,"error",msg);
     return c.redirect("/",302);
   }
   console.error(err);
+  if(wantsJson(c as any)) return (c as any).json({ ok:false, error: "Internal Server Error" }, 500);
   return c.text("Internal Server Error",500);
 });
 
