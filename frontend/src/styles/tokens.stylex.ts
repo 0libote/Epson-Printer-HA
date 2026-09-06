@@ -1,52 +1,61 @@
 import * as stylex from "@stylexjs/stylex";
 
+// Playful Retro — Neubrutalist / Memphis for HomeLab
+// Thick black strokes, hard shadows, paper textures, bold cheerful accents
 export const vars = stylex.defineVars({
-  bg: "#f7f9fb",
-  bgSubtle: "#f1f5f9",
+  // base paper
+  bg: "#FFF8E7", // warm cream
+  bgSubtle: "#FFEDC2", // pale mustard wash
   panel: "#ffffff",
-  panelSoft: "#f8fafc",
-  panelHover: "#f8fafc",
-  text: "#0f172a",
-  textMuted: "#64748b",
-  textFaint: "#94a3b8",
-  line: "#e2e8f0",
-  lineStrong: "#cbd5e1",
-  blue: "#2563eb",
-  blueDark: "#1e40af",
-  blueSoft: "#eff6ff",
-  blueBorder: "#bfdbfe",
-  teal: "#0d9488",
-  tealDark: "#0f766e",
-  tealSoft: "#f0fdfa",
-  good: "#059669",
-  goodSoft: "#ecfdf5",
-  warn: "#d97706",
-  warnSoft: "#fffbeb",
-  bad: "#dc2626",
-  badSoft: "#fef2f2",
-  shadowSm: "0 1px 2px rgba(15,23,42,.06)",
-  shadowMd: "0 8px 30px rgba(15,23,42,.08)",
-  shadowLg: "0 16px 40px rgba(15,23,42,.12)",
-  radiusSm: "10px",
-  radiusMd: "14px",
-  radiusLg: "18px",
-  radiusXl: "22px",
+  panelSoft: "#FFF8E7",
+  text: "#111111", // near-black for contrast
+  textMuted: "#3A3A3A",
+  textFaint: "#6B6B6B",
+  line: "#111111", // brutalist stroke
+  lineStrong: "#111111",
+  // cheerful Memphis palette
+  yellow: "#FFCC02",
+  yellowDark: "#E8B900",
+  pink: "#FF5A8A",
+  pinkDark: "#E04472",
+  teal: "#2EC4B6",
+  tealDark: "#1AA99C",
+  blue: "#3A86FF",
+  blueDark: "#265FCC",
+  blueSoft: "#E6EFFF",
+  lilac: "#A78BFA",
+  lime: "#B8FF66",
+  // semantic aliases mapped to palette
+  good: "#00C950",
+  goodSoft: "#E6F9EC",
+  warn: "#FF9F1C",
+  warnSoft: "#FFF4DE",
+  bad: "#FF3B30",
+  badSoft: "#FFE9E8",
+  // brutalist shadows & radii
+  shadowSm: "2px 2px 0px #111",
+  shadowMd: "4px 4px 0px #111",
+  shadowLg: "8px 8px 0px #111",
+  shadowHard: "6px 6px 0px #111",
+  radiusSm: "12px",
+  radiusMd: "16px",
+  radiusLg: "20px",
+  radiusXl: "28px",
   radiusFull: "9999px",
 });
 
 export const lightTheme = stylex.createTheme(vars, {
-  bg: "#f7f9fb",
-  bgSubtle: "#f1f5f9",
+  bg: "#FFF8E7",
+  bgSubtle: "#FFEDC2",
   panel: "#ffffff",
-  panelSoft: "#f8fafc",
-  text: "#0f172a",
-  textMuted: "#64748b",
-  textFaint: "#94a3b8",
-  line: "#e2e8f0",
-  lineStrong: "#cbd5e1",
+  panelSoft: "#FFF8E7",
+  text: "#111111",
+  textMuted: "#3A3A3A",
+  textFaint: "#6B6B6B",
+  line: "#111111",
+  lineStrong: "#111111",
 });
 
-// semantic aliases
 export const spacing = {
   xs: "6px",
   sm: "10px",
