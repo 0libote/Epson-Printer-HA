@@ -13,7 +13,7 @@
     "build:css": "bun build src/frontend/style.css --outdir public",
     "test": "bun test --timeout 10000",
     "test:watch": "bun test --watch --timeout 10000",
-    "lint": "bun x tsc --noEmit",
+    "lint": "tsc --noEmit",
     "format": "bun x prettier --write ."
   },
   "dependencies": {

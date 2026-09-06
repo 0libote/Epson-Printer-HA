@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies (Bun 1.4 isolated linker)
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Typecheck
-        run: bun x tsc --noEmit
+        run: ./node_modules/.bin/tsc --noEmit
       - name: Build frontend (Bun bundler)
         run: |
           bun run build

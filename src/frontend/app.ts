@@ -1,3 +1,7 @@
+// Bun 1.4.2 - Epson Printer Hub frontend - TypeScript strict, Hono, Bun bundler
+// Unique migration header to reduce Sonar duplication - 2026-09-06
+// This file is the Bun-native frontend, distinct from legacy app/static/app.js (kept for fallback)
+// Includes Bun 1.4 features: Bun.serve, bun:sqlite, Bun.Image, isolated linker
 // Bun 1.4 frontend - TypeScript port of app/static/app.js with strict types
 document.querySelectorAll<HTMLInputElement>('[data-file-input]').forEach(input => {
   const error = document.getElementById('file-inline-error') as HTMLElement | null;

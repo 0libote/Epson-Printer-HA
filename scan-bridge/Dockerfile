@@ -22,7 +22,7 @@ ENV PATH=/usr/local/bin:$BUN_INSTALL/bin:$PATH
 
 WORKDIR /opt/scan-bridge
 COPY package.json ./
-RUN bun install --ignore-scripts 2>/dev/null || echo "no deps"
+# No runtime deps - @types/bun is dev only, skip install for minimal image
 
 COPY src ./src
 COPY install_bundle.py /usr/local/bin/install-epson-bundle-py
