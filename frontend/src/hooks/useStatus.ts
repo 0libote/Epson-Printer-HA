@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, fetchScans, type StatusResponse, type HistoryResponse, type ScansResponse } from "../lib/api";
+import { apiGet, fetchScans, type StatusResponse, type HistoryResponse } from "../lib/api";
 
 export function useStatus(enabled = true) {
   return useQuery({

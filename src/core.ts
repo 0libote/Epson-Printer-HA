@@ -248,6 +248,12 @@ function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function jpegQualityForDpi(dpi: number): number {
+  if (dpi >= 600) return 92;
+  if (dpi >= 300) return 90;
+  return 88;
+}
+
 const scannerCache = new Map<string, { bucket: number; value: any }>();
 export async function scannerStatus(printerIp: string): Promise<{ ok: boolean; state: string; detail: string; backend: string | null; device: string | null; open_source: boolean }> {
   const bucket = Math.floor(performance.now() / 5000);
@@ -420,9 +426,7 @@ export async function scanDocument(
     if (fmt === "jpg" || fmt === "jpeg") {
       const outPath = `${outputDir}/scan_${stamp}.jpg`;
       const img = Bun.file(pngPath).image();
-      // higher DPI deserves higher quality slightly
-      const q = dpi >= 600 ? 92 : dpi >= 300 ? 90 : 88;
-      await img.jpeg({ quality: q }).write(outPath);
+      await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(outPath);
       await Bun.$`rm -f ${pngPath}`.quiet();
       return [commandResult(true, outPath), outPath];
     } else {
@@ -436,7 +440,7 @@ export async function scanDocument(
       } catch {
         const tmpJpg = `${outputDir}/.tmp_${stamp}.jpg`;
         const img = new Bun.Image(pngBytes);
-        await img.jpeg({ quality: dpi >= 600 ? 92 : 90 }).write(tmpJpg);
+        await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(tmpJpg);
         const jpgBytes = await Bun.file(tmpJpg).arrayBuffer();
         image = await pdfDoc.embedJpg(jpgBytes);
         await Bun.$`rm -f ${tmpJpg}`.quiet();
@@ -446,12 +450,8 @@ export async function scanDocument(
       const displayW = (width * 72) / dpi;
       const displayH = (height * 72) / dpi;
       // If embed gave points already shrunk (pdf-lib sometimes returns points at 72dpi), fallback uses min
-      // Use the smaller of pixel-derived and pdf-lib size to avoid double scaling
-      const baseW = Math.min(width, displayW);
-      const baseH = Math.min(height, displayH);
-      // Alternative robust: if displayW < width (i.e., dpi >72) we want pixel-derived size; else keep width
-      const srcW = displayW < width ? displayW : width;
-      const srcH = displayH < height ? displayH : height;
+      const srcW = Math.min(width, displayW);
+      const srcH = Math.min(height, displayH);
       const maxW = page.getWidth() - 20;
       const maxH = page.getHeight() - 20;
       const fit = Math.min(maxW / srcW, maxH / srcH, 1);

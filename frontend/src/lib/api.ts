@@ -84,7 +84,9 @@ export async function ensureCsrf(): Promise<string> {
 }
 
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { credentials: "same-origin", headers: { Accept: "application/json", ...(init?.headers || {}) }, ...init });
+  const requestUrl = new URL(path, window.location.origin);
+  if (requestUrl.origin !== window.location.origin) throw new Error("Invalid request URL");
+  const res = await fetch(requestUrl, { credentials: "same-origin", headers: { Accept: "application/json", ...(init?.headers || {}) }, ...init });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
 }

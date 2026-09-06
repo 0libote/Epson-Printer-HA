@@ -11,9 +11,7 @@ import {
   cachedListJobs,
   cachedPrinterReachable,
   cancelJob,
-  clearDeviceCache,
   clearStatusCaches,
-  detectSaneDeviceCached,
   runCommand,
   scanDocument,
   scannerStatus,
@@ -288,7 +286,7 @@ function validateScanFilename(name:string):string{
   if(!safe || safe.startsWith(".") || safe.includes("..") || safe.includes("/") || safe.includes("\\")) throw new Error("Invalid filename");
   if(safe.length>150) throw new Error("Filename too long");
   // allow letters numbers _ - . and space, but not control chars
-  if(/[^\w.\- ]/.test(safe.replace(/ /g,"_")) && /[<>:"|?*\x00-\x1F]/.test(safe)) throw new Error("Filename contains invalid characters");
+    if(/[<>:"|?*\x00-\x1F]/.test(safe)) throw new Error("Filename contains invalid characters");
   const ext=extname(safe).toLowerCase();
   if(![".pdf",".png",".jpg",".jpeg"].includes(ext)) throw new Error("Extension must be pdf, png, jpg or jpeg");
   return safe;
@@ -302,7 +300,7 @@ function sanitizeRename(name:string, originalExt:string):string{
   if(ext && [".pdf",".png",".jpg",".jpeg"].includes(ext)) base=s.slice(0, -ext.length);
   else if(ext) throw new Error("Extension must be pdf, png, jpg or jpeg");
   // sanitize base: allow alphanum space _ - dot
-  base=base.replace(/[^A-Za-z0-9 _.\-]/g,"_").trim();
+    base=base.replace(/[^A-Za-z0-9 _.-]/g,"_").trim();
   if(!base || base==="." || base==="..") base="scan";
   // collapse underscores
   base=base.replace(/_+/g,"_");
@@ -1029,9 +1027,12 @@ app.delete("/api/scans/:filename", async(c)=>{
   let safe:string;
   try{ safe=validateScanFilename(filename);}catch(e:any){ return c.json({ok:false, error:e.message},400);}
   const path=join(SCAN_DIR, safe);
-  const file=Bun.file(path);
-  if(!(await file.exists())) return c.json({ok:false, error:"File not found"},404);
-  try{ unlinkSync(path); }catch(e:any){ return c.json({ok:false, error:String(e)},500);}
+  try{
+    unlinkSync(path);
+  }catch(e:any){
+    if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
+    return c.json({ok:false, error:String(e)},500);
+  }
   try{ unlinkSync(join(SCAN_DIR, `.thumb-${safe}.webp`)); }catch{}
   return c.json({ok:true, message:`Deleted ${safe}`});
 });
@@ -1043,7 +1044,6 @@ app.post("/api/scans/:filename/rename", async(c)=>{
   let safe:string;
   try{ safe=validateScanFilename(filename);}catch(e:any){ return c.json({ok:false, error:e.message},400);}
   const oldPath=join(SCAN_DIR, safe);
-  if(!(await Bun.file(oldPath).exists())) return c.json({ok:false, error:"File not found"},404);
   let body:any={};
   const ct=c.req.header("content-type")||"";
   if(ct.includes("application/json")){
@@ -1062,12 +1062,16 @@ app.post("/api/scans/:filename/rename", async(c)=>{
   try{ newSafe=sanitizeRename(newNameRaw, origExt);}catch(e:any){ return c.json({ok:false, error:e.message},400);}
   if(newSafe===safe) return c.json({ok:true, name:newSafe, message:"Name unchanged"});
   const newPath=join(SCAN_DIR, newSafe);
-  if(await Bun.file(newPath).exists()) return c.json({ok:false, error:"A file with that name already exists"},409);
   try{
-    require("node:fs").renameSync(oldPath, newPath);
+    require("node:fs").linkSync(oldPath, newPath);
+    require("node:fs").unlinkSync(oldPath);
     // move thumb if exists
-    try{ const oldThumb=join(SCAN_DIR, `.thumb-${safe}.webp`); const newThumb=join(SCAN_DIR, `.thumb-${newSafe}.webp`); if(require("node:fs").existsSync(oldThumb)) require("node:fs").renameSync(oldThumb, newThumb);}catch{}
-  }catch(e:any){ return c.json({ok:false, error:String(e)},500);}
+    try{ require("node:fs").renameSync(join(SCAN_DIR, `.thumb-${safe}.webp`), join(SCAN_DIR, `.thumb-${newSafe}.webp`)); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
+  }catch(e:any){
+    if(e?.code === "EEXIST") return c.json({ok:false, error:"A file with that name already exists"},409);
+    if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
+    return c.json({ok:false, error:String(e)},500);
+  }
   return c.json({ok:true, name:newSafe, oldName:safe});
 });
 
@@ -1081,13 +1085,12 @@ app.post("/scans/:filename/delete", async(c)=>{
   let safe:string;
   try{ safe=validateScanFilename(filename);}catch(e:any){ if(wantsJson(c)) return c.json({ok:false, error:(e as any).message},400); setFlash(c,"error",(e as any).message); return c.redirect("/",302); }
   const path=join(SCAN_DIR, safe);
-  if(!(await Bun.file(path).exists())){
-    const msg="File not found";
-    if(wantsJson(c)) return c.json({ok:false, error:msg},404);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
   try{ unlinkSync(path); try{ unlinkSync(join(SCAN_DIR, `.thumb-${safe}.webp`)); }catch{} }catch(e:any){
     const msg=String(e);
+    if(e?.code === "ENOENT"){
+      if(wantsJson(c)) return c.json({ok:false, error:"File not found"},404);
+      setFlash(c,"error","File not found"); return c.redirect("/",302);
+    }
     if(wantsJson(c)) return c.json({ok:false, error:msg},500);
     setFlash(c,"error",msg); return c.redirect("/",302);
   }
@@ -1113,18 +1116,22 @@ app.post("/scans/:filename/rename", async(c)=>{
   let newSafe:string;
   try{ newSafe=sanitizeRename(newNameRaw, origExt);}catch(e:any){ if(wantsJson(c)) return c.json({ok:false, error:(e as any).message},400); setFlash(c,"error",(e as any).message); return c.redirect("/",302); }
   const newPath=join(SCAN_DIR, newSafe);
-  if(await Bun.file(newPath).exists()){
-    const msg="A file with that name already exists";
-    if(wantsJson(c)) return c.json({ok:false, error:msg},409);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
   try{
-    require("node:fs").renameSync(join(SCAN_DIR,safe), newPath);
+    require("node:fs").linkSync(join(SCAN_DIR,safe), newPath);
+    require("node:fs").unlinkSync(join(SCAN_DIR,safe));
     const oldThumb=join(SCAN_DIR, `.thumb-${safe}.webp`);
     const newThumb=join(SCAN_DIR, `.thumb-${newSafe}.webp`);
-    if(require("node:fs").existsSync(oldThumb)) require("node:fs").renameSync(oldThumb, newThumb);
+    try{ require("node:fs").renameSync(oldThumb, newThumb); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
   }catch(e:any){
     const msg=String(e);
+    if(e?.code === "EEXIST"){
+      if(wantsJson(c)) return c.json({ok:false, error:"A file with that name already exists"},409);
+      setFlash(c,"error","A file with that name already exists"); return c.redirect("/",302);
+    }
+    if(e?.code === "ENOENT"){
+      if(wantsJson(c)) return c.json({ok:false, error:"File not found"},404);
+      setFlash(c,"error","File not found"); return c.redirect("/",302);
+    }
     if(wantsJson(c)) return c.json({ok:false, error:msg},500);
     setFlash(c,"error",msg); return c.redirect("/",302);
   }
@@ -1143,7 +1150,6 @@ app.post("/api/scan", async(c)=>{
     return c.json({ ok:false, error: msg }, 400);
   }
   // CSRF check: support JSON + form
-  let dpi=300, mode="Color", fmt="pdf";
   const ct=c.req.header("content-type")||"";
   let body:any={};
   if(ct.includes("application/json")){
@@ -1151,16 +1157,13 @@ app.post("/api/scan", async(c)=>{
     const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
     const expected=getCookie(c,"csrf_token")||"";
     if(!expected || token!==expected) return c.text("Invalid or missing CSRF token",400);
-    dpi=Number.parseInt(String(body["dpi"]||"300"),10);
-    mode=String(body["mode"]||"Color");
-    fmt=String(body["format"]||body["fmt"]||"pdf");
   } else {
     body=await c.req.parseBody();
     if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
-    dpi=Number.parseInt(String((body as any)["dpi"]||"300"),10);
-    mode=String((body as any)["mode"]||"Color");
-    fmt=String((body as any)["format"]||"pdf");
   }
+  const dpi=Number.parseInt(String(body["dpi"]||"300"),10);
+  let mode=String(body["mode"]||"Color");
+  let fmt=String(body["format"]||body["fmt"]||"pdf");
   if(![150,200,300,600].includes(dpi)){
     return c.json({ ok:false, error:"DPI must be 150, 200, 300 or 600." }, 400);
   }

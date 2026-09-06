@@ -879,8 +879,7 @@ export default function App() {
   }, [scansDetailed, scanFilter, scanSort]);
   // relative time helper (ticks with nowTick)
   const relTime = (mtimeMs: number) => {
-    void nowTick;
-    const diff = Date.now() - mtimeMs;
+    const diff = nowTick - mtimeMs;
     const s = Math.floor(diff / 1000);
     if (s < 45) return "just now";
     if (s < 90) return "a minute ago";
@@ -1003,8 +1002,8 @@ export default function App() {
           push({ kind: "success", title: "Scan complete", desc: `Saved as ${scanFmt.toUpperCase()} · ${scanDpi} dpi` });
           await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
           await scansQ.refetch();
-        } catch (e2: any) {
-          const m2 = String(e2.message || e2);
+        } catch (error_: any) {
+          const m2 = String(error_.message || error_);
           if (m2.toLowerCase().includes("already in progress")) push({ kind: "error", title: "Scan already in progress", desc: "Wait for it to finish before starting another." });
           else push({ kind: "error", title: "Scan failed", desc: m2.slice(0, 220) });
         }
@@ -1054,7 +1053,13 @@ export default function App() {
     if (!confirm(`Delete ${selectedScans.size} scans?`)) return;
     let ok = 0, fail = 0;
     const results = await Promise.allSettled([...selectedScans].map(n => deleteScan(n)));
-    for (const result of results) { if (result.status === "fulfilled") ok++; else fail++; }
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        ok++;
+      } else {
+        fail++;
+      }
+    }
     push({ kind: fail ? "error" : "success", title: fail ? `Deleted ${ok}, ${fail} failed` : `Deleted ${ok} scans` });
     setSelectedScans(new Set());
     await qc.invalidateQueries({ queryKey: ["scans"] }); await scansQ.refetch();
@@ -1278,22 +1283,20 @@ export default function App() {
                     <a href={`/scans/${encodeURIComponent(scan.name)}?preview=1`} target="_blank" rel="noopener" style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", border: "2.5px solid #111", flexShrink: 0, background: "white", display: "grid", placeItems: "center", textDecoration: "none" }} title="Open preview">
                       {scan.ext === ".pdf" ? <span style={{ fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, background: vars.bad, color: "white", padding: "2px 6px", borderRadius: 4 }}>PDF</span> : <img src={`/api/scans/${encodeURIComponent(scan.name)}/thumb`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
                     </a>
-                    <span style={{ minWidth: 0, flex: 1 }} onClick={() => setPreviewScan(scan)} role="button" tabIndex={0} onKeyDown={e => e.key === "Enter" && setPreviewScan(scan)} title={scan.mtimeIso}>
-                      {renamingScan === scan.name ? (
-                        <span style={{ display: "flex", gap: 6, alignItems: "center" }} onClick={e => e.stopPropagation()}>
+                    {renamingScan === scan.name ? (
+                      <span style={{ minWidth: 0, flex: 1, display: "flex", gap: 6, alignItems: "center" }}>
                           <input {...stylex.props(s.input)} value={renameValue} onChange={e => setRenameValue(e.target.value)} autoFocus style={{ marginTop: 0, minHeight: 32, fontSize: 12, flex: 1 }} placeholder={scan.name.replace(/\.[^.]+$/, "")} onKeyDown={e => { if (e.key === "Enter") handleRenameScan(scan.name); if (e.key === "Escape") { setRenamingScan(null); setRenameValue(""); } }} />
                           <button {...stylex.props(s.buttonQuiet)} onClick={() => handleRenameScan(scan.name)} style={{ background: vars.lime }}><Check size={12} /></button>
                           <button {...stylex.props(s.buttonQuiet)} onClick={() => { setRenamingScan(null); setRenameValue(""); }}><X size={12} /></button>
-                        </span>
-                      ) : (
-                        <>
-                          <strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{scan.name}</strong>
-                          <small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-                            <span>{scan.sizeDisplay}</span><span>·</span><span title={scan.mtimeIso}>{relTime(scan.mtimeMs)}</span><span>·</span><span style={{ textTransform: "uppercase", background: "white", border: "2px solid #111", borderRadius: 4, padding: "0 4px", fontSize: 9 }}>{scan.ext.slice(1)}</span>
-                          </small>
-                        </>
-                      )}
-                    </span>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => setPreviewScan(scan)} onKeyDown={e => e.key === "Enter" && setPreviewScan(scan)} title={scan.mtimeIso} style={{ minWidth: 0, flex: 1, textAlign: "left", border: 0, padding: 0, background: "transparent", color: "inherit", cursor: "pointer" }}>
+                        <strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{scan.name}</strong>
+                        <small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <span>{scan.sizeDisplay}</span><span>·</span><span title={scan.mtimeIso}>{relTime(scan.mtimeMs)}</span><span>·</span><span style={{ textTransform: "uppercase", background: "white", border: "2px solid #111", borderRadius: 4, padding: "0 4px", fontSize: 9 }}>{scan.ext.slice(1)}</span>
+                        </small>
+                      </button>
+                    )}
                     <span style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
                       <button {...stylex.props(s.buttonQuiet)} onClick={() => setPreviewScan(scan)} title="Preview"><ExternalLink size={12} /></button>
                       <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(s.buttonQuiet)} style={{ textDecoration: "none" }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><FileText size={12} /> DL</span></a>
@@ -1306,8 +1309,8 @@ export default function App() {
             )}
             {/* preview modal */}
             {previewScan ? (
-              <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16 }} onClick={() => setPreviewScan(null)}>
-                <div {...stylex.props(s.card)} style={{ width: "min(900px, 96vw)", maxHeight: "90vh", overflow: "auto", background: "white", padding: 16 }} onClick={e => e.stopPropagation()}>
+              <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16 }}>
+                <div {...stylex.props(s.card)} style={{ width: "min(900px, 96vw)", maxHeight: "90vh", overflow: "auto", background: "white", padding: 16 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
                     <strong style={{ fontFamily: vars.fontDisplay, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis" }}>{previewScan.name}</strong>
                     <span style={{ display: "flex", gap: 8 }}>
