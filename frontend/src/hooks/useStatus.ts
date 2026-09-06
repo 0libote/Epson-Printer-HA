@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, type StatusResponse, type HistoryResponse } from "../lib/api";
+import { fetchStatus, fetchHistory, fetchHealth, fetchScans, type StatusResponse } from "../lib/api";
 
 export function useStatus(enabled = true) {
   return useQuery({
     queryKey: ["status"],
-    queryFn: () => apiGet<StatusResponse>("/api/status"),
+    queryFn: fetchStatus,
     enabled,
     refetchInterval: (query) => {
       // poll faster when jobs exist or scanner starting
@@ -25,7 +25,17 @@ export function useStatus(enabled = true) {
 export function useHistory(limit = 100) {
   return useQuery({
     queryKey: ["history", limit],
-    queryFn: () => apiGet<HistoryResponse>(`/api/history?limit=${limit}`),
+    queryFn: fetchHistory,
+    refetchInterval: 5000,
+    staleTime: 2000,
+  });
+}
+
+export function useScans(limit = 100, enabled = true) {
+  return useQuery({
+    queryKey: ["scans", limit],
+    queryFn: fetchScans,
+    enabled,
     refetchInterval: 5000,
     staleTime: 2000,
   });
@@ -34,7 +44,7 @@ export function useHistory(limit = 100) {
 export function useHealth() {
   return useQuery({
     queryKey: ["health"],
-    queryFn: () => apiGet<{ ok: boolean }>("/api/health"),
+    queryFn: fetchHealth,
     refetchInterval: 15000,
   });
 }

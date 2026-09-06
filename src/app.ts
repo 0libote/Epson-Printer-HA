@@ -16,6 +16,7 @@ import {
   scanDocument,
   scannerStatus,
   submitPrint,
+  warmDeviceCache,
 } from "./core.ts";
 import { listPrintHistory } from "./history.ts";
 
@@ -183,6 +184,24 @@ export function currentPrinterIp(): string {
   if (!v) return "";
   try { return validateIPv4(v); } catch { return ""; }
 }
+function formatBytes(bytes:number):string{
+  if(bytes<1024) return `${bytes} B`;
+  if(bytes<1024*1024) return `${(bytes/1024).toFixed(1)} KB`;
+  return `${(bytes/(1024*1024)).toFixed(1)} MB`;
+}
+function formatRelativeTime(mtimeMs:number):string{
+  const diff = Date.now() - mtimeMs;
+  const s = Math.floor(diff/1000);
+  if(s<45) return "just now";
+  if(s<90) return "a minute ago";
+  if(s<45*60) return `${Math.floor(s/60)} min ago`;
+  if(s<90*60) return "an hour ago";
+  if(s<22*3600) return `${Math.floor(s/3600)} hrs ago`;
+  if(s<36*3600) return "a day ago";
+  if(s<25*86400) return `${Math.floor(s/86400)} days ago`;
+  const d=new Date(mtimeMs); const pad=(n:number)=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 function pruneScans(): void {
   try {
     const files = readdirSync(SCAN_DIR)
@@ -193,7 +212,11 @@ function pruneScans(): void {
       })
       .filter(Boolean) as Array<{ p: string; mtime: number; isFile: boolean }>;
     const sorted = files.filter((f) => f.isFile).sort((a, b) => b.mtime - a.mtime);
-    for (const stale of sorted.slice(MAX_SCAN_FILES)) { try { unlinkSync(stale.p); } catch {} }
+    for (const stale of sorted.slice(MAX_SCAN_FILES)) {
+      try { unlinkSync(stale.p); } catch {}
+      // also clean thumb cache if present
+      try { unlinkSync(join(SCAN_DIR, `.thumb-${basename(stale.p)}.webp`)); } catch {}
+    }
   } catch {}
 }
 export function currentPrinterName(): string {
@@ -234,6 +257,128 @@ function recentScans(limit=10):Array<{name:string;path:string}>{
     files.sort((a,b)=>statSync(b).mtimeMs - statSync(a).mtimeMs);
     return files.slice(0,limit).map(p=>({name:basename(p), path:p}));
   }catch{return [];}
+}
+export type ScanMeta = { name:string; path:string; size:number; sizeDisplay:string; mtime:number; mtimeMs:number; mtimeRel:string; mtimeIso:string; ext:string; dpiHint?:string };
+function listScansDetailed(limit=100):ScanMeta[]{
+  try{
+    const files=readdirSync(SCAN_DIR)
+      .filter(f=>!f.startsWith(".") && !f.startsWith(".thumb-"))
+      .map(f=>{
+        const p=join(SCAN_DIR,f);
+        try{
+          const st=statSync(p); if(!st.isFile()) return null;
+          const ext=extname(f).toLowerCase();
+          if(![".pdf",".png",".jpg",".jpeg",".webp"].includes(ext)) return null;
+          return { name:f, path:p, size:st.size, mtimeMs:st.mtimeMs, mtime:Math.floor(st.mtimeMs/1000) };
+        }catch{return null;}
+      }).filter(Boolean) as Array<{name:string;path:string;size:number;mtimeMs:number;mtime:number}>;
+    files.sort((a,b)=>b.mtimeMs - a.mtimeMs);
+    const slice=files.slice(0, Math.max(1,Math.min(limit, 500)));
+    return slice.map(f=>{
+      const d=new Date(f.mtimeMs); const pad=(n:number)=>String(n).padStart(2,"0");
+      const iso=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      return { name:f.name, path:f.path, size:f.size, sizeDisplay:formatBytes(f.size), mtime:f.mtime, mtimeMs:f.mtimeMs, mtimeRel:formatRelativeTime(f.mtimeMs), mtimeIso:iso, ext:extname(f.name).toLowerCase() };
+    });
+  }catch{return [];}
+}
+function validateScanFilename(name:string):string{
+  const safe=basename(name).trim();
+  if(!safe || safe.startsWith(".") || safe.includes("..") || safe.includes("/") || safe.includes("\\")) throw new Error("Invalid filename");
+  if(safe.length>150) throw new Error("Filename too long");
+  // allow letters numbers _ - . and space, but not control chars
+    if(/[<>:"|?*\x00-\x1F]/.test(safe)) throw new Error("Filename contains invalid characters");
+  const ext=extname(safe).toLowerCase();
+  if(![".pdf",".png",".jpg",".jpeg"].includes(ext)) throw new Error("Extension must be pdf, png, jpg or jpeg");
+  return safe;
+}
+function sanitizeRename(name:string, originalExt:string):string{
+  let s=name.trim().replace(/\s+/g," ").slice(0,100);
+  if(!s) throw new Error("Name cannot be empty");
+  // strip extension if provided, we will re-add
+  const ext=extname(s).toLowerCase();
+  let base = s;
+  if(ext && [".pdf",".png",".jpg",".jpeg"].includes(ext)) base=s.slice(0, -ext.length);
+  else if(ext) throw new Error("Extension must be pdf, png, jpg or jpeg");
+  // sanitize base: allow alphanum space _ - dot
+    base=base.replace(/[^A-Za-z0-9 _.-]/g,"_").trim();
+  if(!base || base==="." || base==="..") base="scan";
+  // collapse underscores
+  base=base.replace(/_+/g,"_");
+  const final=base+originalExt;
+  if(final.length>150) throw new Error("Filename too long");
+  if(final.startsWith(".")) throw new Error("Invalid filename");
+  return final;
+}
+
+// ── async scan job queue (in-memory, single active due to hardware) ──
+export type ScanJobState = "queued"|"scanning"|"converting"|"done"|"error"|"cancelled";
+export interface ScanJob {
+  id:string; state:ScanJobState; printerIp:string; dpi:number; mode:string; fmt:string;
+  createdAt:number; startedAt?:number; finishedAt?:number; cancelRequested:boolean; cancelProcess?:()=>void;
+  resultName?:string; resultPath?:string; error?:string; progress:string;
+}
+const scanJobs = new Map<string, ScanJob>();
+let activeScanJobId: string | null = null;
+
+export function _getScanJobsForTest(){ return scanJobs; }
+export function _resetScanJobsForTest(){ scanJobs.clear(); activeScanJobId=null; }
+function createScanJob(printerIp:string, dpi:number, mode:string, fmt:string):ScanJob{
+  const id=randomBytes(6).toString("hex");
+  const job:ScanJob={ id, state:"queued", printerIp, dpi, mode, fmt, createdAt:Date.now(), cancelRequested:false, progress:"Queued" };
+  scanJobs.set(id, job);
+  // prune old done/error jobs older than 10 min to avoid leak
+  const cutoff=Date.now()-10*60*1000;
+  for(const [k,j] of scanJobs){ if((j.state==="done"||j.state==="error"||j.state==="cancelled") && (j.finishedAt||0) < cutoff) scanJobs.delete(k); }
+  if(scanJobs.size>50){
+    // keep most recent 50
+    const sorted=[...scanJobs.values()].sort((a,b)=>b.createdAt-a.createdAt);
+    for(const j of sorted.slice(50)) scanJobs.delete(j.id);
+  }
+  return job;
+}
+async function executeScanJob(job:ScanJob){
+  if(activeScanJobId && activeScanJobId!==job.id){
+    job.state="error"; job.error="A scan is already in progress. Wait for it to finish before starting another."; job.finishedAt=Date.now(); return;
+  }
+  activeScanJobId=job.id;
+  job.state="scanning"; job.startedAt=Date.now(); job.progress="Contacting scanner";
+  try {
+    // warm cache first for speed
+    await warmDeviceCache(job.printerIp).catch(()=>{});
+    const lock=await withOperationLock("scanner", async()=>{
+      job.progress="Scanning the document";
+      const [result, path]=await scanDocument(job.printerIp, SCAN_DIR, {dpi:job.dpi, mode:job.mode, fmt:job.fmt, control:{
+        isCancelled:()=>job.cancelRequested,
+        registerProcess:(process)=>{ job.cancelProcess=()=>{ try{ process.kill(); }catch{} }; },
+        clearProcess:()=>{ job.cancelProcess=undefined; },
+        setProgress:(progress)=>{ job.state="converting"; job.progress=progress; },
+      }});
+      clearStatusCaches();
+      if(job.cancelRequested || result.stderr === "scan_cancelled"){
+        job.state="cancelled"; job.error="Scan cancelled."; job.progress="Cancelled"; job.finishedAt=Date.now();
+        return result;
+      }
+      if(result.ok && path){
+        pruneScans();
+        job.state="done"; job.resultPath=path; job.resultName=basename(path); job.progress="Done"; job.finishedAt=Date.now();
+        // clear thumb cache for new file
+      } else {
+        job.state="error"; job.error=result.stderr||"Scan failed."; job.progress="Failed"; job.finishedAt=Date.now();
+      }
+      return result;
+    });
+    if(!lock.acquired){
+      job.state="error"; job.error="A scan is already in progress. Wait for it to finish before starting another."; job.finishedAt=Date.now();
+    }
+  } catch(e:any){
+    job.state=job.cancelRequested ? "cancelled" : "error";
+    job.error=job.cancelRequested ? "Scan cancelled." : String(e?.message||e);
+    job.progress=job.cancelRequested ? "Cancelled" : "Failed";
+    job.finishedAt=Date.now();
+  } finally {
+    job.cancelProcess=undefined;
+    if(activeScanJobId===job.id) activeScanJobId=null;
+  }
 }
 function clientSetup(printerName:string, hostHeader:string){
   let host=CLIENT_HOST||hostHeader;
@@ -803,11 +948,278 @@ app.get("/scans/:filename", async(c)=>{
   const path=join(SCAN_DIR, safe);
   const file=Bun.file(path);
   if(!(await file.exists())) return c.text("Not found",404);
-  const buf=await file.arrayBuffer();
   const ext=extname(safe).toLowerCase();
   const mimeMap:Record<string,string>={".pdf":"application/pdf", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg"};
   const contentType=mimeMap[ext] || (file as any).type || "application/octet-stream";
-  return new Response(buf, {headers:{"Content-Disposition":`attachment; filename="${safe}"`, "Content-Type": contentType}});
+  const inline=c.req.query("preview")==="1" || c.req.query("inline")==="1";
+  const disp=inline?`inline; filename="${safe}"`:`attachment; filename="${safe}"`;
+  return new Response(file.stream(), {headers:{"Content-Disposition":disp, "Content-Type": contentType, "Cache-Control":"private, max-age=60"}});
+});
+
+// ── new scan library API ──
+app.get("/api/scans", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  let limit=100;
+  try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
+  if(Number.isNaN(limit)) limit=100;
+  limit=Math.max(1, Math.min(limit, 500));
+  const scans=listScansDetailed(limit);
+  return c.json({ scans, total: scans.length, limit, max: MAX_SCAN_FILES });
+});
+
+app.get("/api/scans/:filename/thumb", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const filename=c.req.param("filename");
+  const safe=basename(filename);
+  if(!safe || safe.startsWith(".") || safe.includes("..")) return c.text("Not found",404);
+  const ext=extname(safe).toLowerCase();
+  if(ext===".pdf") return c.text("No thumbnail for PDF",404);
+  const path=join(SCAN_DIR, safe);
+  const file=Bun.file(path);
+  if(!(await file.exists())) return c.text("Not found",404);
+  // on-demand thumb cache .thumb-name.webp
+  const thumbName=`.thumb-${safe}.webp`;
+  const thumbPath=join(SCAN_DIR, thumbName);
+  try{
+    const thumbFile=Bun.file(thumbPath);
+    if(await thumbFile.exists()){
+      const st=statSync(thumbPath); const srcSt=statSync(path);
+      if(st.mtimeMs >= srcSt.mtimeMs){
+        return new Response(thumbFile.stream(),{headers:{"Content-Type":"image/webp","Cache-Control":"private, max-age=3600"}});
+      }
+    }
+  }catch{}
+  try{
+    // try Bun.Image resize (may not be available in test env)
+    const srcBytes=await file.arrayBuffer();
+    // quick check: if file too small skip
+    if(srcBytes.byteLength>0){
+      const img=new (Bun as any).Image(srcBytes);
+      // @ts-ignore
+      await img.webp({ quality: 70 }).resize({ width: 180 }).write(thumbPath);
+      const thumbFile=Bun.file(thumbPath);
+      if(await thumbFile.exists()){
+        return new Response(thumbFile.stream(),{headers:{"Content-Type":"image/webp","Cache-Control":"private, max-age=3600"}});
+      }
+    }
+  }catch(e){
+    // fallback: serve original with resize header (client will scale)
+  }
+  // fallback: redirect to original with inline preview
+  const mimeMap:Record<string,string>={".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp"};
+  const ct=mimeMap[ext]||"image/png";
+  return new Response(file.stream(),{headers:{"Content-Type": ct, "Cache-Control":"private, max-age=300"}});
+});
+
+app.delete("/api/scans/:filename", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  // CSRF via header for JSON DELETE
+  const csrfHeader=c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"";
+  const expected=getCookie(c,"csrf_token")||"";
+  if(expected && csrfHeader!==expected){
+    // also allow body token via query? For DELETE we require header
+    return c.text("Invalid or missing CSRF token",400);
+  }
+  const filename=c.req.param("filename");
+  let safe:string;
+  try{ safe=validateScanFilename(filename);}catch(e:any){ return c.json({ok:false, error:e.message},400);}
+  const path=join(SCAN_DIR, safe);
+  try{
+    unlinkSync(path);
+  }catch(e:any){
+    if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
+    return c.json({ok:false, error:String(e)},500);
+  }
+  try{ unlinkSync(join(SCAN_DIR, `.thumb-${safe}.webp`)); }catch{}
+  return c.json({ok:true, message:`Deleted ${safe}`});
+});
+
+app.post("/api/scans/:filename/rename", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const filename=c.req.param("filename");
+  let safe:string;
+  try{ safe=validateScanFilename(filename);}catch(e:any){ return c.json({ok:false, error:e.message},400);}
+  const oldPath=join(SCAN_DIR, safe);
+  let body:any={};
+  const ct=c.req.header("content-type")||"";
+  if(ct.includes("application/json")){
+    try{ body=await c.req.json(); }catch{ body={};}
+    const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
+    const expected=getCookie(c,"csrf_token")||"";
+    if(!expected || token!==expected) return c.text("Invalid or missing CSRF token",400);
+  } else {
+    body=await c.req.parseBody();
+    if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  }
+  const newNameRaw=String(body["name"]||body["newName"]||"").trim();
+  if(!newNameRaw) return c.json({ok:false, error:"New name is required"},400);
+  const origExt=extname(safe).toLowerCase();
+  let newSafe:string;
+  try{ newSafe=sanitizeRename(newNameRaw, origExt);}catch(e:any){ return c.json({ok:false, error:e.message},400);}
+  if(newSafe===safe) return c.json({ok:true, name:newSafe, message:"Name unchanged"});
+  const newPath=join(SCAN_DIR, newSafe);
+  try{
+    require("node:fs").linkSync(oldPath, newPath);
+    require("node:fs").unlinkSync(oldPath);
+    // move thumb if exists
+    try{ require("node:fs").renameSync(join(SCAN_DIR, `.thumb-${safe}.webp`), join(SCAN_DIR, `.thumb-${newSafe}.webp`)); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
+  }catch(e:any){
+    if(e?.code === "EEXIST") return c.json({ok:false, error:"A file with that name already exists"},409);
+    if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
+    return c.json({ok:false, error:String(e)},500);
+  }
+  return c.json({ok:true, name:newSafe, oldName:safe});
+});
+
+// legacy form handlers for rename/delete (non-JS fallback)
+app.post("/scans/:filename/delete", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const body=await c.req.parseBody();
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  const filename=c.req.param("filename");
+  let safe:string;
+  try{ safe=validateScanFilename(filename);}catch(e:any){ if(wantsJson(c)) return c.json({ok:false, error:(e as any).message},400); setFlash(c,"error",(e as any).message); return c.redirect("/",302); }
+  const path=join(SCAN_DIR, safe);
+  try{ unlinkSync(path); try{ unlinkSync(join(SCAN_DIR, `.thumb-${safe}.webp`)); }catch{} }catch(e:any){
+    const msg=String(e);
+    if(e?.code === "ENOENT"){
+      if(wantsJson(c)) return c.json({ok:false, error:"File not found"},404);
+      setFlash(c,"error","File not found"); return c.redirect("/",302);
+    }
+    if(wantsJson(c)) return c.json({ok:false, error:msg},500);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  const msg=`Deleted ${safe}`;
+  if(wantsJson(c)) return c.json({ok:true, message:msg});
+  setFlash(c,"success",msg); return c.redirect("/",302);
+});
+app.post("/scans/:filename/rename", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const body=await c.req.parseBody();
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  const filename=c.req.param("filename");
+  let safe:string;
+  try{ safe=validateScanFilename(filename);}catch(e:any){ if(wantsJson(c)) return c.json({ok:false, error:(e as any).message},400); setFlash(c,"error",(e as any).message); return c.redirect("/",302); }
+  const newNameRaw=String((body as any)["name"]||"").trim();
+  if(!newNameRaw){
+    const msg="New name is required";
+    if(wantsJson(c)) return c.json({ok:false, error:msg},400);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  const origExt=extname(safe).toLowerCase();
+  let newSafe:string;
+  try{ newSafe=sanitizeRename(newNameRaw, origExt);}catch(e:any){ if(wantsJson(c)) return c.json({ok:false, error:(e as any).message},400); setFlash(c,"error",(e as any).message); return c.redirect("/",302); }
+  const newPath=join(SCAN_DIR, newSafe);
+  try{
+    require("node:fs").linkSync(join(SCAN_DIR,safe), newPath);
+    require("node:fs").unlinkSync(join(SCAN_DIR,safe));
+    const oldThumb=join(SCAN_DIR, `.thumb-${safe}.webp`);
+    const newThumb=join(SCAN_DIR, `.thumb-${newSafe}.webp`);
+    try{ require("node:fs").renameSync(oldThumb, newThumb); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
+  }catch(e:any){
+    const msg=String(e);
+    if(e?.code === "EEXIST"){
+      if(wantsJson(c)) return c.json({ok:false, error:"A file with that name already exists"},409);
+      setFlash(c,"error","A file with that name already exists"); return c.redirect("/",302);
+    }
+    if(e?.code === "ENOENT"){
+      if(wantsJson(c)) return c.json({ok:false, error:"File not found"},404);
+      setFlash(c,"error","File not found"); return c.redirect("/",302);
+    }
+    if(wantsJson(c)) return c.json({ok:false, error:msg},500);
+    setFlash(c,"error",msg); return c.redirect("/",302);
+  }
+  const msg=`Renamed to ${newSafe}`;
+  if(wantsJson(c)) return c.json({ok:true, name:newSafe});
+  setFlash(c,"success",msg); return c.redirect("/",302);
+});
+
+// ── async scan job API ──
+app.post("/api/scan", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const printerIp=currentPrinterIp();
+  if(!printerIp){
+    const msg="Set up the printer first.";
+    return c.json({ ok:false, error: msg }, 400);
+  }
+  // CSRF check: support JSON + form
+  const ct=c.req.header("content-type")||"";
+  let body:any={};
+  if(ct.includes("application/json")){
+    try{ body=await c.req.json(); }catch{ body={};}
+    const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
+    const expected=getCookie(c,"csrf_token")||"";
+    if(!expected || token!==expected) return c.text("Invalid or missing CSRF token",400);
+  } else {
+    body=await c.req.parseBody();
+    if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  }
+  const dpi=Number.parseInt(String(body["dpi"]||"300"),10);
+  let mode=String(body["mode"]||"Color");
+  let fmt=String(body["format"]||body["fmt"]||"pdf");
+  if(![150,200,300,600].includes(dpi)){
+    return c.json({ ok:false, error:"DPI must be 150, 200, 300 or 600." }, 400);
+  }
+  if(!["Color","Gray","Lineart"].includes(mode)) mode="Color";
+  fmt=fmt.toLowerCase(); if(!["pdf","png","jpg","jpeg"].includes(fmt)) fmt="pdf";
+  for(const j of scanJobs.values()){
+    if(j.state==="queued"||j.state==="scanning"||j.state==="converting"){
+      return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:j.id }, 409);
+    }
+  }
+  if(activeScanJobId){
+    const active=scanJobs.get(activeScanJobId);
+    if(active && (active.state==="queued"||active.state==="scanning"||active.state==="converting")){
+      return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:active.id }, 409);
+    }
+  }
+  // also check filesystem lock for legacy sync jobs
+  const lockPath=join(SCAN_DIR, "..", ".scanner.lock");
+  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < 5*60*1000){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} }catch{}
+  const job=createScanJob(printerIp, dpi, mode, fmt);
+  // fire and forget
+  setTimeout(()=>{ executeScanJob(job).catch(()=>{}); }, 10);
+  return c.json({ ok:true, jobId:job.id, state:job.state, message:"Scan queued", pollUrl:`/api/scan/jobs/${job.id}` }, 202);
+});
+app.get("/api/scan/jobs/:id", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const id=c.req.param("id");
+  const job=scanJobs.get(id);
+  if(!job) return c.json({ ok:false, error:"Job not found" },404);
+  const elapsed= job.startedAt ? Math.floor(( (job.finishedAt||Date.now()) - job.startedAt)/1000) : 0;
+  return c.json({ ok:true, job:{ id:job.id, state:job.state, dpi:job.dpi, mode:job.mode, fmt:job.fmt, createdAt:job.createdAt, startedAt:job.startedAt, finishedAt:job.finishedAt, elapsed, progress:job.progress, resultName:job.resultName, error:job.error } });
+});
+app.post("/api/scan/jobs/:id/cancel", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const body=await c.req.parseBody();
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  const job=scanJobs.get(c.req.param("id"));
+  if(!job) return c.json({ok:false,error:"Job not found"},404);
+  if(["done","error","cancelled"].includes(job.state)) return c.json({ok:true,job:{id:job.id,state:job.state}});
+  job.cancelRequested=true;
+  job.progress="Cancelling";
+  job.cancelProcess?.();
+  if(job.state === "queued"){
+    job.state="cancelled";
+    job.error="Scan cancelled.";
+    job.finishedAt=Date.now();
+  }
+  return c.json({ok:true,job:{id:job.id,state:job.state}});
+});
+app.get("/api/scan/jobs", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const jobs=[...scanJobs.values()].sort((a,b)=>b.createdAt-a.createdAt).slice(0,20);
+  return c.json({ jobs: jobs.map(j=>({ id:j.id, state:j.state, dpi:j.dpi, mode:j.mode, fmt:j.fmt, createdAt:j.createdAt, startedAt:j.startedAt, finishedAt:j.finishedAt, progress:j.progress, resultName:j.resultName, error:j.error })) });
 });
 
 app.get("/api/status", async(c)=>{

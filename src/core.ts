@@ -8,6 +8,13 @@ export interface CommandResult {
   returncode: number;
 }
 
+export interface ScanControl {
+  isCancelled: () => boolean;
+  registerProcess: (process: { kill: () => void }) => void;
+  clearProcess: () => void;
+  setProgress?: (progress: string) => void;
+}
+
 export function commandResult(ok: boolean, stdout = "", stderr = "", returncode = 0): CommandResult {
   return { ok, stdout, stderr, returncode };
 }
@@ -178,7 +185,7 @@ export async function cancelJob(jobId: string): Promise<CommandResult> {
 }
 
 export async function detectSaneDevice(printerIp = ""): Promise<[string | null, string | null]> {
-  const result = await runCommand(["scanimage", "-L"], 20_000);
+  const result = await runCommand(["scanimage", "-L"], 12_000);
   if (!result.ok) return [null, null];
 
   type Candidate = [number, string, string];
@@ -210,8 +217,41 @@ export async function detectSaneDevice(printerIp = ""): Promise<[string | null, 
   return [device, backend];
 }
 
+const deviceCache = new Map<string, { device: string | null; backend: string | null; ts: number }>();
+const DEVICE_CACHE_TTL_MS = 45_000;
+
+export async function detectSaneDeviceCached(printerIp = "", forceRefresh = false): Promise<[string | null, string | null]> {
+  const key = printerIp || "__any__";
+  const now = Date.now();
+  const cached = deviceCache.get(key);
+  if (!forceRefresh && cached && now - cached.ts < DEVICE_CACHE_TTL_MS) {
+    return [cached.device, cached.backend];
+  }
+  const res = await detectSaneDevice(printerIp);
+  deviceCache.set(key, { device: res[0], backend: res[1], ts: now });
+  // also prime generic key if printerIp specific missed but generic has result
+  if (res[0] && !deviceCache.has("__any__")) {
+    deviceCache.set("__any__", { device: res[0], backend: res[1], ts: now });
+  }
+  return res;
+}
+
+export function clearDeviceCache() {
+  deviceCache.clear();
+}
+
+export async function warmDeviceCache(printerIp = "", forceRefresh = false): Promise<void> {
+  try { await detectSaneDeviceCached(printerIp, forceRefresh); } catch {}
+}
+
 function escapeRegExp(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function jpegQualityForDpi(dpi: number): number {
+  if (dpi >= 600) return 92;
+  if (dpi >= 300) return 90;
+  return 88;
 }
 
 const scannerCache = new Map<string, { bucket: number; value: any }>();
@@ -251,13 +291,14 @@ export function clearStatusCaches() {
   cupsStatusCache.clear();
   jobsCache.clear();
   scannerCache.clear();
+  // device cache kept intentionally for perf, but caller can clearDeviceCache() after config change
 }
 
-// scanDocument with Bun.Image for conversion (Bun 1.4 native)
+// scanDocument with Bun.Image for conversion (Bun 1.4 native) — now cached device + timeout + DPI-correct PDF
 export async function scanDocument(
   printerIp: string,
   outputDir: string,
-  opts: { dpi?: number; mode?: string; fmt?: string } = {}
+  opts: { dpi?: number; mode?: string; fmt?: string; control?: ScanControl } = {}
 ): Promise<[CommandResult, string | null]> {
   let dpi = opts.dpi ?? 300;
   if (![150, 200, 300, 600].includes(dpi)) dpi = 300;
@@ -266,7 +307,12 @@ export async function scanDocument(
   let fmt = (opts.fmt ?? "pdf").toLowerCase();
   if (!["pdf", "png", "jpg", "jpeg"].includes(fmt)) fmt = "pdf";
 
-  const [device] = await detectSaneDevice(printerIp);
+  // Use cached device (fast) but force refresh on miss
+  let [device] = await detectSaneDeviceCached(printerIp);
+  if (!device) {
+    // retry once with force refresh (bridge may have just become ready)
+    [device] = await detectSaneDeviceCached(printerIp, true);
+  }
   if (!device) {
     return [commandResult(false, "", "No network scanner detected. The hub checked AirScan/WSD and the localhost SANE compatibility bridge."), null];
   }
@@ -277,33 +323,82 @@ export async function scanDocument(
   const pngPath = `${outputDir}/scan_${stamp}.png`;
   const args = ["scanimage", "--device-name", device, "--mode", mode, "--resolution", String(dpi), "-x", "210", "-y", "297", "--format=png"];
 
+  // DPI-aware timeout (higher DPI = larger + slower)
+  const timeoutMsMap: Record<number, number> = { 150: 55_000, 200: 75_000, 300: 110_000, 600: 180_000 };
+  const scanTimeout = timeoutMsMap[dpi] ?? 110_000;
+
   let lastExc: any = null;
   for (let attempt = 0; attempt < 2; attempt++) {
+    let proc: any = null;
+    let timeoutId: any = null;
     try {
-      const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        new Response(proc.stdout).arrayBuffer(),
-        new Response(proc.stderr).text(),
-        proc.exited,
+      proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+      opts.control?.registerProcess(proc);
+      if (opts.control?.isCancelled()) {
+        try { proc.kill(); } catch {}
+        return [commandResult(false, "", "scan_cancelled", 130), null];
+      }
+      const stdoutPromise = new Response(proc.stdout).arrayBuffer();
+      const stderrPromise = new Response(proc.stderr).text();
+      const exitPromise = proc.exited;
+
+      // timeout guard — kills proc if it hangs (e.g., device asleep 5-10m)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          try { proc.kill(); } catch {}
+          reject(new Error(`scan_timeout:${scanTimeout}`));
+        }, scanTimeout);
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.race([
+        Promise.all([stdoutPromise, stderrPromise, exitPromise]) as Promise<[ArrayBuffer, string, number]>,
+        timeoutPromise as Promise<never>,
       ]);
+      if (timeoutId) clearTimeout(timeoutId);
 
       if (exitCode === 0) {
-        // write png
+        if (opts.control?.isCancelled()) {
+          try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+          return [commandResult(false, "", "scan_cancelled", 130), null];
+        }
         await Bun.write(pngPath, stdout);
         break;
       }
       const errText = (stderr || "").trim();
-      // cleanup partial
       try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
-      if (errText.toLowerCase().includes("busy") && attempt === 0) {
+      const isBusy = errText.toLowerCase().includes("busy");
+      const isNoDev = errText.toLowerCase().includes("no scanners") || errText.toLowerCase().includes("inval");
+      if (isBusy && attempt === 0) {
+        clearDeviceCache();
         await Bun.sleep(2000);
         continue;
       }
-      if (errText.toLowerCase().includes("busy")) {
+      if (isBusy) {
         return [commandResult(false, "", "Scanner is still finishing the previous job. Wait a few seconds and try again.", exitCode), null];
       }
-      return [commandResult(false, "", errText, exitCode), null];
+      if (isNoDev && attempt === 0) {
+        // device may have changed — invalidate cache and retry once
+        clearDeviceCache();
+        const [fresh] = await detectSaneDeviceCached(printerIp, true);
+        if (fresh && fresh !== device) {
+          args[2] = fresh; // replace device-name
+          await Bun.sleep(500);
+          continue;
+        }
+      }
+      const hint = errText || `scanimage exited ${exitCode}`;
+      return [commandResult(false, "", hint, exitCode), null];
     } catch (exc: any) {
+      if (timeoutId) clearTimeout(timeoutId);
+      const msg = String(exc?.message || exc);
+      if (opts.control?.isCancelled()) {
+        try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+        return [commandResult(false, "", "scan_cancelled", 130), null];
+      }
+      if (msg.startsWith("scan_timeout:")) {
+        try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+        return [commandResult(false, "", `Scanner did not respond within ${Math.round(scanTimeout/1000)}s. Check the printer is awake, paper is on glass, then try again.`, 1), null];
+      }
       lastExc = exc;
       try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
       if (attempt === 0) {
@@ -311,10 +406,11 @@ export async function scanDocument(
         continue;
       }
       return [commandResult(false, "", String(exc), 1), null];
+    } finally {
+      opts.control?.clearProcess();
     }
   }
 
-  // check if png exists
   const pngFile = Bun.file(pngPath);
   if (!(await pngFile.exists())) {
     if (lastExc) return [commandResult(false, "", String(lastExc), 1), null];
@@ -325,42 +421,42 @@ export async function scanDocument(
     return [commandResult(true, pngPath), pngPath];
   }
 
-  // Convert using Bun.Image (native) for jpg, pdf via pdf-lib
   try {
+    opts.control?.setProgress?.("Converting scan");
     if (fmt === "jpg" || fmt === "jpeg") {
       const outPath = `${outputDir}/scan_${stamp}.jpg`;
-      // Use Bun.Image native pipeline - off thread, no sharp needed
       const img = Bun.file(pngPath).image();
-      await img.jpeg({ quality: 90 }).write(outPath);
+      await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(outPath);
       await Bun.$`rm -f ${pngPath}`.quiet();
       return [commandResult(true, outPath), outPath];
     } else {
-      // pdf - use pdf-lib to embed png
       const outPath = `${outputDir}/scan_${stamp}.pdf`;
       const pngBytes = await Bun.file(pngPath).arrayBuffer();
       const pdfDoc = await PDFDocument.create();
-      // A4 dimensions in points (72 dpi) - 210mm*297mm ~ 595x842
       const page = pdfDoc.addPage([595.28, 841.89]);
-      // try to embed png
       let image;
       try {
         image = await pdfDoc.embedPng(pngBytes);
       } catch {
-        // fallback: convert png to jpg via Bun.Image then embed
         const tmpJpg = `${outputDir}/.tmp_${stamp}.jpg`;
         const img = new Bun.Image(pngBytes);
-        await img.jpeg({ quality: 90 }).write(tmpJpg);
+        await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(tmpJpg);
         const jpgBytes = await Bun.file(tmpJpg).arrayBuffer();
         image = await pdfDoc.embedJpg(jpgBytes);
         await Bun.$`rm -f ${tmpJpg}`.quiet();
       }
       const { width, height } = image.scale(1);
-      // fit inside A4 with margins
+      // DPI-correct display size: pixels -> points at target dpi
+      const displayW = (width * 72) / dpi;
+      const displayH = (height * 72) / dpi;
+      // If embed gave points already shrunk (pdf-lib sometimes returns points at 72dpi), fallback uses min
+      const srcW = Math.min(width, displayW);
+      const srcH = Math.min(height, displayH);
       const maxW = page.getWidth() - 20;
       const maxH = page.getHeight() - 20;
-      const scale = Math.min(maxW / width, maxH / height, 1);
-      const drawW = width * scale;
-      const drawH = height * scale;
+      const fit = Math.min(maxW / srcW, maxH / srcH, 1);
+      const drawW = srcW * fit;
+      const drawH = srcH * fit;
       const x = (page.getWidth() - drawW) / 2;
       const y = (page.getHeight() - drawH) / 2;
       page.drawImage(image, { x, y, width: drawW, height: drawH });
@@ -370,7 +466,6 @@ export async function scanDocument(
       return [commandResult(true, outPath), outPath];
     }
   } catch (exc: any) {
-    // Keep valid PNG as fallback instead of total failure, like Python does
     return [commandResult(true, pngPath, `Conversion failed; saved PNG instead: ${exc}`), pngPath];
   }
 }

@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "./styles/tokens.stylex";
-import { useStatus, useHistory } from "./hooks/useStatus";
-import { apiPostForm, ensureCsrf } from "./lib/api";
+import { useStatus, useHistory, useScans } from "./hooks/useStatus";
+import { postClientSettings, postPrint, postScan, postSetup, cancelPrintJob, ensureCsrf, startScanJob, pollScanJob, cancelScanJob, deleteScan, renameScan, type ScanItem } from "./lib/api";
 import { useToast } from "./components/Toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "./styles/ThemeProvider";
@@ -810,7 +810,6 @@ export default function App() {
   const printer = data?.printer || { ok: false, state: "setup_required", detail: "" };
   const scanner = data?.scanner || { ok: false, state: "starting", detail: "", backend: null };
   const queue = data?.queue || [];
-  const scans = data?.scans || [];
   const networkSharing = !!data?.network_sharing;
 
   const host = useMemo(() => {
@@ -843,7 +842,54 @@ export default function App() {
   const [scanBusy, setScanBusy] = useState(false);
   const [scanStage, setScanStage] = useState(0);
   const scanStages = ["Contacting the scanner", "Scanning the document", "Preparing the download"];
-  const scanStageSeconds = 15;
+  const scanStageSeconds = 12;
+  const [scanJobId, setScanJobId] = useState<string | null>(null);
+  const [scanJob, setScanJob] = useState<{ state: string; progress: string; elapsed: number; resultName?: string; error?: string } | null>(null);
+  const [scanStartedAt, setScanStartedAt] = useState<number | null>(null);
+  const [scanElapsed, setScanElapsed] = useState(0);
+  const scansQ = useScans(100, !!printerIp);
+  const scansDetailed: ScanItem[] = (scansQ.data?.scans as ScanItem[]) || [];
+  const [scanFilter, setScanFilter] = useState("");
+  const [scanSort, setScanSort] = useState<"newest" | "oldest" | "name" | "size">("newest");
+  const [selectedScans, setSelectedScans] = useState<Set<string>>(new Set());
+  const [previewScan, setPreviewScan] = useState<ScanItem | null>(null);
+  const [renamingScan, setRenamingScan] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setNowTick(Date.now()), 60_000); return () => clearInterval(id); }, []);
+  // elapsed timer for active scan
+  useEffect(() => {
+    if (!scanBusy || !scanStartedAt) return;
+    const id = setInterval(() => setScanElapsed(Math.floor((Date.now() - scanStartedAt) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [scanBusy, scanStartedAt]);
+  const filteredScans = useMemo(() => {
+    let out = scansDetailed;
+    if (scanFilter.trim()) {
+      const q = scanFilter.toLowerCase();
+      out = out.filter(s => s.name.toLowerCase().includes(q));
+    }
+    const sorted = [...out];
+    if (scanSort === "newest") sorted.sort((a, b) => b.mtimeMs - a.mtimeMs);
+    else if (scanSort === "oldest") sorted.sort((a, b) => a.mtimeMs - b.mtimeMs);
+    else if (scanSort === "name") sorted.sort((a, b) => a.name.localeCompare(b.name));
+    else if (scanSort === "size") sorted.sort((a, b) => b.size - a.size);
+    return sorted;
+  }, [scansDetailed, scanFilter, scanSort]);
+  // relative time helper (ticks with nowTick)
+  const relTime = (mtimeMs: number) => {
+    const diff = nowTick - mtimeMs;
+    const s = Math.floor(diff / 1000);
+    if (s < 45) return "just now";
+    if (s < 90) return "a minute ago";
+    if (s < 45 * 60) return `${Math.floor(s / 60)} min ago`;
+    if (s < 90 * 60) return "an hour ago";
+    if (s < 22 * 3600) return `${Math.floor(s / 3600)} hrs ago`;
+    if (s < 36 * 3600) return "a day ago";
+    if (s < 25 * 86400) return `${Math.floor(s / 86400)} days ago`;
+    const d = new Date(mtimeMs); const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
 
   const [displayNameEdit, setDisplayNameEdit] = useState(displayName);
   const [queueNameEdit, setQueueNameEdit] = useState(printerName);
@@ -901,7 +947,7 @@ export default function App() {
     setPrintBusy(true); setPrintStage(0);
     try {
       const fd = new FormData(); fd.set("file", file); fd.set("copies", String(copies)); if (grayscale) fd.set("grayscale", "on");
-      await apiPostForm("/print", fd);
+      await postPrint(fd);
       push({ kind: "success", title: "File added to the print queue", desc: `${file.name} · ${copies} ${copies === 1 ? "copy" : "copies"}` });
       setFile(null); if (fileRef.current) fileRef.current.value = "";
       await qc.invalidateQueries({ queryKey: ["status"] }); await qc.invalidateQueries({ queryKey: ["history"] });
@@ -911,17 +957,111 @@ export default function App() {
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!["150", "200", "300", "600"].includes(scanDpi)) { push({ kind: "error", title: "DPI must be 150, 200, 300 or 600." }); return; }
-    setScanBusy(true); setScanStage(0);
+    setScanBusy(true); setScanStage(0); setScanJob(null); setScanElapsed(0); setScanStartedAt(Date.now());
     try {
-      const fd = new FormData(); fd.set("dpi", scanDpi); fd.set("mode", scanMode); fd.set("format", scanFmt);
-      await apiPostForm("/scan", fd);
-      push({ kind: "success", title: "Scan complete", desc: `Saved as ${scanFmt.toUpperCase()} · ${scanDpi} dpi` });
-      await qc.invalidateQueries({ queryKey: ["status"] });
+      // Use new async job API for real-time progress
+      const { jobId } = await startScanJob({ dpi: scanDpi, mode: scanMode, format: scanFmt });
+      setScanJobId(jobId);
+      // poll every 1.2s until done
+      let done = false;
+      let polls = 0;
+      while (!done) {
+        await new Promise(r => setTimeout(r, 1200));
+        polls++;
+        try {
+          const job = await pollScanJob(jobId);
+          setScanJob({ state: job.state, progress: job.progress, elapsed: job.elapsed, resultName: job.resultName, error: job.error });
+          // update stage text from progress
+          if (job.progress.toLowerCase().includes("contact")) setScanStage(0);
+          else if (job.progress.toLowerCase().includes("scanning")) setScanStage(1);
+          else if (job.progress.toLowerCase().includes("convert") || job.progress.toLowerCase().includes("preparing")) setScanStage(2);
+          if (job.state === "done") {
+            done = true;
+            push({ kind: "success", title: "Scan complete", desc: `${job.resultName || "Scan"} · ${scanFmt.toUpperCase()} · ${scanDpi} dpi · ${job.elapsed}s` });
+            await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
+            await scansQ.refetch();
+          } else if (job.state === "error" || job.state === "cancelled") {
+            done = true;
+            const msg = job.error || "Scan failed";
+            if (msg.toLowerCase().includes("already in progress")) push({ kind: "error", title: "Scan already in progress", desc: "Wait for it to finish before starting another." });
+            else push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 240) });
+          }
+        } catch (pollErr: any) {
+          // transient poll failure - continue
+          if (polls > 5) throw pollErr;
+        }
+      }
     } catch (err: any) {
+      // fallback to legacy sync endpoint if async API unavailable (e.g., old server)
       const msg = String(err.message || err);
-      if (msg.toLowerCase().includes("already in progress")) push({ kind: "error", title: "Scan already in progress", desc: "Wait for it to finish before starting another." });
-      else push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 220) });
-    } finally { setScanBusy(false); }
+      if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+        try {
+          const fd = new FormData(); fd.set("dpi", scanDpi); fd.set("mode", scanMode); fd.set("format", scanFmt);
+          await postScan(fd);
+          push({ kind: "success", title: "Scan complete", desc: `Saved as ${scanFmt.toUpperCase()} · ${scanDpi} dpi` });
+          await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
+          await scansQ.refetch();
+        } catch (error_: any) {
+          const m2 = String(error_.message || error_);
+          if (m2.toLowerCase().includes("already in progress")) push({ kind: "error", title: "Scan already in progress", desc: "Wait for it to finish before starting another." });
+          else push({ kind: "error", title: "Scan failed", desc: m2.slice(0, 220) });
+        }
+      } else if (!msg.toLowerCase().includes("already in progress")) {
+        // already handled inside loop? Only show if not already shown
+        if (!msg.toLowerCase().includes("timed out")) push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 220) });
+      }
+    } finally { setScanBusy(false); setScanJobId(null); }
+  };
+
+  const handleCancelScan = async () => {
+    if (!scanJobId) return;
+    try {
+      await cancelScanJob(scanJobId);
+      setScanJob(prev => prev ? { ...prev, state: "cancelled", progress: "Cancelling" } : prev);
+    } catch (err: any) {
+      push({ kind: "error", title: "Could not cancel scan", desc: String(err.message || err).slice(0, 220) });
+    }
+  };
+
+  const handleDeleteScan = async (name: string) => {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+      await deleteScan(name);
+      push({ kind: "success", title: "Deleted", desc: name });
+      setSelectedScans(prev => { const n = new Set(prev); n.delete(name); return n; });
+      await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
+      await scansQ.refetch();
+    } catch (err: any) { push({ kind: "error", title: "Could not delete", desc: String(err.message || err).slice(0, 220) }); }
+  };
+  const handleRenameScan = async (oldName: string) => {
+    const base = oldName.replace(/\.[^.]+$/, "");
+    const v = renameValue.trim() || base;
+    if (!v) return;
+    try {
+      const res = await renameScan(oldName, v);
+      push({ kind: "success", title: "Renamed", desc: `${oldName} → ${res.name}` });
+      setRenamingScan(null); setRenameValue("");
+      await qc.invalidateQueries({ queryKey: ["scans"] }); await scansQ.refetch();
+    } catch (err: any) { push({ kind: "error", title: "Rename failed", desc: String(err.message || err).slice(0, 220) }); }
+  };
+  const toggleSelectScan = (name: string) => {
+    setSelectedScans(prev => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+  };
+  const handleBulkDelete = async () => {
+    if (selectedScans.size === 0) return;
+    if (!confirm(`Delete ${selectedScans.size} scans?`)) return;
+    let ok = 0, fail = 0;
+    const results = await Promise.allSettled([...selectedScans].map(n => deleteScan(n)));
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        ok++;
+      } else {
+        fail++;
+      }
+    }
+    push({ kind: fail ? "error" : "success", title: fail ? `Deleted ${ok}, ${fail} failed` : `Deleted ${ok} scans` });
+    setSelectedScans(new Set());
+    await qc.invalidateQueries({ queryKey: ["scans"] }); await scansQ.refetch();
   };
 
   const handleNetworkSave = async (e: React.FormEvent) => {
@@ -931,7 +1071,7 @@ export default function App() {
     setNetBusy(true); setNetStage(0);
     try {
       const fd = new FormData(); fd.set("display_name", displayNameEdit.trim()); fd.set("printer_name", queueNameEdit.trim()); if (shareEdit) fd.set("share_printer", "on");
-      await apiPostForm("/client-settings", fd);
+      await postClientSettings(fd);
       push({ kind: "success", title: "Network sharing settings applied" });
       await qc.invalidateQueries({ queryKey: ["status"] });
     } catch (err: any) { push({ kind: "error", title: "Could not save sharing settings", desc: String(err.message || err).slice(0, 220) }); } finally { setNetBusy(false); }
@@ -940,12 +1080,12 @@ export default function App() {
   const handleChangeIp = async (e: React.FormEvent) => {
     e.preventDefault(); const ip = changeIp.trim(); if (!ip) return;
     setSetupBusy(true); setSetupStage(0);
-    try { const fd = new FormData(); fd.set("printer_ip", ip); await apiPostForm("/setup", fd); push({ kind: "success", title: `Printer address updated`, desc: ip }); await qc.invalidateQueries({ queryKey: ["status"] }); }
+    try { const fd = new FormData(); fd.set("printer_ip", ip); await postSetup(fd); push({ kind: "success", title: `Printer address updated`, desc: ip }); await qc.invalidateQueries({ queryKey: ["status"] }); }
     catch (err: any) { push({ kind: "error", title: "Could not update address", desc: String(err.message || err).slice(0, 220) }); } finally { setSetupBusy(false); }
   };
 
   const handleCancel = async (jobId: string) => {
-    try { const fd = new FormData(); await apiPostForm(`/jobs/${encodeURIComponent(jobId)}/cancel`, fd); push({ kind: "success", title: "Job cancelled", desc: jobId }); await qc.invalidateQueries({ queryKey: ["status"] }); await qc.invalidateQueries({ queryKey: ["history"] }); }
+    try { await cancelPrintJob(jobId); push({ kind: "success", title: "Job cancelled", desc: jobId }); await qc.invalidateQueries({ queryKey: ["status"] }); await qc.invalidateQueries({ queryKey: ["history"] }); }
     catch (err: any) { push({ kind: "error", title: "Could not cancel job", desc: String(err.message || err).slice(0, 200) }); }
   };
 
@@ -1076,26 +1216,28 @@ export default function App() {
               <form onSubmit={handleScan}>
                 <div {...stylex.props(s.scanOptions)}>
                   <label {...stylex.props(s.fieldLabel)}>COLOUR <select {...stylex.props(s.input)} value={scanMode} onChange={e => setScanMode(e.target.value)}><option>Color</option><option>Gray</option><option>Lineart</option></select></label>
-                  <label {...stylex.props(s.fieldLabel)}>QUALITY <select {...stylex.props(s.input)} value={scanDpi} onChange={e => setScanDpi(e.target.value)}><option value="150">Quick 150</option><option value="200">Standard 200</option><option value="300">High 300</option><option value="600">Beast 600</option></select></label>
+                  <label {...stylex.props(s.fieldLabel)}>QUALITY <select {...stylex.props(s.input)} value={scanDpi} onChange={e => setScanDpi(e.target.value)}><option value="150">Quick 150 · ~15s</option><option value="200">Standard 200 · ~25s</option><option value="300">High 300 · ~45s</option><option value="600">Beast 600 · ~90s</option></select></label>
                   <label {...stylex.props(s.fieldLabel)}>SAVE AS <select {...stylex.props(s.input)} value={scanFmt} onChange={e => setScanFmt(e.target.value)}><option value="pdf">PDF</option><option value="png">PNG</option><option value="jpg">JPG</option></select></label>
                 </div>
-                <p {...stylex.props(s.helpText)}>Face-down on the glass, hit scan. File pops below as download — done.</p>
+                {scanDpi === "600" ? <p style={{ margin: "8px 0 0", fontFamily: vars.fontMono, fontSize: 10, color: vars.text, opacity: .7, background: vars.warnSoft, padding: "6px 10px", borderRadius: 8, border: "2px solid #111" }}>⚡ 600 dpi is huge + slow. Use for photos / archival. 300 dpi is crisp for docs.</p> : null}
+                {scanFmt === "pdf" ? <p {...stylex.props(s.helpText)}>High-quality PDF keeps your DPI (no recompress). Face-down on glass → Scan → appears below with preview.</p> : <p {...stylex.props(s.helpText)}>Face-down on the glass, hit scan. JPG/PNG saves raw + thumb.</p>}
                 <button type="submit" disabled={scanBusy} {...stylex.props(s.buttonPrimary, s.buttonTeal)} style={{ backgroundColor: vars.teal }}>
-                  {scanBusy ? <><Loader2 size={18} className="spin" /> SCANNING… like 60s</> : <><Scan size={18} /> SCAN IT!</>}
+                  {scanBusy ? <><Loader2 size={18} className="spin" /> SCANNING… {scanElapsed > 0 ? `${scanElapsed}s` : "like 45s"}</> : <><Scan size={18} /> SCAN IT!</>}
                 </button>
-                {scanBusy ? <div style={{ marginTop: 12 }}><div {...stylex.props(s.progress)}><span {...stylex.props(s.progressBar, s.progressBarTeal)} /></div><div {...stylex.props(s.opCopy)}><strong {...stylex.props(s.opCopyStrong)}>{scanStages[scanStage]}</strong><span>…</span></div></div> : null}
+                {scanBusy ? <div style={{ marginTop: 12 }}><div {...stylex.props(s.progress)}><span {...stylex.props(s.progressBar, s.progressBarTeal)} /></div><div {...stylex.props(s.opCopy)}><strong {...stylex.props(s.opCopyStrong)}>{scanJob?.progress || scanStages[scanStage]}</strong><span>{scanElapsed}s elapsed • {scanJob?.state || "scanning"}</span></div>{scanJob?.resultName ? <small style={{ fontFamily: vars.fontMono, fontSize: 10, opacity: .6 }}>→ {scanJob.resultName}</small> : null}<button type="button" onClick={handleCancelScan} {...stylex.props(s.buttonQuiet, s.buttonDanger)} style={{ marginTop: 10 }}><X size={13} /> CANCEL SCAN</button></div> : null}
               </form>
             ) : (
               <div {...stylex.props(s.emptyScan)}>
                 <strong style={{ fontFamily: vars.fontDisplay, fontSize: 16, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={18} className="spin" /> SCANNER NAPPING</strong>
-                <p style={{ margin: "8px 0 0", fontFamily: vars.fontMono, fontSize: 11, lineHeight: 1.5, fontWeight: 700 }}>Wakes up automatically. Check back in a minute — or smash scan anyway, we’ll validate.</p>
+                <p style={{ margin: "8px 0 0", fontFamily: vars.fontMono, fontSize: 11, lineHeight: 1.5, fontWeight: 700 }}>Wakes up automatically (cached probe ~12s). Check back in a minute — or smash scan anyway, we’ll validate.</p>
                 <form onSubmit={handleScan} style={{ marginTop: 14, opacity: .9 }}>
                   <div {...stylex.props(s.scanOptions)}>
                     <label {...stylex.props(s.fieldLabel)}>COLOUR <select {...stylex.props(s.input)} value={scanMode} onChange={e => setScanMode(e.target.value)}><option>Color</option><option>Gray</option><option>Lineart</option></select></label>
                     <label {...stylex.props(s.fieldLabel)}>QUALITY <select {...stylex.props(s.input)} value={scanDpi} onChange={e => setScanDpi(e.target.value)}><option value="150">Quick</option><option value="200">Standard</option><option value="300">High</option><option value="600">Beast</option></select></label>
                     <label {...stylex.props(s.fieldLabel)}>SAVE AS <select {...stylex.props(s.input)} value={scanFmt} onChange={e => setScanFmt(e.target.value)}><option value="pdf">PDF</option><option value="png">PNG</option><option value="jpg">JPG</option></select></label>
                   </div>
-                  <button type="submit" disabled={scanBusy} {...stylex.props(s.buttonPrimary, s.buttonTeal)} style={{ marginTop: 10, backgroundColor: vars.teal }}>{scanBusy ? "SCANNING…" : "TRY ANYWAY →"}</button>
+                  <button type="submit" disabled={scanBusy} {...stylex.props(s.buttonPrimary, s.buttonTeal)} style={{ marginTop: 10, backgroundColor: vars.teal }}>{scanBusy ? `SCANNING… ${scanElapsed}s` : "TRY ANYWAY →"}</button>
+                  {scanBusy && scanJob ? <div style={{ marginTop: 10 }}><div {...stylex.props(s.progress)}><span {...stylex.props(s.progressBar, s.progressBarTeal)} /></div><div {...stylex.props(s.opCopy)}><strong {...stylex.props(s.opCopyStrong)}>{scanJob.progress}</strong><span>{scanJob.elapsed}s</span></div></div> : null}
                 </form>
               </div>
             )}
@@ -1115,9 +1257,75 @@ export default function App() {
             <div {...stylex.props(s.compactHead)}><div><span {...stylex.props(s.sectionKicker)}>IN PROGRESS</span><h2 style={{ margin: "8px 0 0", fontFamily: vars.fontDisplay, fontSize: 18, fontWeight: 700 }}>PRINT QUEUE ✦</h2></div><span style={{ fontFamily: vars.fontMono, fontSize: 11, fontWeight: 700, background: vars.text, color: "white", padding: "4px 10px", borderRadius: 999, border: "2px solid #111" }}>{queue.length}</span></div>
             <div {...stylex.props(s.itemList)}>{queue.map(j => <div key={j.id} {...stylex.props(s.itemRow)}><span style={{ minWidth: 0 }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block" }}>{j.id}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6 }}>{j.owner} • {j.size}</small></span><button {...stylex.props(s.buttonQuiet, s.buttonDanger)} onClick={() => handleCancel(j.id)}><Trash2 size={12} /> CANCEL</button></div>)}</div>
           </article>
-          <article {...stylex.props(s.card, s.cardPad)} hidden={scans.length === 0} style={{ display: scans.length === 0 ? "none" : undefined, transform: "rotate(0.3deg)" }}>
-            <div {...stylex.props(s.compactHead)}><div><span {...stylex.props(s.sectionKicker)} style={{ background: vars.pink }}>DOWNLOADS</span><h2 style={{ margin: "8px 0 0", fontFamily: vars.fontDisplay, fontSize: 18, fontWeight: 700 }}>RECENT SCANS ✦</h2></div></div>
-            <div {...stylex.props(s.itemList)}>{scans.map(name => <a key={name} href={`/scans/${encodeURIComponent(name)}`} {...stylex.props(s.itemRow)}><span style={{ minWidth: 0 }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13 }}>{name}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6 }}>Saved scan</small></span><span {...stylex.props(s.downloadLink)}>DOWNLOAD ↗</span></a>)}</div>
+          <article {...stylex.props(s.card, s.cardPad)} style={{ transform: "rotate(0.3deg)" }}>
+            <div {...stylex.props(s.compactHead)}>
+              <div>
+                <span {...stylex.props(s.sectionKicker)} style={{ background: vars.pink }}>DOWNLOADS</span>
+                <h2 style={{ margin: "8px 0 0", fontFamily: vars.fontDisplay, fontSize: 18, fontWeight: 700 }}>SCANS ✦ {scansQ.data ? `· ${scansQ.data.total}/${scansQ.data.max}` : ""}</h2>
+                <small style={{ fontFamily: vars.fontMono, fontSize: 10, opacity: .6 }}>{filteredScans.length} files • {selectedScans.size ? `${selectedScans.size} selected` : "tap to select"}</small>
+              </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button {...stylex.props(s.buttonQuiet)} onClick={() => scansQ.refetch()} title="Refresh"><RefreshCw size={12} /></button>
+                {selectedScans.size > 0 ? <button {...stylex.props(s.buttonQuiet, s.buttonDanger)} onClick={handleBulkDelete}><Trash2 size={12} /> DELETE {selectedScans.size}</button> : null}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              <div style={{ position: "relative", flex: "1 1 200px" }}><Search size={12} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: .6 }} /><input {...stylex.props(s.input)} placeholder="FILTER BY NAME…" value={scanFilter} onChange={e => setScanFilter(e.target.value)} style={{ marginTop: 0, paddingLeft: 30, minHeight: 38, fontFamily: vars.fontMono, fontSize: 11, textTransform: "uppercase" }} /></div>
+              <select {...stylex.props(s.input)} value={scanSort} onChange={e => setScanSort(e.target.value as any)} style={{ marginTop: 0, minHeight: 38, width: "auto", fontFamily: vars.fontMono, fontSize: 11 }}><option value="newest">Newest</option><option value="oldest">Oldest</option><option value="name">Name</option><option value="size">Size</option></select>
+            </div>
+            {scansQ.isLoading ? <div {...stylex.props(s.skeleton)} style={{ height: 120 }} /> : filteredScans.length === 0 ? <div style={{ padding: "20px", textAlign: "center", fontFamily: vars.fontMono, fontSize: 12, opacity: .6, border: "3px dashed #111", borderRadius: 12, background: "#FFF8E7" }}>{scansDetailed.length === 0 ? "No scans yet — hit SCAN IT! above ✦" : "No match — try another filter"}</div> : (
+              <div {...stylex.props(s.itemList)}>
+                {filteredScans.map(scan => (
+                  <div key={scan.name} {...stylex.props(s.itemRow)} style={{ gap: 10, padding: "10px 0" }}>
+                    <input type="checkbox" checked={selectedScans.has(scan.name)} onChange={() => toggleSelectScan(scan.name)} style={{ width: 18, height: 18, accentColor: vars.text as string }} />
+                    {/* thumb */}
+                    <a href={`/scans/${encodeURIComponent(scan.name)}?preview=1`} target="_blank" rel="noopener" style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", border: "2.5px solid #111", flexShrink: 0, background: "white", display: "grid", placeItems: "center", textDecoration: "none" }} title="Open preview">
+                      {scan.ext === ".pdf" ? <span style={{ fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, background: vars.bad, color: "white", padding: "2px 6px", borderRadius: 4 }}>PDF</span> : <img src={`/api/scans/${encodeURIComponent(scan.name)}/thumb`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                    </a>
+                    {renamingScan === scan.name ? (
+                      <span style={{ minWidth: 0, flex: 1, display: "flex", gap: 6, alignItems: "center" }}>
+                          <input {...stylex.props(s.input)} value={renameValue} onChange={e => setRenameValue(e.target.value)} autoFocus style={{ marginTop: 0, minHeight: 32, fontSize: 12, flex: 1 }} placeholder={scan.name.replace(/\.[^.]+$/, "")} onKeyDown={e => { if (e.key === "Enter") handleRenameScan(scan.name); if (e.key === "Escape") { setRenamingScan(null); setRenameValue(""); } }} />
+                          <button {...stylex.props(s.buttonQuiet)} onClick={() => handleRenameScan(scan.name)} style={{ background: vars.lime }}><Check size={12} /></button>
+                          <button {...stylex.props(s.buttonQuiet)} onClick={() => { setRenamingScan(null); setRenameValue(""); }}><X size={12} /></button>
+                      </span>
+                    ) : (
+                      <button type="button" onClick={() => setPreviewScan(scan)} onKeyDown={e => e.key === "Enter" && setPreviewScan(scan)} title={scan.mtimeIso} style={{ minWidth: 0, flex: 1, textAlign: "left", border: 0, padding: 0, background: "transparent", color: "inherit", cursor: "pointer" }}>
+                        <strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{scan.name}</strong>
+                        <small style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                          <span>{scan.sizeDisplay}</span><span>·</span><span title={scan.mtimeIso}>{relTime(scan.mtimeMs)}</span><span>·</span><span style={{ textTransform: "uppercase", background: "white", border: "2px solid #111", borderRadius: 4, padding: "0 4px", fontSize: 9 }}>{scan.ext.slice(1)}</span>
+                        </small>
+                      </button>
+                    )}
+                    <span style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap" }}>
+                      <button {...stylex.props(s.buttonQuiet)} onClick={() => setPreviewScan(scan)} title="Preview"><ExternalLink size={12} /></button>
+                      <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(s.buttonQuiet)} style={{ textDecoration: "none" }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><FileText size={12} /> DL</span></a>
+                      <button {...stylex.props(s.buttonQuiet)} onClick={() => { setRenamingScan(scan.name); setRenameValue(scan.name.replace(/\.[^.]+$/, "")); }} title="Rename"><span style={{ fontSize: 11, fontWeight: 700 }}>✎</span></button>
+                      <button {...stylex.props(s.buttonQuiet, s.buttonDanger)} onClick={() => handleDeleteScan(scan.name)} title="Delete"><Trash2 size={12} /></button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {/* preview modal */}
+            {previewScan ? (
+              <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16 }}>
+                <div {...stylex.props(s.card)} style={{ width: "min(900px, 96vw)", maxHeight: "90vh", overflow: "auto", background: "white", padding: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+                    <strong style={{ fontFamily: vars.fontDisplay, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis" }}>{previewScan.name}</strong>
+                    <span style={{ display: "flex", gap: 8 }}>
+                      <a href={`/scans/${encodeURIComponent(previewScan.name)}`} {...stylex.props(s.buttonQuiet)} style={{ textDecoration: "none" }}>DOWNLOAD ↗</a>
+                      <button {...stylex.props(s.buttonQuiet)} onClick={() => setPreviewScan(null)}><X size={14} /> CLOSE</button>
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6, marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}><span>{previewScan.sizeDisplay}</span><span>·</span><span>{previewScan.mtimeIso}</span><span>·</span><span>{relTime(previewScan.mtimeMs)}</span></div>
+                  {previewScan.ext === ".pdf" ? (
+                    <iframe src={`/scans/${encodeURIComponent(previewScan.name)}?preview=1`} style={{ width: "100%", height: "60vh", border: "3px solid #111", borderRadius: 12 }} title="PDF preview" />
+                  ) : (
+                    <img src={`/scans/${encodeURIComponent(previewScan.name)}?preview=1`} alt={previewScan.name} style={{ width: "100%", height: "auto", maxHeight: "70vh", objectFit: "contain", border: "3px solid #111", borderRadius: 12, background: "#FFF8E7" }} />
+                  )}
+                </div>
+              </div>
+            ) : null}
           </article>
         </section>
 
