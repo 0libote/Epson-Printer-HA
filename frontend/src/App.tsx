@@ -810,7 +810,6 @@ export default function App() {
   const printer = data?.printer || { ok: false, state: "setup_required", detail: "" };
   const scanner = data?.scanner || { ok: false, state: "starting", detail: "", backend: null };
   const queue = data?.queue || [];
-  const scans = data?.scans || [];
   const networkSharing = !!data?.network_sharing;
 
   const host = useMemo(() => {
