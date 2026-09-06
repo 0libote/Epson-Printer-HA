@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.2"
 ENV BUN_INSTALL=/root/.bun
 ENV PATH=$BUN_INSTALL/bin:$PATH
+RUN ln -sf /root/.bun/bin/bun /usr/local/bin/bun
 
 WORKDIR /opt/epson-hub
 
