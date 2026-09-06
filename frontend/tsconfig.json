@@ -6,7 +6,6 @@
     "types": ["vite/client"],
     "noEmit": true,
     "allowImportingTsExtensions": false,
-    "baseUrl": ".",
     "paths": {}
   },
   "include": ["src/**/*", "vite.config.ts", "index.html"],
