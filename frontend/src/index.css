@@ -1,5 +1,18 @@
 @layer reset {
-  * { box-sizing: border-box; }
+  *, *::before, *::after { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
   body { margin: 0; }
+  h1, h2, h3, h4, p { margin: 0; }
+  button, input, select, textarea { font: inherit; }
+  img { max-width: 100%; }
+}
+
+@layer base {
+  body {
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection { background: #3b5bdb; color: #fff; }
+  :focus-visible { outline: 2px solid #3b5bdb; outline-offset: 2px; border-radius: 4px; }
 }

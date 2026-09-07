@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
 import { useState, useEffect, useRef, createContext, useContext, type ReactNode } from "react";
-import { Check, AlertCircle, X } from "lucide-react";
+import { Check, AlertCircle, Info, X } from "lucide-react";
 
 type Toast = { id: string; kind: "success" | "error" | "info"; title: string; desc?: string };
 type ToastCtx = { push: (t: Omit<Toast, "id">) => void };
@@ -12,68 +12,45 @@ export const useToast = () => useContext(ToastContext);
 const s = stylex.create({
   region: {
     position: "fixed",
-    bottom: "18px",
-    right: "18px",
+    bottom: "20px",
+    left: "50%",
+    transform: "translateX(-50%)",
     zIndex: 9999,
     display: "flex",
     flexDirection: "column",
-    gap: "12px",
-    pointerEvents: "none",
-    maxWidth: "min(440px, calc(100vw - 24px))",
-    width: "440px",
+    gap: "8px",
+    width: "min(420px, calc(100vw - 32px))",
   },
   toast: {
-    pointerEvents: "auto",
     display: "flex",
-    gap: "12px",
+    gap: "10px",
     alignItems: "flex-start",
-    padding: "16px 14px",
-    borderRadius: "16px",
-    borderWidth: "3px",
+    padding: "12px 12px 12px 14px",
+    borderRadius: vars.radiusMd,
+    borderWidth: "1px",
     borderStyle: "solid",
     borderColor: vars.line,
-    backgroundColor: "white",
-    boxShadow: `6px 6px 0 ${vars.line}`,
+    backgroundColor: vars.panel,
+    boxShadow: vars.shadowMd,
     animationName: "toastIn",
-    animationDuration: "220ms",
-    animationTimingFunction: "cubic-bezier(.2,.8,.2,1)",
-    transform: "rotate(0.4deg)",
+    animationDuration: "180ms",
+    animationTimingFunction: "ease-out",
   },
-  toastSuccess: { backgroundColor: vars.lime, transform: "rotate(-0.4deg)" },
-  toastError: { backgroundColor: vars.pink, color: "white" },
-  icon: {
-    flexShrink: 0,
-    width: "32px",
-    height: "32px",
-    borderRadius: "10px",
-    display: "grid",
-    placeItems: "center",
-    borderWidth: "2.5px",
-    borderStyle: "solid",
-    borderColor: vars.line,
-    boxShadow: `2px 2px 0 ${vars.line}`,
-    transform: "rotate(-2deg)",
-  },
-  iconSuccess: { backgroundColor: vars.text, color: vars.lime },
-  iconError: { backgroundColor: "white", color: vars.bad },
-  iconInfo: { backgroundColor: vars.yellow, color: vars.text },
-  title: { margin: 0, fontFamily: `"Space Grotesk", sans-serif`, fontSize: "13px", fontWeight: 700, color: vars.text, lineHeight: 1.2, textTransform: "uppercase" },
-  titleError: { color: "white" },
-  desc: { margin: "4px 0 0", fontFamily: `"Fragment Mono", monospace`, fontSize: "11px", color: vars.text, opacity: 0.8, lineHeight: 1.4 },
-  descError: { color: "white", opacity: 1 },
+  icon: { flexShrink: 0, marginTop: "1px" },
+  title: { margin: 0, fontFamily: vars.fontSans, fontSize: "13.5px", fontWeight: 600, color: vars.text, lineHeight: 1.35 },
+  desc: { margin: "2px 0 0", fontFamily: vars.fontSans, fontSize: "12.5px", color: vars.textSecondary, lineHeight: 1.45, overflowWrap: "anywhere" },
   close: {
     marginLeft: "auto",
-    backgroundColor: "white",
-    borderWidth: "2px",
-    borderStyle: "solid",
-    borderColor: vars.line,
-    color: vars.text,
+    flexShrink: 0,
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderStyle: "none",
+    color: vars.textTertiary,
     cursor: "pointer",
-    padding: "6px",
-    borderRadius: "8px",
+    padding: "4px",
+    borderRadius: "6px",
     display: "grid",
     placeItems: "center",
-    boxShadow: `2px 2px 0 ${vars.line}`,
   },
 });
 
@@ -102,7 +79,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = (t: Omit<Toast, "id">) => {
     const id = makeToastId();
     setToasts((p) => [...p.slice(-3), { ...t, id }]);
-    const timer = setTimeout(() => dismiss(id), 4200);
+    const timer = setTimeout(() => dismiss(id), 4500);
     timers.current.set(id, timer);
   };
   return (
@@ -110,21 +87,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <div {...stylex.props(s.region)} aria-live="polite" aria-atomic="true">
         {toasts.map((t) => (
-          <div key={t.id} {...stylex.props(s.toast, t.kind === "success" ? s.toastSuccess : t.kind === "error" ? s.toastError : undefined)} role="status">
-            <span {...stylex.props(s.icon, t.kind === "success" ? s.iconSuccess : t.kind === "error" ? s.iconError : s.iconInfo)}>
-              {t.kind === "success" ? <Check size={16} strokeWidth={3} /> : <AlertCircle size={16} strokeWidth={2.5} />}
+          <div key={t.id} {...stylex.props(s.toast)} role="status">
+            <span {...stylex.props(s.icon)} style={{ color: t.kind === "success" ? vars.good as string : t.kind === "error" ? vars.bad as string : vars.accent as string }}>
+              {t.kind === "success" ? <Check size={16} /> : t.kind === "error" ? <AlertCircle size={16} /> : <Info size={16} />}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p {...stylex.props(s.title, t.kind === "error" ? s.titleError : undefined)}>{t.title}</p>
-              {t.desc ? <p {...stylex.props(s.desc, t.kind === "error" ? s.descError : undefined)}>{t.desc}</p> : null}
+              <p {...stylex.props(s.title)}>{t.title}</p>
+              {t.desc ? <p {...stylex.props(s.desc)}>{t.desc}</p> : null}
             </div>
             <button {...stylex.props(s.close)} aria-label="Dismiss" onClick={() => dismiss(t.id)}>
-              <X size={14} strokeWidth={2.5} />
+              <X size={14} />
             </button>
           </div>
         ))}
       </div>
-      <style>{`@keyframes toastIn{from{transform:translateY(8px) rotate(-1deg) scale(.98);opacity:0}to{transform:translateY(0) rotate(0.4deg) scale(1);opacity:1}}`}</style>
+      <style>{`@keyframes toastIn{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}`}</style>
     </ToastContext.Provider>
   );
 }
