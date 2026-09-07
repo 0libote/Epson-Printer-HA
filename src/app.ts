@@ -19,6 +19,7 @@ import {
   warmDeviceCache,
 } from "./core.ts";
 import { listPrintHistory } from "./history.ts";
+import { getCachedInkLevels, getInkLevels } from "./ink.ts";
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? String(fallback), 10);
@@ -616,6 +617,17 @@ async function renderIndex(c:any):Promise<string>{
     try{history=listPrintHistory(100);}catch{}
     scans=recentScans(10).map(s=>({name:s.name}));
   } else { try{history=listPrintHistory(100);}catch{} }
+  const ink = printerIp ? getCachedInkLevels(printerIp) : null;
+  const inkHtml = printerIp ? `
+      <section class="panel" id="ink-panel" aria-label="Ink levels">
+        <div class="section-heading"><div><p class="kicker">Supplies</p><h2>Ink levels${ink ? ` · via ${escapeHtml(ink.source.toUpperCase())}` : ""}</h2></div></div>
+        ${ink?.cartridges?.length ? `<div class="item-list" id="ink-list">` + ink.cartridges.map((ct: any) => `
+          <div class="item-row">
+            <span><strong>${escapeHtml(ct.name)}</strong><small>${ct.level == null ? "unknown" : `${ct.level}% · ${escapeHtml(ct.state)}`}</small></span>
+            <span class="download">${ct.level == null ? "—" : `${ct.level}%`}</span>
+          </div>`).join("") + `</div>`
+        : `<p class="empty-copy">Checking printer supplies… fresh levels appear here automatically (also at <code>/api/ink</code>).</p>`}
+      </section>` : "";
   const flashes=consumeFlash(c);
   const csrf=getCsrfToken(c);
   const flashHtml=flashes.map(f=>`<div class="notice ${escapeHtml(f.category)}" role="status"><span class="notice-icon" aria-hidden="true">${f.category==="success"?"✓":"!"}</span><span>${escapeHtml(f.message)}</span></div>`).join("");
@@ -721,6 +733,7 @@ async function renderIndex(c:any):Promise<string>{
         </div>
       </section>
       <div id="live-indicator" class="live-indicator" aria-live="polite" aria-atomic="true"><span id="live-dot"></span><span id="live-text">Live</span><span id="live-time" class="live-time"></span></div>
+      ${inkHtml}
 
       <section class="activity-grid" id="activity-grid" ${!(jobs.length||scans.length)?"hidden":""}>
         <article class="panel compact-panel" id="queue-panel" ${!jobs.length?"hidden":""}>
@@ -1398,6 +1411,7 @@ app.get("/api/status", async(c)=>{
       queue,
       recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
       scans,
+      ink: printerIp ? getCachedInkLevels(printerIp) : null,
     };
   })();
   _statusInflight = p; _statusInflightKey = key;
@@ -1406,6 +1420,23 @@ app.get("/api/status", async(c)=>{
     return c.json(data);
   } finally {
     if (_statusInflight === p) { _statusInflight = null; _statusInflightKey = ""; }
+  }
+});
+
+app.get("/api/ink", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const printerIp=currentPrinterIp();
+  if(!printerIp) return c.json({ ok:false, source:"none", cartridges:[], message:"Set up the printer first." }, 400);
+  const force = c.req.query("refresh") === "1";
+  try{
+    if (force) {
+      const { _clearInkCacheForTest } = await import("./ink.ts");
+      _clearInkCacheForTest();
+    }
+    return c.json(await getInkLevels(printerIp));
+  }catch(e:any){
+    return c.json({ ok:false, source:"none", cartridges:[], message:String(e?.message||e) }, 502);
   }
 });
 

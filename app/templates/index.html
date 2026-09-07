@@ -138,6 +138,22 @@
       </section>
       <div id="live-indicator" class="live-indicator" aria-live="polite" aria-atomic="true"><span id="live-dot"></span><span id="live-text">Live</span><span id="live-time" class="live-time"></span></div>
 
+      <section class="panel" id="ink-panel" aria-label="Ink levels">
+        <div class="section-heading"><div><p class="kicker">Supplies</p><h2>Ink levels{% if ink %} · via {{ ink.source|upper }}{% endif %}</h2></div></div>
+        {% if ink and ink.cartridges %}
+        <div class="item-list" id="ink-list">
+          {% for ct in ink.cartridges %}
+          <div class="item-row">
+            <span><strong>{{ ct.name }}</strong><small>{% if ct.level is none %}unknown{% else %}{{ ct.level }}% · {{ ct.state }}{% endif %}</small></span>
+            <span class="download">{% if ct.level is none %}—{% else %}{{ ct.level }}%{% endif %}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-copy">Checking printer supplies… fresh levels appear here automatically (also at <code>/api/ink</code>).</p>
+        {% endif %}
+      </section>
+
       <section class="activity-grid" id="activity-grid" {% if not (jobs or scans) %}hidden{% endif %}>
         <article class="panel compact-panel" id="queue-panel" {% if not jobs %}hidden{% endif %}>
           <div class="section-heading"><div><p class="kicker">In progress</p><h2>Print queue</h2></div></div>

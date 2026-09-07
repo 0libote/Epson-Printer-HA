@@ -89,7 +89,7 @@ If Epson's server is temporarily unavailable, the sidecar retries with capped ex
 
 ## Home Assistant
 
-`GET /api/status` returns JSON containing printer reachability, CUPS state, scanner backend/state, LAN sharing state, the current queue and recent print jobs. `GET /api/history` exposes the longer print-history view.
+`GET /api/status` returns JSON containing printer reachability, CUPS state, scanner backend/state, LAN sharing state, the current queue and recent print jobs. `GET /api/history` exposes the longer print-history view. `GET /api/ink` returns per-cartridge ink levels (also included as `ink` in `/api/status`); levels are read from the printer over SNMP (Printer-MIB), IPP marker attributes, or the printer's web status page, whichever answers first, and cached for two minutes.
 
 The API can be consumed directly by Home Assistant's REST integration. Replace the address and add `authentication`, `username` and `password` if WebUI authentication is enabled:
 
@@ -105,6 +105,10 @@ rest:
       - name: Epson XP-2200 scanner
         unique_id: epson_xp2200_scanner
         value_template: "{{ value_json.scanner.state }}"
+      - name: Epson XP-2200 black ink
+        unique_id: epson_xp2200_ink_black
+        value_template: "{{ (value_json.ink.cartridges | selectattr('key', 'equalto', 'black') | first).level }}"
+        unit_of_measurement: "%"
 ```
 
 This is deliberately a standard REST configuration rather than a custom Home Assistant integration.

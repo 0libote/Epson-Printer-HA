@@ -10,6 +10,7 @@ import { Setup } from "./components/Setup";
 import { PrintCard } from "./components/PrintCard";
 import { ScanCard } from "./components/ScanCard";
 import { StatusStrip, Queue } from "./components/Overview";
+import { InkLevels } from "./components/InkLevels";
 import { Library } from "./components/Library";
 import { History } from "./components/History";
 import { SharingSettings, PrinterAddressSettings } from "./components/Settings";
@@ -99,6 +100,7 @@ function refreshAll(qc: ReturnType<typeof useQueryClient>) {
     qc.invalidateQueries({ queryKey: ["status"] }),
     qc.invalidateQueries({ queryKey: ["history"] }),
     qc.invalidateQueries({ queryKey: ["scans"] }),
+    qc.invalidateQueries({ queryKey: ["ink"] }),
   ]);
 }
 
@@ -116,6 +118,7 @@ export default function App() {
   const scanner = data?.scanner || { ok: false, state: "starting", detail: "", backend: null };
   const queue = data?.queue || [];
   const networkSharing = !!data?.network_sharing;
+  const initialInk = data?.ink ?? null;
   const history = historyQ.data?.history || [];
 
   const host = useMemo(() => {
@@ -247,6 +250,9 @@ export default function App() {
                 <Queue jobs={queue} onChanged={() => refreshAll(qc)} />
               </div>
             ) : null}
+            <div {...stylex.props(s.stack)}>
+              <InkLevels initial={initialInk} />
+            </div>
           </>
         ) : null}
 

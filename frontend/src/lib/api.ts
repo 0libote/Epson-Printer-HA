@@ -13,6 +13,23 @@ export type ScansResponse = { scans: ScanItem[]; total: number; limit: number; m
 export type ScanJobResponse = { ok: boolean; jobId: string; state: string; pollUrl: string; message?: string };
 export type ScanJobStatus = { ok: boolean; job: { id: string; state: string; dpi: number; mode: string; fmt: string; createdAt: number; startedAt?: number; finishedAt?: number; elapsed: number; progress: string; resultName?: string; error?: string } };
 
+export type InkCartridge = {
+  key: "black" | "cyan" | "magenta" | "yellow";
+  name: string;
+  color: string;
+  level: number | null;
+  state: "ok" | "low" | "empty" | "unknown";
+  detail: string;
+};
+
+export type InkStatus = {
+  ok: boolean;
+  source: "snmp" | "ipp" | "http" | "none";
+  updated_at: string;
+  cartridges: InkCartridge[];
+  message: string;
+};
+
 export type StatusResponse = {
   printer_ip: string;
   printer_name: string;
@@ -24,6 +41,7 @@ export type StatusResponse = {
   queue: Array<{ id: string; owner: string; size: string; raw: string }>;
   recent_prints: HistoryItem[];
   scans: string[];
+  ink?: InkStatus | null;
 };
 
 export type HistoryItem = {
@@ -115,6 +133,10 @@ export async function fetchHistory(): Promise<HistoryResponse> {
 }
 export async function fetchHealth(): Promise<{ ok: boolean }> {
   return readJson<{ ok: boolean }>(await fetch("/api/health", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+}
+export async function fetchInk(refresh = false): Promise<InkStatus> {
+  const url = refresh ? "/api/ink?refresh=1" : "/api/ink";
+  return readJson<InkStatus>(await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
 async function parseFormResponse(res: Response): Promise<{ ok: boolean; message?: string; redirect?: string }> {

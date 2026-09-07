@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchStatus, fetchHistory, fetchHealth, fetchScans, type StatusResponse } from "../lib/api";
+import { fetchStatus, fetchHistory, fetchHealth, fetchScans, fetchInk, type StatusResponse } from "../lib/api";
 
 export function useStatus(enabled = true) {
   return useQuery({
@@ -60,5 +60,21 @@ export function useHealth() {
     refetchOnWindowFocus: false,
     staleTime: 30000,
     retry: 1,
+  });
+}
+
+export function useInk(enabled = true) {
+  return useQuery({
+    queryKey: ["ink"],
+    queryFn: () => fetchInk(false),
+    enabled,
+    // ink changes slowly; 5 min poll keeps SNMP/IPP chatter off the LAN
+    refetchInterval: 5 * 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    retry: 1,
+    refetchOnMount: true,
   });
 }

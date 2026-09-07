@@ -24,6 +24,8 @@ from .core import (
     cached_printer_reachable,
     cancel_job,
     clear_status_caches,
+    get_cached_ink_levels,
+    get_ink_levels,
     run_command,
     scan_document,
     scanner_status,
@@ -339,6 +341,7 @@ def index():
         jobs=cached_list_jobs(printer_name) if printer_ip else [],
         print_history=list_print_history(100),
         scans=recent_scans(),
+        ink=get_cached_ink_levels(printer_ip) if printer_ip else None,
         max_upload_mb=MAX_UPLOAD_MB,
     )
 
@@ -530,7 +533,20 @@ def api_status():
         "queue": cached_list_jobs(printer_name) if printer_ip else [],
         "recent_prints": list_print_history(10),
         "scans": scans,
+        "ink": get_cached_ink_levels(printer_ip) if printer_ip else None,
     })
+
+
+@app.get("/api/ink")
+@require_auth
+def api_ink():
+    printer_ip = current_printer_ip()
+    if not printer_ip:
+        return jsonify({"ok": False, "source": "none", "cartridges": [], "message": "Set up the printer first."}), 400
+    try:
+        return jsonify(get_ink_levels(printer_ip))
+    except OSError as exc:
+        return jsonify({"ok": False, "source": "none", "cartridges": [], "message": str(exc)}), 502
 
 
 @app.get("/api/history")
