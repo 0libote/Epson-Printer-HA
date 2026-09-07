@@ -7,18 +7,20 @@ export function useStatus(enabled = true) {
     queryFn: fetchStatus,
     enabled,
     refetchInterval: (query) => {
-      // poll faster when jobs exist or scanner starting
+      // poll faster when jobs exist; idle clients stay quiet (was 2s/3s/5s hammering CUPS)
       const data = query.state.data as StatusResponse | undefined;
       const hasJobs = !!(data && data.queue && data.queue.length > 0);
       const scannerStarting = !!(data && !data.scanner?.ok);
-      if (hasJobs) return 2000;
-      if (scannerStarting) return 3000;
-      return 5000;
+      if (hasJobs) return 4000;
+      if (scannerStarting) return 8000;
+      return 15000;
     },
     refetchIntervalInBackground: false,
-    refetchOnWindowFocus: true,
-    staleTime: 1500,
-    retry: 2,
+    refetchOnWindowFocus: false,
+    staleTime: 5000,
+    gcTime: 5 * 60 * 1000,
+    retry: 1,
+    refetchOnMount: true,
   });
 }
 
@@ -26,8 +28,12 @@ export function useHistory(limit = 100) {
   return useQuery({
     queryKey: ["history", limit],
     queryFn: fetchHistory,
-    refetchInterval: 5000,
-    staleTime: 2000,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: 8000,
+    gcTime: 5 * 60 * 1000,
+    retry: 1,
   });
 }
 
@@ -36,8 +42,12 @@ export function useScans(limit = 100, enabled = true) {
     queryKey: ["scans", limit],
     queryFn: fetchScans,
     enabled,
-    refetchInterval: 5000,
-    staleTime: 2000,
+    refetchInterval: 15000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: 8000,
+    gcTime: 5 * 60 * 1000,
+    retry: 1,
   });
 }
 
@@ -45,6 +55,10 @@ export function useHealth() {
   return useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
-    refetchInterval: 15000,
+    refetchInterval: 60000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    staleTime: 30000,
+    retry: 1,
   });
 }

@@ -73,6 +73,7 @@ export async function fetchCsrf(): Promise<string> {
 }
 
 let cachedCsrf: string | null = null;
+export function clearCachedCsrf() { cachedCsrf = null; }
 export async function ensureCsrf(): Promise<string> {
   if (cachedCsrf) return cachedCsrf;
   // try cookie-readable first
@@ -83,8 +84,26 @@ export async function ensureCsrf(): Promise<string> {
   return t;
 }
 
+function isCsrfError(msg: string) {
+  return msg.toLowerCase().includes("csrf");
+}
+
 async function readJson<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    // never blindly .json() an error page (login HTML / proxy 502) — that threw SyntaxError: Unexpected token <
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const j = await res.json().catch(() => ({} as any));
+      throw new Error((j as any).error || (j as any).message || `${res.status} ${res.statusText}`);
+    }
+    const txt = await res.text().catch(() => "");
+    throw new Error(txt.slice(0, 200).replace(/<[^>]*>/g, "").trim() || `${res.status} ${res.statusText}`);
+  }
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(txt.slice(0, 200).replace(/<[^>]*>/g, "").trim() || "Unexpected response from server");
+  }
   return res.json() as Promise<T>;
 }
 
@@ -152,20 +171,51 @@ export async function cancelPrintJob(jobId: string) {
   return formRequest(fetch(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
 }
 
+async function csrfAwareFetch(input: RequestInfo, init: RequestInit, retryBody?: () => RequestInit): Promise<Response> {
+  let res = await fetch(input, init);
+  if (res.status === 400) {
+    const clone = res.clone();
+    const txt = await clone.text().catch(() => "");
+    if (isCsrfError(txt)) {
+      clearCachedCsrf();
+      const fresh = await ensureCsrf();
+      const retryInit = retryBody ? retryBody() : init;
+      const headers = new Headers(retryInit.headers || (init.headers as any));
+      headers.set("X-CSRF-Token", fresh);
+      // patch _csrf_token in JSON or FormData bodies
+      if (retryInit.body && typeof retryInit.body === "string" && retryInit.body.includes("_csrf_token")) {
+        try {
+          const j = JSON.parse(retryInit.body);
+          j._csrf_token = fresh;
+          retryInit.body = JSON.stringify(j);
+        } catch {}
+      } else if (retryInit.body instanceof FormData && fresh) {
+        retryInit.body.set("_csrf_token", fresh);
+      }
+      retryInit.headers = headers;
+      res = await fetch(input, retryInit);
+    }
+  }
+  return res;
+}
+
 export async function renameScan(oldName: string, newName: string): Promise<{ name: string }> {
   const csrf = await ensureCsrf();
   const safeName = encodeURIComponent(oldName);
-  const res = await fetch(`/api/scans/${safeName}/rename`, {
+  const makeInit = (token: string): RequestInit => ({
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
-    body: JSON.stringify({ name: newName, _csrf_token: csrf }),
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token, Accept: "application/json" },
+    body: JSON.stringify({ name: newName, _csrf_token: token }),
   });
+  const res = await csrfAwareFetch(`/api/scans/${safeName}/rename`, makeInit(csrf), () => makeInit(cachedCsrf || csrf));
   const ct = res.headers.get("content-type") || "";
   const isJson = ct.includes("application/json");
   const data = isJson ? await res.json().catch(() => ({})) : { text: await res.text().catch(() => "") };
   if (!res.ok) throw new Error((data as any).error || (data as any).message || `Request failed ${res.status}`);
-  return data;
+  // server returns { ok, name } — normalise so callers never see `undefined`
+  const name = (data as any).name || (data as any).newName || newName;
+  return { name };
 }
 export async function deleteScan(name: string): Promise<void> {
   const csrf = await ensureCsrf();
@@ -186,13 +236,15 @@ export async function fetchScans(): Promise<ScansResponse> {
 }
 export async function startScanJob(opts: { dpi: string; mode: string; format: string }): Promise<ScanJobResponse> {
   const csrf = await ensureCsrf();
-  const res = await fetch("/api/scan", {
+  const makeInit = (token: string): RequestInit => ({
     method: "POST",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf, Accept: "application/json" },
-    body: JSON.stringify({ dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, _csrf_token: csrf }),
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token, Accept: "application/json" },
+    body: JSON.stringify({ dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, _csrf_token: token }),
   });
-  const data = await res.json().catch(() => ({}));
+  const res = await csrfAwareFetch("/api/scan", makeInit(csrf), () => makeInit(cachedCsrf || csrf));
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : { error: await res.text().catch(() => "") };
   if (!res.ok) throw new Error(data.error || data.message || `Scan failed ${res.status}`);
   return data as ScanJobResponse;
 }

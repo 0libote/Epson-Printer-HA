@@ -113,6 +113,7 @@ export function initHistory(): void {
         db.run("DROP TABLE print_history_legacy");
       }
       db.run("CREATE INDEX IF NOT EXISTS idx_print_history_created ON print_history(created_at DESC)");
+      db.run("CREATE INDEX IF NOT EXISTS idx_print_history_state_completed ON print_history(state, completed_at, created_at)");
       db.run("COMMIT");
     } catch (e) {
       try { db.run("ROLLBACK"); } catch {}
@@ -241,9 +242,18 @@ except Exception as e:
     sys.exit(1)
 `;
   const proc = Bun.spawn(["python3", "-c", pythonScript], { stdout: "pipe", stderr: "pipe" });
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  const stdoutP = new Response(proc.stdout).text();
+  const stderrP = new Response(proc.stderr).text();
+  const exitedP = proc.exited;
+  // 15s hard timeout so a wedged CUPS/python can never stall the 5s poll loop
+  const timeoutP = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => { try { proc.kill(); } catch {} reject(new Error("cups fetch timed out after 15s")); }, 15_000);
+    exitedP.finally(() => clearTimeout(t)).catch(() => {});
+  });
+  const [stdout, stderr, exitCode] = await Promise.race([
+    Promise.all([stdoutP, stderrP, exitedP]).then(([o, e, c]) => [o, e, c] as const),
+    timeoutP,
+  ]) as unknown as [string, string, number];
   if (exitCode !== 0) {
     // stderr may contain error
     if (stderr.includes("__error__") || stderr.trim()) {
@@ -274,9 +284,13 @@ export function __setFetchJobs(fn: typeof _fetchJobs) {
   _fetchJobs = fn;
 }
 
+// Single-flight: overlapping 5s ticks share one sync instead of hammering SQLite
+let _syncInflight: Promise<number> | null = null;
 export async function syncPrintHistory(printerName: string, opts: { includeCompleted?: boolean } = {}): Promise<number> {
   const includeCompleted = opts.includeCompleted ?? true;
   if (!printerName) return 0;
+  if (_syncInflight) return _syncInflight;
+  const task = (async () => {
   // Check if cups available by trying fetch; if python missing, _fetchJobs will return {}
   initHistory();
 
@@ -365,6 +379,13 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
     throw e;
   } finally {
     db.close();
+  }
+  })();
+  _syncInflight = task;
+  try {
+    return await task;
+  } finally {
+    if (_syncInflight === task) _syncInflight = null;
   }
 }
 

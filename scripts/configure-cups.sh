@@ -11,9 +11,10 @@ PREFER_ENV_SETTINGS="${PREFER_ENV_SETTINGS:-false}"
 
 lock_root="${CUPS_LOCK_DIR:-/run/epson}"
 lock_dir="${lock_root}/configure-cups.lock"
-ready_attempts="${CUPS_READY_ATTEMPTS:-30}"
+lock_attempts="${CUPS_LOCK_ATTEMPTS:-10}"
+ready_attempts="${CUPS_READY_ATTEMPTS:-15}"
 lock_acquired=false
-for ((attempt = 0; attempt < ready_attempts; attempt++)); do
+for ((attempt = 0; attempt < lock_attempts; attempt++)); do
   if mkdir "$lock_dir" 2>/dev/null; then
     trap 'rmdir "$lock_dir"' EXIT
     lock_acquired=true
@@ -26,31 +27,23 @@ if [[ "$lock_acquired" != "true" ]]; then
   exit 1
 fi
 
-if [[ -z "$PRINTER_IP" && -f /data/settings.json ]]; then
-  PRINTER_IP="$(python3 - <<'PY'
-import ipaddress, json
-try:
-    with open('/data/settings.json', encoding='utf-8') as fh:
-        value = str(json.load(fh).get('printer_ip', '')).strip()
-    ip = ipaddress.ip_address(value)
-    print(ip if ip.version == 4 and not (ip.is_unspecified or ip.is_multicast or ip.is_loopback) else '')
-except Exception:
-    print('')
-PY
-)"
-fi
-
 case "$PREFER_ENV_SETTINGS" in
   [Tt][Rr][Uu][Ee]) PREFER_ENV_SETTINGS="true" ;;
   *) PREFER_ENV_SETTINGS="false" ;;
 esac
 
-if [[ "$PREFER_ENV_SETTINGS" != "true" && -f /data/settings.json ]]; then
-  readarray -t SAVED_PRINT_SETTINGS < <(python3 - <<'PY'
-import json
+# Single python spawn for all settings (was 2 spawns before) — faster boot
+if [[ -f /data/settings.json ]]; then
+  readarray -t SAVED_SETTINGS < <(python3 - <<'PY'
+import ipaddress, json
 try:
     with open('/data/settings.json', encoding='utf-8') as fh:
         data = json.load(fh)
+    try:
+        ip = ipaddress.ip_address(str(data.get('printer_ip', '')).strip())
+        print(ip if ip.version == 4 and not (ip.is_unspecified or ip.is_multicast or ip.is_loopback) else '')
+    except Exception:
+        print('')
     print(str(data.get('printer_name', '')).strip())
     print(str(data.get('display_name', '')).strip())
     value = data.get('share_printer', '')
@@ -62,11 +55,15 @@ except Exception:
     print('')
     print('')
     print('')
+    print('')
 PY
 )
-  [[ -n "${SAVED_PRINT_SETTINGS[0]:-}" ]] && PRINTER_NAME="${SAVED_PRINT_SETTINGS[0]}"
-  [[ -n "${SAVED_PRINT_SETTINGS[1]:-}" ]] && PRINTER_DISPLAY_NAME="${SAVED_PRINT_SETTINGS[1]}"
-  [[ -n "${SAVED_PRINT_SETTINGS[2]:-}" ]] && SHARE_PRINTER="${SAVED_PRINT_SETTINGS[2]}"
+  [[ -z "$PRINTER_IP" && -n "${SAVED_SETTINGS[0]:-}" ]] && PRINTER_IP="${SAVED_SETTINGS[0]}"
+  if [[ "$PREFER_ENV_SETTINGS" != "true" ]]; then
+    [[ -n "${SAVED_SETTINGS[1]:-}" ]] && PRINTER_NAME="${SAVED_SETTINGS[1]}"
+    [[ -n "${SAVED_SETTINGS[2]:-}" ]] && PRINTER_DISPLAY_NAME="${SAVED_SETTINGS[2]}"
+    [[ -n "${SAVED_SETTINGS[3]:-}" ]] && SHARE_PRINTER="${SAVED_SETTINGS[3]}"
+  fi
 fi
 
 case "$SHARE_PRINTER" in
@@ -103,7 +100,7 @@ tcp_open() {
 import socket, sys
 
 try:
-    with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=2):
+    with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
         pass
 except OSError:
     raise SystemExit(1)

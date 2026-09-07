@@ -110,18 +110,34 @@ function validateDisplayName(value: string): string {
   return value;
 }
 
+// Cache settings in memory (1s TTL + mtime check) — avoids 4x readFileSync+JSON.parse per request
+import { readFileSync as _readFileSync, writeFileSync as _writeFileSync, renameSync as _renameSync, unlinkSync as _unlinkSyncFs, rmSync as _rmSync } from "node:fs";
+let _settingsCache: { mtimeMs: number; at: number; data: Record<string, any> } | null = null;
 function savedSettingsSync(): Record<string, any> {
   try {
-    const txt = require("node:fs").readFileSync(SETTINGS_FILE, "utf-8");
+    const st = statSync(SETTINGS_FILE);
+    const now = Date.now();
+    if (_settingsCache && _settingsCache.mtimeMs === st.mtimeMs && now - _settingsCache.at < 2000) {
+      return _settingsCache.data;
+    }
+    const txt = _readFileSync(SETTINGS_FILE, "utf-8");
     const data = JSON.parse(txt);
-    return typeof data === "object" && data !== null ? data : {};
-  } catch { return {}; }
+    const obj = typeof data === "object" && data !== null ? data : {};
+    _settingsCache = { mtimeMs: st.mtimeMs, at: now, data: obj };
+    return obj;
+  } catch {
+    // file missing: return cached empty briefly to avoid hot stat failures
+    if (_settingsCache && Date.now() - _settingsCache.at < 2000) return _settingsCache.data;
+    return {};
+  }
 }
+function _invalidateSettingsCache() { _settingsCache = null; }
 
 function saveSettingsSync(data: Record<string, any>) {
   const tmp = join(APP_DIR, `.settings.${randomBytes(6).toString("hex")}`);
-  require("node:fs").writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
-  try { require("node:fs").renameSync(tmp, SETTINGS_FILE); } finally { try { require("node:fs").unlinkSync(tmp); } catch {} }
+  _writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+  try { _renameSync(tmp, SETTINGS_FILE); } catch (e) { try { _unlinkSyncFs(tmp); } catch {} throw e; }
+  _invalidateSettingsCache();
 }
 
 const operationLocks = new Map<string, boolean>();
@@ -155,17 +171,15 @@ function secureFilename(name: string): string {
   return name;
 }
 
-async function validateUpload(path: string, suffix: string): Promise<string | null> {
+function validateUploadBuffer(buf: ArrayBuffer, size: number, suffix: string): string | null {
   try {
-    const file = Bun.file(path);
-    if (file.size === 0) return "The selected file is empty.";
-    const bytes = await file.arrayBuffer();
-    const prefix = new Uint8Array(bytes.slice(0, 16));
+    if (size === 0) return "The selected file is empty.";
+    const prefix = new Uint8Array(buf.slice(0, 16));
     if (suffix === ".pdf" && !startsWith(prefix, new TextEncoder().encode("%PDF-"))) return "That file does not appear to be a valid PDF.";
     if (suffix === ".png" && !startsWith(prefix, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "That file does not appear to be a valid PNG image.";
     if ((suffix === ".jpg" || suffix === ".jpeg") && !(prefix[0] === 0xff && prefix[1] === 0xd8 && prefix[2] === 0xff)) return "That file does not appear to be a valid JPEG image.";
     if (suffix === ".txt") {
-      const sample = new Uint8Array(bytes.slice(0, 65536));
+      const sample = new Uint8Array(buf.slice(0, 65536));
       if (sample.includes(0x00)) return "That file does not appear to be plain text.";
       try { new TextDecoder("utf-8", { fatal: true }).decode(sample); } catch { return "The uploaded file could not be read in the expected format."; }
     }
@@ -208,10 +222,14 @@ function pruneScans(): void {
       .filter((f) => !f.startsWith("."))
       .map((f) => {
         const p = join(SCAN_DIR, f);
-        try { return { p, mtime: statSync(p).mtimeMs, isFile: statSync(p).isFile() }; } catch { return null; }
+        try {
+          const st = statSync(p);
+          if (!st.isFile()) return null;
+          return { p, mtime: st.mtimeMs, isFile: true };
+        } catch { return null; }
       })
       .filter(Boolean) as Array<{ p: string; mtime: number; isFile: boolean }>;
-    const sorted = files.filter((f) => f.isFile).sort((a, b) => b.mtime - a.mtime);
+    const sorted = files.sort((a, b) => b.mtime - a.mtime);
     for (const stale of sorted.slice(MAX_SCAN_FILES)) {
       try { unlinkSync(stale.p); } catch {}
       // also clean thumb cache if present
@@ -245,17 +263,28 @@ async function configureCups(printerIp:string, opts:{printerName?:string|null;di
   env.PREFER_ENV_SETTINGS="true";
   try{
     const proc=Bun.spawn(["/usr/local/bin/configure-cups.sh"],{env, stdout:"pipe", stderr:"pipe"});
-    const stdout=await new Response(proc.stdout).text();
-    const stderr=await new Response(proc.stderr).text();
-    const code=await proc.exited;
+    const stdoutP=new Response(proc.stdout).text();
+    const stderrP=new Response(proc.stderr).text();
+    const TIMEOUT_MS=90_000;
+    const timeoutP=new Promise<never>((_,rej)=>{ const t=setTimeout(()=>{ try{proc.kill();}catch{} rej(new Error("configure-cups timed out after 90s")); },TIMEOUT_MS); (proc.exited as Promise<number>).finally(()=>clearTimeout(t)).catch(()=>{}); });
+    const [stdout,stderr,code]=await Promise.race([Promise.all([stdoutP,stderrP,proc.exited]).then(([o,e,c])=>[o,e,c] as const), timeoutP]) as unknown as [string,string,number];
     return [code===0, (stdout+"\n"+stderr).trim()];
-  }catch(exc:any){ return [false,String(exc)]; }
+  }catch(exc:any){ return [false,String(exc?.message ?? exc)]; }
 }
+// recentScans with mtime cache (5s) — /api/status polls this constantly
+let _recentScansCache: { at: number; value: Array<{name:string;path:string}> } | null = null;
 function recentScans(limit=10):Array<{name:string;path:string}>{
+  const now = Date.now();
+  if (_recentScansCache && now - _recentScansCache.at < 5000) return _recentScansCache.value.slice(0, limit);
   try{
-    const files=readdirSync(SCAN_DIR).filter(f=>!f.startsWith(".")).map(f=>join(SCAN_DIR,f)).filter(p=>{try{return statSync(p).isFile();}catch{return false;}});
-    files.sort((a,b)=>statSync(b).mtimeMs - statSync(a).mtimeMs);
-    return files.slice(0,limit).map(p=>({name:basename(p), path:p}));
+    const entries=readdirSync(SCAN_DIR).filter(f=>!f.startsWith(".")).map(f=>{
+      const p=join(SCAN_DIR,f);
+      try{ const st=statSync(p); return st.isFile() ? { p, mtime: st.mtimeMs } : null; }catch{return null;}
+    }).filter(Boolean) as Array<{p:string;mtime:number}>;
+    entries.sort((a,b)=>b.mtime - a.mtime);
+    const out=entries.map(e=>({name:basename(e.p), path:e.p}));
+    _recentScansCache={ at: now, value: out };
+    return out.slice(0,limit);
   }catch{return [];}
 }
 export type ScanMeta = { name:string; path:string; size:number; sizeDisplay:string; mtime:number; mtimeMs:number; mtimeRel:string; mtimeIso:string; ext:string; dpiHint?:string };
@@ -420,13 +449,24 @@ function isCsrfValid(c:any, body:any):boolean{
   const expected=getCookie(c,"csrf_token")||"";
   return !!expected && token===expected;
 }
+// Cache SPA shell by mtime — avoids re-reading index.html on every GET /
+let _spaCache: { path: string; mtimeMs: number; html: string } | null = null;
 async function tryServeSpa(c:any):Promise<Response|null>{
   const candidates=[join(process.cwd(),"public","index.html"), join(process.cwd(),"dist","index.html")];
   for(const cand of candidates){
     try{
       const f=Bun.file(cand);
       if(await f.exists()){
-        let html=await f.text();
+        let html: string;
+        try {
+          const st = statSync(cand);
+          if (_spaCache && _spaCache.path === cand && _spaCache.mtimeMs === st.mtimeMs) {
+            html = _spaCache.html;
+          } else {
+            html = await f.text();
+            _spaCache = { path: cand, mtimeMs: st.mtimeMs, html };
+          }
+        } catch { html = await f.text(); }
         let csrf: string;
         try{ csrf=(c as any).get("csrf_token_tmp") || getCookie(c,"csrf_token") || getCsrfToken(c); }catch{ csrf=getCsrfToken(c); }
         // inject csrf for legacy tests if missing
@@ -476,7 +516,14 @@ function authFailureState(c:any, recordFailure=false):boolean{
   const cutoff=now - AUTH_FAILURE_WINDOW_SECONDS;
   let recent=( _authFailures.get(ip)||[] ).filter(t=>t>=cutoff);
   if(recordFailure) recent.push(now);
-  if(recent.length) _authFailures.set(ip,recent); else _authFailures.delete(ip);
+  if(recent.length) {
+    _authFailures.set(ip,recent);
+    // bound map: evict oldest entry when too many distinct IPs (prevents leak)
+    if (_authFailures.size > 500) {
+      const oldest = _authFailures.keys().next().value;
+      if (oldest !== undefined && oldest !== ip) _authFailures.delete(oldest);
+    }
+  } else _authFailures.delete(ip);
   return recent.length>=AUTH_FAILURE_LIMIT;
 }
 export const app=new Hono();
@@ -872,19 +919,20 @@ app.post("/print", async(c)=>{
   const target=join(workDir,name);
   let printOk=false; let printMsg="";
   try{
+    // single buffered read: validate magic bytes before touching disk (halves memory/disk IO)
     const buf=await file.arrayBuffer();
-    await Bun.write(target, buf);
-    const err=await validateUpload(target, suffix);
+    const err=validateUploadBuffer(buf, file.size, suffix);
     if(err){
       if(wantsJson(c)) { printOk=false; printMsg=err; }
       else { setFlash(c,"error",err); return c.redirect("/",302); }
     } else {
+      await Bun.write(target, buf);
       const result=await submitPrint(currentPrinterName(), target, {copies, grayscale, title:name});
       clearStatusCaches();
       printOk=result.ok; printMsg=result.ok?"File added to the print queue.":(result.stderr||"Print failed.");
       if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
     }
-  } finally { try{ await Bun.$`rm -rf ${workDir}`.quiet(); }catch{} }
+  } finally { try{ _rmSync(workDir, { recursive: true, force: true }); }catch{} }
   if(wantsJson(c)){
     if(printMsg && printMsg.includes("does not appear")) return c.json({ ok:false, error: printMsg }, 400);
     return c.json({ ok: printOk, message: printMsg, error: printOk?undefined:printMsg }, printOk?200:500);
@@ -1222,34 +1270,49 @@ app.get("/api/scan/jobs", async(c)=>{
   return c.json({ jobs: jobs.map(j=>({ id:j.id, state:j.state, dpi:j.dpi, mode:j.mode, fmt:j.fmt, createdAt:j.createdAt, startedAt:j.startedAt, finishedAt:j.finishedAt, progress:j.progress, resultName:j.resultName, error:j.error })) });
 });
 
+// In-flight dedup for /api/status: concurrent dashboard polls share one backend fan-out
+let _statusInflight: Promise<any> | null = null;
+let _statusInflightKey = "";
 app.get("/api/status", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   const printerIp=currentPrinterIp();
   const printerName=currentPrinterName();
-  let scans:string[]=[];
-  try{scans=recentScans(10).map(s=>s.name);}catch{scans=[];}
-  const [reachable, printer, scanner, queue] = printerIp
-    ? await Promise.all([
-        cachedPrinterReachable(printerIp),
-        cachedCupsPrinterStatus(printerName),
-        scannerStatus(printerIp),
-        cachedListJobs(printerName),
-      ])
-    : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
-  const data:any={
-    printer_ip:printerIp,
-    printer_name:printerName,
-    display_name:currentDisplayName(),
-    network_sharing:networkSharingEnabledSync(),
-    reachable,
-    printer,
-    scanner,
-    queue,
-    recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
-    scans,
-  };
-  return c.json(data);
+  const key = `${printerIp}:${printerName}`;
+  if (_statusInflight && _statusInflightKey === key) {
+    try { return c.json(await _statusInflight); } catch {}
+  }
+  const p = (async () => {
+    let scans:string[]=[];
+    try{scans=recentScans(10).map(s=>s.name);}catch{scans=[];}
+    const [reachable, printer, scanner, queue] = printerIp
+      ? await Promise.all([
+          cachedPrinterReachable(printerIp),
+          cachedCupsPrinterStatus(printerName),
+          scannerStatus(printerIp),
+          cachedListJobs(printerName),
+        ])
+      : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
+    return {
+      printer_ip:printerIp,
+      printer_name:printerName,
+      display_name:currentDisplayName(),
+      network_sharing:networkSharingEnabledSync(),
+      reachable,
+      printer,
+      scanner,
+      queue,
+      recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
+      scans,
+    };
+  })();
+  _statusInflight = p; _statusInflightKey = key;
+  try {
+    const data = await p;
+    return c.json(data);
+  } finally {
+    if (_statusInflight === p) { _statusInflight = null; _statusInflightKey = ""; }
+  }
 });
 
 app.get("/api/history", async(c)=>{
@@ -1263,8 +1326,17 @@ app.get("/api/history", async(c)=>{
   return c.json({history});
 });
 
+// Cache health probe 10s — Docker HEALTHCHECK + frontend both hit this
+let _healthCache: { at: number; p: Promise<any> } | null = null;
 app.get("/api/health", async(c)=>{
-  const result=await runCommand(["lpstat","-r"],3000);
+  const now = Date.now();
+  if (!_healthCache || now - _healthCache.at > 10_000) {
+    _healthCache = {
+      at: now,
+      p: runCommand(["lpstat","-r"],3000).catch(() => ({ ok: false, stdout: "", stderr: "lpstat failed" }) as any),
+    };
+  }
+  const result:any=await _healthCache.p;
   return c.json({ok:result.ok, service:"epson-printer-ha", cups:result.stdout||result.stderr}, result.ok?200:503);
 });
 
@@ -1285,10 +1357,9 @@ app.get("/assets/*", async(c)=>{
       if(await f.exists()){
         const ext=p.slice(p.lastIndexOf(".")).toLowerCase();
         const contentType=mimeMap[ext] || (f as any).type || "application/octet-stream";
-        const buf=await f.arrayBuffer();
-        // immutable for hashed assets
+        // stream file directly instead of buffering whole asset in memory
         const isHashed=/-[A-Za-z0-9]{6,}\.(js|css)$/.test(p);
-        return new Response(buf,{headers:{"Content-Type":contentType, "Cache-Control": isHashed ? "public, max-age=31536000, immutable" : "public, max-age=300"}});
+        return new Response(f.stream(),{headers:{"Content-Type":contentType, "Cache-Control": isHashed ? "public, max-age=31536000, immutable" : "public, max-age=300"}});
       }
     }
   }
@@ -1308,8 +1379,7 @@ app.get("/static/*", async(c)=>{
     if(await f.exists()){
       const ext=safe.slice(safe.lastIndexOf(".")).toLowerCase();
       const contentType=mimeMap[ext] || (f as any).type || "application/octet-stream";
-      const buf=await f.arrayBuffer();
-      return new Response(buf,{headers:{"Content-Type":contentType, "Cache-Control":"public, max-age=300"}});
+      return new Response(f.stream(),{headers:{"Content-Type":contentType, "Cache-Control":"public, max-age=300"}});
     }
   }
   return c.text("Not found",404);

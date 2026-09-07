@@ -775,25 +775,77 @@ function useCopy() {
   const { push } = useToast();
   return async (text: string, label = "Copied") => {
     try {
-      await navigator.clipboard.writeText(text);
-      push({ kind: "success", title: label, desc: text.slice(0, 80) });
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        push({ kind: "success", title: label, desc: text.slice(0, 80) });
+        return;
+      }
+      throw new Error("no clipboard");
     } catch {
-      const ta = document.createElement("textarea");
-      ta.value = text; document.body.appendChild(ta); ta.select();
-      document.execCommand("copy"); ta.remove();
-      push({ kind: "success", title: label });
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.remove();
+        if (!ok) throw new Error("copy failed");
+        push({ kind: "success", title: label });
+      } catch {
+        push({ kind: "error", title: "Copy failed", desc: "Select and copy the address manually." });
+      }
     }
   };
 }
 
-function HealthBadge({ reachable, printerIp }: { reachable: boolean; printerIp: string }) {
+function safeStateLabel(state: unknown, fallback = "unknown"): string {
+  if (typeof state !== "string" || !state) return fallback;
+  return state.replace("_", " ");
+}
+
+const HealthBadge = ({ reachable, printerIp }: { reachable: boolean; printerIp: string }) => {
   if (!printerIp) return <span {...stylex.props(s.health, s.healthSetup)}><span {...stylex.props(s.healthDot, s.dotWarn)} />SETUP NEEDED</span>;
   if (reachable) return <span {...stylex.props(s.health, s.healthOnline)}><span {...stylex.props(s.healthDot, s.dotOnline)} />● ONLINE</span>;
   return <span {...stylex.props(s.health, s.healthOffline)}><span {...stylex.props(s.healthDot, s.dotOffline)} />NEEDS ATTENTION</span>;
-}
+};
 
-function Dot({ ok, warn }: { ok?: boolean; warn?: boolean }) {
-  return <span {...stylex.props(s.chipDot, ok ? undefined : warn ? undefined : undefined)} style={{ width: 9, height: 9, borderRadius: 999, background: ok ? "#00C950" : warn ? "#FF9F1C" : "#111", border: "2px solid #111" }} aria-hidden="true" />;
+const Dot = ({ ok, warn }: { ok?: boolean; warn?: boolean }) => {
+  return <span {...stylex.props(s.chipDot)} style={{ width: 9, height: 9, borderRadius: 999, background: ok ? "#00C950" : warn ? "#FF9F1C" : "#111", border: "2px solid #111" }} aria-hidden="true" />;
+};
+
+function PreviewModal({ scan, relTime, onClose }: { scan: ScanItem; relTime: (ms: number) => string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+  return (
+    <div role="dialog" aria-modal="true" aria-label={scan.name} style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16 }} onClick={onClose}>
+      <div {...stylex.props(s.card)} style={{ width: "min(900px, 96vw)", maxHeight: "90vh", overflow: "auto", background: "white", padding: 16 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+          <strong style={{ fontFamily: vars.fontDisplay, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis" }}>{scan.name}</strong>
+          <span style={{ display: "flex", gap: 8 }}>
+            <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(s.buttonQuiet)} style={{ textDecoration: "none" }}>DOWNLOAD ↗</a>
+            <button {...stylex.props(s.buttonQuiet)} onClick={onClose} autoFocus><X size={14} /> CLOSE</button>
+          </span>
+        </div>
+        <div style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6, marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}><span>{scan.sizeDisplay}</span><span>·</span><span>{scan.mtimeIso}</span><span>·</span><span>{relTime(scan.mtimeMs)}</span></div>
+        {scan.ext === ".pdf" ? (
+          <iframe src={`/scans/${encodeURIComponent(scan.name)}?preview=1`} style={{ width: "100%", height: "60vh", border: "3px solid #111", borderRadius: 12 }} title="PDF preview" loading="lazy" />
+        ) : (
+          <img src={`/scans/${encodeURIComponent(scan.name)}?preview=1`} alt={scan.name} style={{ width: "100%", height: "auto", maxHeight: "70vh", objectFit: "contain", border: "3px solid #111", borderRadius: 12, background: "#FFF8E7" }} loading="lazy" />
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -827,7 +879,9 @@ export default function App() {
 
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [copies, setCopies] = useState(1);
+  const dragDepth = useRef(0);
+  const [copiesText, setCopiesText] = useState("1");
+  const copies = Math.min(99, Math.max(1, Number.parseInt(copiesText, 10) || 1));
   const [grayscale, setGrayscale] = useState(false);
   const [printBusy, setPrintBusy] = useState(false);
   const [printStage, setPrintStage] = useState(0);
@@ -925,7 +979,6 @@ export default function App() {
     if (parts.length !== 4 || parts.some(p => !/^\d+$/.test(p) || Number(p) < 0 || Number(p) > 255)) { push({ kind: "error", title: "Use the printer's normal IPv4 address" }); return; }
     setSetupBusy(true); setSetupStage(0);
     try {
-      await ensureCsrf();
       const fd = new FormData(); fd.set("printer_ip", ip);
       const csrf = await ensureCsrf(); fd.set("_csrf_token", csrf);
       const res = await fetch("/setup", { method: "POST", body: fd, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } });
@@ -943,7 +996,7 @@ export default function App() {
     if (![".pdf", ".png", ".jpg", ".jpeg", ".txt"].includes(ext)) { setPrintError("Supported files: PDF, PNG, JPG and TXT."); return; }
     if (file.size === 0) { setPrintError("The selected file is empty."); return; }
     if (file.size > MAX_MB * 1024 * 1024) { setPrintError(`That file is too large. The limit is ${MAX_MB} MB.`); return; }
-    if (copies < 1 || copies > 99) { setPrintError("Copies must be between 1 and 99."); return; }
+    if (!/^\d+$/.test(copiesText.trim()) || copies < 1 || copies > 99) { setPrintError("Copies must be a whole number between 1 and 99."); return; }
     setPrintBusy(true); setPrintStage(0);
     try {
       const fd = new FormData(); fd.set("file", file); fd.set("copies", String(copies)); if (grayscale) fd.set("grayscale", "on");
@@ -954,22 +1007,38 @@ export default function App() {
     } catch (err: any) { const msg = String(err.message || err); setPrintError(msg.slice(0, 260)); push({ kind: "error", title: "Print failed", desc: msg.slice(0, 200) }); } finally { setPrintBusy(false); }
   };
 
+  const scanCancelRef = useRef(false);
+  const scanPollTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  useEffect(() => () => {
+    scanCancelRef.current = true;
+    for (const t of scanPollTimers.current) clearTimeout(t);
+    scanPollTimers.current = [];
+  }, []);
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!["150", "200", "300", "600"].includes(scanDpi)) { push({ kind: "error", title: "DPI must be 150, 200, 300 or 600." }); return; }
+    scanCancelRef.current = false;
     setScanBusy(true); setScanStage(0); setScanJob(null); setScanElapsed(0); setScanStartedAt(Date.now());
     try {
       // Use new async job API for real-time progress
       const { jobId } = await startScanJob({ dpi: scanDpi, mode: scanMode, format: scanFmt });
       setScanJobId(jobId);
-      // poll every 1.2s until done
+      // poll every 1.5s until done, max ~7.5 min, abortable on unmount/cancel
       let done = false;
       let polls = 0;
-      while (!done) {
-        await new Promise(r => setTimeout(r, 1200));
+      let consecutiveErrors = 0;
+      const MAX_POLLS = 300;
+      while (!done && !scanCancelRef.current) {
+        await new Promise(r => { const t = setTimeout(r, 1500); scanPollTimers.current.push(t); });
+        if (scanCancelRef.current) break;
         polls++;
+        if (polls > MAX_POLLS) {
+          push({ kind: "error", title: "Scan timed out", desc: "Still not done after ~7 minutes. Check the printer, then try again." });
+          break;
+        }
         try {
           const job = await pollScanJob(jobId);
+          consecutiveErrors = 0;
           setScanJob({ state: job.state, progress: job.progress, elapsed: job.elapsed, resultName: job.resultName, error: job.error });
           // update stage text from progress
           if (job.progress.toLowerCase().includes("contact")) setScanStage(0);
@@ -979,16 +1048,18 @@ export default function App() {
             done = true;
             push({ kind: "success", title: "Scan complete", desc: `${job.resultName || "Scan"} · ${scanFmt.toUpperCase()} · ${scanDpi} dpi · ${job.elapsed}s` });
             await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
-            await scansQ.refetch();
           } else if (job.state === "error" || job.state === "cancelled") {
             done = true;
+            if (scanCancelRef.current) break;
             const msg = job.error || "Scan failed";
             if (msg.toLowerCase().includes("already in progress")) push({ kind: "error", title: "Scan already in progress", desc: "Wait for it to finish before starting another." });
+            else if (msg.toLowerCase().includes("cancel")) push({ kind: "info", title: "Scan cancelled" });
             else push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 240) });
           }
         } catch (pollErr: any) {
-          // transient poll failure - continue
-          if (polls > 5) throw pollErr;
+          // transient poll failure - continue, but give up after 6 in a row
+          consecutiveErrors++;
+          if (consecutiveErrors > 6) throw pollErr;
         }
       }
     } catch (err: any) {
@@ -1000,7 +1071,6 @@ export default function App() {
           await postScan(fd);
           push({ kind: "success", title: "Scan complete", desc: `Saved as ${scanFmt.toUpperCase()} · ${scanDpi} dpi` });
           await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
-          await scansQ.refetch();
         } catch (error_: any) {
           const m2 = String(error_.message || error_);
           if (m2.toLowerCase().includes("already in progress")) push({ kind: "error", title: "Scan already in progress", desc: "Wait for it to finish before starting another." });
@@ -1015,6 +1085,7 @@ export default function App() {
 
   const handleCancelScan = async () => {
     if (!scanJobId) return;
+    scanCancelRef.current = true;
     try {
       await cancelScanJob(scanJobId);
       setScanJob(prev => prev ? { ...prev, state: "cancelled", progress: "Cancelling" } : prev);
@@ -1030,7 +1101,6 @@ export default function App() {
       push({ kind: "success", title: "Deleted", desc: name });
       setSelectedScans(prev => { const n = new Set(prev); n.delete(name); return n; });
       await qc.invalidateQueries({ queryKey: ["scans"] }); await qc.invalidateQueries({ queryKey: ["status"] });
-      await scansQ.refetch();
     } catch (err: any) { push({ kind: "error", title: "Could not delete", desc: String(err.message || err).slice(0, 220) }); }
   };
   const handleRenameScan = async (oldName: string) => {
@@ -1039,9 +1109,9 @@ export default function App() {
     if (!v) return;
     try {
       const res = await renameScan(oldName, v);
-      push({ kind: "success", title: "Renamed", desc: `${oldName} → ${res.name}` });
+      push({ kind: "success", title: "Renamed", desc: `${oldName} → ${res.name || v}` });
       setRenamingScan(null); setRenameValue("");
-      await qc.invalidateQueries({ queryKey: ["scans"] }); await scansQ.refetch();
+      await qc.invalidateQueries({ queryKey: ["scans"] });
     } catch (err: any) { push({ kind: "error", title: "Rename failed", desc: String(err.message || err).slice(0, 220) }); }
   };
   const toggleSelectScan = (name: string) => {
@@ -1061,7 +1131,7 @@ export default function App() {
     }
     push({ kind: fail ? "error" : "success", title: fail ? `Deleted ${ok}, ${fail} failed` : `Deleted ${ok} scans` });
     setSelectedScans(new Set());
-    await qc.invalidateQueries({ queryKey: ["scans"] }); await scansQ.refetch();
+    await qc.invalidateQueries({ queryKey: ["scans"] });
   };
 
   const handleNetworkSave = async (e: React.FormEvent) => {
@@ -1175,7 +1245,7 @@ export default function App() {
             <p {...stylex.props(s.sub)}>Print a file or scan a doc — no drivers on this device. Everything stays on your LAN. <span style={{ background: vars.lime, padding: "2px 6px", border: "2px solid #111", borderRadius: 6, fontWeight: 700, fontFamily: vars.fontMono, fontSize: 11 }}>FAST • PRIVATE • NO CLOUD</span></p>
           </div>
           <div {...stylex.props(s.chips)}>
-            <span {...stylex.props(s.chip)} style={{ background: printer.ok ? vars.lime : vars.pink, color: printer.ok ? vars.text : "white" }}><Dot ok={!!printer.ok} /> PRINTER — {printer.state.replace("_", " ").toUpperCase()}</span>
+            <span {...stylex.props(s.chip)} style={{ background: printer.ok ? vars.lime : vars.pink, color: printer.ok ? vars.text : "white" }}><Dot ok={!!printer.ok} /> PRINTER — {safeStateLabel(printer.state).toUpperCase()}</span>
             <span {...stylex.props(s.chip)} style={{ background: scanner.ok ? vars.teal : vars.yellow, color: scanner.ok ? "white" : vars.text }}><Dot ok={!!scanner.ok} warn={!scanner.ok} /> SCANNER — {scanner.ok ? "READY" : " NAPTIME"}</span>
           </div>
         </header>
@@ -1188,7 +1258,7 @@ export default function App() {
               <span {...stylex.props(s.sticker)}><Sticker size={12} /> POP!</span>
             </div>
             <form onSubmit={handlePrint}>
-              <label {...stylex.props(s.filePicker, dragOver ? s.filePickerActive : undefined)} onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) onFile(f); }} htmlFor="print-file">
+              <label {...stylex.props(s.filePicker, dragOver ? s.filePickerActive : undefined)} onDragEnter={e => { e.preventDefault(); dragDepth.current++; setDragOver(true); }} onDragOver={e => { e.preventDefault(); }} onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); }} onDrop={e => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); const f = e.dataTransfer.files[0]; if (f) onFile(f); }} htmlFor="print-file">
                 <input ref={fileRef} id="print-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt" required={!file} {...stylex.props(s.filePickerInput)} onChange={e => onFile(e.target.files?.[0] || null)} />
                 <span {...stylex.props(s.fileGlyph)}><Upload size={18} strokeWidth={2.5} /></span>
                 <span><strong {...stylex.props(s.fileStrong)}>{file ? "✦ " + file.name : "CHOOSE A FILE"}</strong><small {...stylex.props(s.fileSmall)}>PDF • PNG • JPG • TXT • up to 128 MB • or drop it like it’s hot</small></span>
@@ -1196,7 +1266,7 @@ export default function App() {
               {file ? <div {...stylex.props(s.selectedFile)}><span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0 }}><FileText size={14} strokeWidth={2.5} /><span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{file.name}</span><span style={{ opacity: .6 }}>· {(file.size / 1024).toFixed(0)} KB</span></span><button type="button" {...stylex.props(s.buttonQuiet)} style={{ padding: "6px 8px" }} onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}><X size={14} /></button></div> : null}
               {printError ? <div {...stylex.props(s.error)}><X size={14} /> {printError}</div> : null}
               <div {...stylex.props(s.optionsRow)}>
-                <label {...stylex.props(s.fieldLabel)} htmlFor="copies">COPIES <input id="copies" {...stylex.props(s.input, s.inputCompact)} type="number" min={1} max={99} value={copies} onChange={e => setCopies(Math.min(99, Math.max(1, Number(e.target.value) || 1)))} /></label>
+                <label {...stylex.props(s.fieldLabel)} htmlFor="copies">COPIES <input id="copies" {...stylex.props(s.input, s.inputCompact)} type="number" min={1} max={99} value={copiesText} onChange={e => setCopiesText(e.target.value)} onBlur={() => setCopiesText(String(copies))} /></label>
                 <label {...stylex.props(s.check)} htmlFor="grayscale"><input id="grayscale" type="checkbox" checked={grayscale} onChange={e => setGrayscale(e.target.checked)} style={{ width: 18, height: 18, accentColor: vars.text as string }} /> B&W ONLY</label>
               </div>
               <button type="submit" disabled={printBusy} {...stylex.props(s.buttonPrimary, s.buttonBlue)} style={{ marginTop: 16, backgroundColor: vars.blue, color: "white" }}>
@@ -1245,7 +1315,7 @@ export default function App() {
         </section>
 
         <section {...stylex.props(s.statusStrip)}>
-          <div {...stylex.props(s.deviceCell)}><Dot ok={!!printer.ok} /><span><small {...stylex.props(s.deviceLabelSmall)}>PRINTER</small><strong {...stylex.props(s.deviceLabelStrong)}>{printer.state.replace("_", " ").toUpperCase()}</strong></span><span {...stylex.props(s.deviceDetail)}>{displayName} • {printerIp}</span></div>
+          <div {...stylex.props(s.deviceCell)}><Dot ok={!!printer.ok} /><span><small {...stylex.props(s.deviceLabelSmall)}>PRINTER</small><strong {...stylex.props(s.deviceLabelStrong)}>{safeStateLabel(printer.state).toUpperCase()}</strong></span><span {...stylex.props(s.deviceDetail)}>{displayName} • {printerIp}</span></div>
           <div {...stylex.props(s.deviceCell)}><Dot ok={!!scanner.ok} warn={!scanner.ok} /><span><small {...stylex.props(s.deviceLabelSmall)}>SCANNER</small><strong {...stylex.props(s.deviceLabelStrong)}>{scanner.ok ? "READY" : "STARTING"}</strong></span><span {...stylex.props(s.deviceDetail)}>{scanner.ok ? (scanner.backend || "Ready") : "Warming up…"}</span></div>
           <div {...stylex.props(s.deviceCell)} style={{ borderRightWidth: 0, borderBottomWidth: 0 }}><Dot ok={queue.length === 0} warn={queue.length > 0} /><span><small {...stylex.props(s.deviceLabelSmall)}>QUEUE</small><strong {...stylex.props(s.deviceLabelStrong)}>{queue.length} {queue.length === 1 ? "JOB" : "JOBS"}</strong></span><span {...stylex.props(s.deviceDetail)}>{queue.length ? "BRRR… printing" : "Chillin’"}</span></div>
         </section>
@@ -1280,7 +1350,7 @@ export default function App() {
                     <input type="checkbox" checked={selectedScans.has(scan.name)} onChange={() => toggleSelectScan(scan.name)} style={{ width: 18, height: 18, accentColor: vars.text as string }} />
                     {/* thumb */}
                     <a href={`/scans/${encodeURIComponent(scan.name)}?preview=1`} target="_blank" rel="noopener" style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", border: "2.5px solid #111", flexShrink: 0, background: "white", display: "grid", placeItems: "center", textDecoration: "none" }} title="Open preview">
-                      {scan.ext === ".pdf" ? <span style={{ fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, background: vars.bad, color: "white", padding: "2px 6px", borderRadius: 4 }}>PDF</span> : <img src={`/api/scans/${encodeURIComponent(scan.name)}/thumb`} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                      {scan.ext === ".pdf" ? <span style={{ fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, background: vars.bad, color: "white", padding: "2px 6px", borderRadius: 4 }}>PDF</span> : <img src={`/api/scans/${encodeURIComponent(scan.name)}/thumb`} alt="" width={56} height={56} style={{ width: "100%", height: "100%", objectFit: "cover" }} loading="lazy" onError={e => { const img = e.target as HTMLImageElement; img.onerror = null; img.style.objectFit = "contain"; img.style.padding = "12px"; img.src = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#111' stroke-width='2'><rect x='3' y='3' width='18' height='18' rx='2'/><circle cx='8.5' cy='8.5' r='1.5'/><path d='M21 15l-5-5L5 21'/></svg>`); }} />}
                     </a>
                     {renamingScan === scan.name ? (
                       <span style={{ minWidth: 0, flex: 1, display: "flex", gap: 6, alignItems: "center" }}>
@@ -1308,28 +1378,12 @@ export default function App() {
             )}
             {/* preview modal */}
             {previewScan ? (
-              <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.6)", display: "grid", placeItems: "center", padding: 16 }}>
-                <div {...stylex.props(s.card)} style={{ width: "min(900px, 96vw)", maxHeight: "90vh", overflow: "auto", background: "white", padding: 16 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
-                    <strong style={{ fontFamily: vars.fontDisplay, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis" }}>{previewScan.name}</strong>
-                    <span style={{ display: "flex", gap: 8 }}>
-                      <a href={`/scans/${encodeURIComponent(previewScan.name)}`} {...stylex.props(s.buttonQuiet)} style={{ textDecoration: "none" }}>DOWNLOAD ↗</a>
-                      <button {...stylex.props(s.buttonQuiet)} onClick={() => setPreviewScan(null)}><X size={14} /> CLOSE</button>
-                    </span>
-                  </div>
-                  <div style={{ fontFamily: vars.fontMono, fontSize: 11, opacity: .6, marginBottom: 12, display: "flex", gap: 8, flexWrap: "wrap" }}><span>{previewScan.sizeDisplay}</span><span>·</span><span>{previewScan.mtimeIso}</span><span>·</span><span>{relTime(previewScan.mtimeMs)}</span></div>
-                  {previewScan.ext === ".pdf" ? (
-                    <iframe src={`/scans/${encodeURIComponent(previewScan.name)}?preview=1`} style={{ width: "100%", height: "60vh", border: "3px solid #111", borderRadius: 12 }} title="PDF preview" />
-                  ) : (
-                    <img src={`/scans/${encodeURIComponent(previewScan.name)}?preview=1`} alt={previewScan.name} style={{ width: "100%", height: "auto", maxHeight: "70vh", objectFit: "contain", border: "3px solid #111", borderRadius: 12, background: "#FFF8E7" }} />
-                  )}
-                </div>
-              </div>
+              <PreviewModal scan={previewScan} relTime={relTime} onClose={() => setPreviewScan(null)} />
             ) : null}
           </article>
         </section>
 
-        <details {...stylex.props(s.fold)} open={networkSharing}>
+        <details {...stylex.props(s.fold)} key={`net-${networkSharing ? "on" : "off"}`} open={networkSharing}>
           <summary {...stylex.props(s.foldSummary)}><span><strong {...stylex.props(s.foldTitle)}>CONNECT PHONES + COMPUTERS ✦</strong><small {...stylex.props(s.foldSub)}>Share this printer around the house</small></span><span {...stylex.props(s.foldBadge, networkSharing ? s.foldBadgeOn : s.foldBadgeOff)}>{networkSharing ? <><Wifi size={12} /> SHARING ON</> : <><WifiOff size={12} /> OFF</>}</span><ChevronDown size={18} strokeWidth={2.5} /></summary>
           <div {...stylex.props(s.foldContent)}>
             <div {...stylex.props(s.networkGrid)}>
@@ -1358,7 +1412,7 @@ export default function App() {
               <div style={{ position: "relative", flex: 1 }}><Search size={14} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} /><input {...stylex.props(s.input)} placeholder="SEARCH DOCS, USERS, STATUS…" value={historyFilter} onChange={e => setHistoryFilter(e.target.value)} style={{ marginTop: 0, paddingLeft: 36, minHeight: 40, fontFamily: vars.fontMono, textTransform: "uppercase", fontSize: 11 }} /></div>
               {history.length > 30 ? <button {...stylex.props(s.buttonQuiet)} onClick={() => setShowAllHistory(v => !v)}>{showAllHistory ? "SHOW LESS" : `SHOW ALL (${filteredHistory.length})`}</button> : null}
             </div>
-            {visibleHistory.length ? <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: vars.text, color: "white", fontFamily: vars.fontMono, fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase" }}><th style={{ padding: "10px 14px", textAlign: "left" }}>Document</th><th style={{ padding: "10px 14px", textAlign: "left" }}>When</th><th style={{ padding: "10px 14px", textAlign: "left" }}>From</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Status</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Size</th></tr></thead><tbody>{visibleHistory.map(j => <tr key={`${j.job_id}-${j.created_at}`} style={{ borderBottom: "2px solid #111", background: "white" }}><td style={{ padding: "12px 14px" }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block" }}>{j.document}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 10, opacity: .6 }}>#{j.job_id}</small></td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, whiteSpace: "nowrap" }}>{j.created_display}</td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>{j.origin_host || j.user_name || j.source}</td><td style={{ padding: "12px 14px" }}><span style={{ display: "inline-block", padding: "4px 8px", borderRadius: 999, fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, border: "2px solid #111", background: j.state === "completed" ? vars.lime : j.state === "pending" || j.state === "printing" ? vars.yellow : j.state === "cancelled" || j.state === "aborted" ? vars.pink : j.state === "held" ? vars.warnSoft : "white", color: vars.text }}>{j.state.replace("_", " ").toUpperCase()}</span></td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, whiteSpace: "nowrap" }}>{j.size_display}</td></tr>)}</tbody></table></div> : <p style={{ margin: 0, padding: "20px 16px", fontFamily: vars.fontMono, fontSize: 12, opacity: .6, textAlign: "center" }}>{historyFilter ? `NO JOBS MATCH “${historyFilter.toUpperCase()}”.` : "NO PRINT HISTORY YET — JOBS FROM PHONES + LAPTOPS WILL POP HERE ✦"}</p>}
+            {visibleHistory.length ? <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}><thead><tr style={{ background: vars.text, color: "white", fontFamily: vars.fontMono, fontSize: 9, letterSpacing: ".08em", textTransform: "uppercase" }}><th style={{ padding: "10px 14px", textAlign: "left" }}>Document</th><th style={{ padding: "10px 14px", textAlign: "left" }}>When</th><th style={{ padding: "10px 14px", textAlign: "left" }}>From</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Status</th><th style={{ padding: "10px 14px", textAlign: "left" }}>Size</th></tr></thead><tbody>{visibleHistory.map(j => <tr key={`${(j as any).history_key || `${j.job_id}-${j.created_at}-${j.document}`}`} style={{ borderBottom: "2px solid #111", background: "white" }}><td style={{ padding: "12px 14px" }}><strong style={{ fontFamily: vars.fontDisplay, fontSize: 13, display: "block" }}>{j.document}</strong><small style={{ fontFamily: vars.fontMono, fontSize: 10, opacity: .6 }}>#{j.job_id}</small></td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, whiteSpace: "nowrap" }}>{j.created_display}</td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis" }}>{j.origin_host || j.user_name || j.source}</td><td style={{ padding: "12px 14px" }}><span style={{ display: "inline-block", padding: "4px 8px", borderRadius: 999, fontFamily: vars.fontMono, fontSize: 10, fontWeight: 700, border: "2px solid #111", background: j.state === "completed" ? vars.lime : j.state === "pending" || j.state === "printing" ? vars.yellow : j.state === "cancelled" || j.state === "aborted" ? vars.pink : j.state === "held" ? vars.warnSoft : "white", color: vars.text }}>{safeStateLabel(j.state).toUpperCase()}</span></td><td style={{ padding: "12px 14px", fontFamily: vars.fontMono, fontSize: 11, whiteSpace: "nowrap" }}>{j.size_display}</td></tr>)}</tbody></table></div> : <p style={{ margin: 0, padding: "20px 16px", fontFamily: vars.fontMono, fontSize: 12, opacity: .6, textAlign: "center" }}>{historyFilter ? `NO JOBS MATCH “${historyFilter.toUpperCase()}”.` : "NO PRINT HISTORY YET — JOBS FROM PHONES + LAPTOPS WILL POP HERE ✦"}</p>}
           </div>
         </details>
 

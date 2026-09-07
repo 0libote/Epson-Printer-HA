@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { useState, createContext, useContext, type ReactNode } from "react";
+import { useState, useEffect, useRef, createContext, useContext, type ReactNode } from "react";
 import { Check, AlertCircle, X } from "lucide-react";
 
 type Toast = { id: string; kind: "success" | "error" | "info"; title: string; desc?: string };
@@ -77,12 +77,33 @@ const s = stylex.create({
   },
 });
 
+function makeToastId() {
+  try {
+    const b = new Uint8Array(9);
+    crypto.getRandomValues(b);
+    return Array.from(b).map((x) => x.toString(36)).join("").slice(0, 9);
+  } catch {
+    return `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+  }
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  useEffect(() => {
+    const m = timers.current;
+    return () => { for (const t of m.values()) clearTimeout(t); m.clear(); };
+  }, []);
+  const dismiss = (id: string) => {
+    const t = timers.current.get(id);
+    if (t) { clearTimeout(t); timers.current.delete(id); }
+    setToasts((p) => p.filter((x) => x.id !== id));
+  };
   const push = (t: Omit<Toast, "id">) => {
-    const id = Math.random().toString(36).slice(2, 9);
-    setToasts((p) => [...p, { ...t, id }]);
-    setTimeout(() => setToasts((p) => p.filter((x) => x.id !== id)), 4200);
+    const id = makeToastId();
+    setToasts((p) => [...p.slice(-3), { ...t, id }]);
+    const timer = setTimeout(() => dismiss(id), 4200);
+    timers.current.set(id, timer);
   };
   return (
     <ToastContext.Provider value={{ push }}>
@@ -97,7 +118,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <p {...stylex.props(s.title, t.kind === "error" ? s.titleError : undefined)}>{t.title}</p>
               {t.desc ? <p {...stylex.props(s.desc, t.kind === "error" ? s.descError : undefined)}>{t.desc}</p> : null}
             </div>
-            <button {...stylex.props(s.close)} aria-label="Dismiss" onClick={() => setToasts((p) => p.filter((x) => x.id !== t.id))}>
+            <button {...stylex.props(s.close)} aria-label="Dismiss" onClick={() => dismiss(t.id)}>
               <X size={14} strokeWidth={2.5} />
             </button>
           </div>

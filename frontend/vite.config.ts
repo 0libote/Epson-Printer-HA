@@ -17,6 +17,18 @@ export default defineConfig({
     emptyOutDir: true,
     // keep friendly names for debugging but hashed in prod via vite default
     manifest: false,
+    sourcemap: false,
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "vendor", test: /node_modules\/(react|react-dom|scheduler)\// },
+            { name: "query", test: /node_modules\/@tanstack\// },
+          ],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

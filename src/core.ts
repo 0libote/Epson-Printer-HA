@@ -19,11 +19,10 @@ export function commandResult(ok: boolean, stdout = "", stderr = "", returncode 
   return { ok, stdout, stderr, returncode };
 }
 
-// Bun.spawn based runCommand with timeout
+// Bun.spawn based runCommand with timeout (no listener leaks, no zombie procs)
 export async function runCommand(args: string[], timeout = 30_000, cwd?: string): Promise<CommandResult> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeout);
   let proc: any;
+  let timer: any = null;
   try {
     proc = Bun.spawn(args, {
       stdout: "pipe",
@@ -34,33 +33,65 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
     const stderrPromise = new Response(proc.stderr).text();
     const exitPromise = proc.exited;
 
-    const result = await Promise.race([
-      Promise.all([stdoutPromise, stderrPromise, exitPromise]).then(([out, err, code]) => ({
-        out: out.trim(),
-        err: err.trim(),
-        code,
-      })),
-      new Promise<never>((_, reject) =>
-        ac.signal.addEventListener("abort", () => reject(new Error("timeout")), { once: true })
-      ),
-    ]);
+    let timedOut = false;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        try { proc.kill(); } catch {}
+        reject(new Error("timeout"));
+      }, timeout);
+    });
 
-    if (ac.signal.aborted) {
-      try { proc.kill(); } catch {}
-      return commandResult(false, "", "timeout", 1);
+    try {
+      const [out, err, code] = (await Promise.race([
+        Promise.all([stdoutPromise, stderrPromise, exitPromise]),
+        timeoutPromise,
+      ])) as [string, string, number];
+      return commandResult(code === 0, out.trim(), err.trim(), code);
+    } catch (exc: any) {
+      if (timedOut || exc?.message === "timeout") {
+        try { await Promise.race([proc.exited, Bun.sleep(1500)]); } catch {}
+        try { proc.kill(9); } catch {}
+        return commandResult(false, "", "timeout", 1);
+      }
+      throw exc;
     }
-
-    const { out, err, code } = result as { out: string; err: string; code: number };
-    return commandResult(code === 0, out, err, code);
   } catch (exc: any) {
     if (exc?.message === "timeout") {
       try { proc?.kill(); } catch {}
       return commandResult(false, "", "timeout", 1);
     }
-    return commandResult(false, "", String(exc), 1);
+    return commandResult(false, "", String(exc?.message ?? exc), 1);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
+}
+
+// Generic TTL cache with in-flight dedup: concurrent callers share one promise,
+// avoiding spawn storms when many dashboard clients poll at once.
+function ttlCached<T>(cache: Map<string, { exp: number; value: T }>, inflight: Map<string, Promise<T>>, key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const now = Date.now();
+  const hit = cache.get(key);
+  if (hit && hit.exp > now) return Promise.resolve(hit.value);
+  const ongoing = inflight.get(key);
+  if (ongoing) return ongoing;
+  const p = fn().then(
+    (v) => {
+      if (cache.size > 128) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
+      cache.set(key, { exp: Date.now() + ttlMs, value: v });
+      inflight.delete(key);
+      return v;
+    },
+    (e) => {
+      inflight.delete(key);
+      throw e;
+    }
+  );
+  inflight.set(key, p);
+  return p;
 }
 
 // sync-ish version for quick calls where async not needed - uses Bun.spawnSync
@@ -78,18 +109,21 @@ export function runCommandSync(args: string[], timeout = 5000): CommandResult {
 export function tcpOpen(host: string, port: number, timeout = 1000): Promise<boolean> {
   if (!host) return Promise.resolve(false);
   return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const done = (v: boolean) => {
+      if (settled) return;
+      settled = true;
+      try { socket.destroy(); } catch {}
+      resolve(v);
+    };
     const socket = createConnection({ host, port, timeout }, () => {
-      socket.end();
-      resolve(true);
+      try { socket.end(); } catch {}
+      done(true);
     });
-    socket.on("error", () => {
-      try { socket.destroy(); } catch {}
-      resolve(false);
-    });
-    socket.on("timeout", () => {
-      try { socket.destroy(); } catch {}
-      resolve(false);
-    });
+    socket.on("error", () => done(false));
+    socket.on("timeout", () => done(false));
+    // hard fallback so a hung kernel connect can never leak the socket
+    setTimeout(() => done(false), timeout + 500).unref?.();
   });
 }
 
@@ -101,21 +135,11 @@ export async function printerReachable(host: string): Promise<boolean> {
   return false;
 }
 
-// cached with time bucket
-const reachableCache = new Map<string, { time: number; value: boolean }>();
+// TTL caches with in-flight dedup (no bucket churn, bounded size)
+const reachableCache = new Map<string, { exp: number; value: boolean }>();
+const reachableInflight = new Map<string, Promise<boolean>>();
 export async function cachedPrinterReachable(host: string): Promise<boolean> {
-  const bucket = Math.floor(performance.now() / 7000);
-  const key = `${host}:${bucket}`;
-  const cached = reachableCache.get(key);
-  if (cached) return cached.value;
-  const val = await printerReachable(host);
-  reachableCache.set(key, { time: bucket, value: val });
-  // prune old
-  if (reachableCache.size > 64) {
-    const oldest = Array.from(reachableCache.keys())[0];
-    reachableCache.delete(oldest);
-  }
-  return val;
+  return ttlCached(reachableCache, reachableInflight, host, 10_000, () => printerReachable(host));
 }
 
 export async function cupsPrinterStatus(printerName: string): Promise<{ ok: boolean; state: string; detail: string }> {
@@ -131,15 +155,10 @@ export async function cupsPrinterStatus(printerName: string): Promise<{ ok: bool
   return { ok: false, state: "unconfigured", detail: text || "CUPS queue not configured" };
 }
 
-const cupsStatusCache = new Map<string, { bucket: number; value: any }>();
+const cupsStatusCache = new Map<string, { exp: number; value: any }>();
+const cupsStatusInflight = new Map<string, Promise<any>>();
 export async function cachedCupsPrinterStatus(printerName: string) {
-  const bucket = Math.floor(performance.now() / 3000);
-  const key = `${printerName}:${bucket}`;
-  const c = cupsStatusCache.get(key);
-  if (c && c.bucket === bucket) return c.value;
-  const val = await cupsPrinterStatus(printerName);
-  cupsStatusCache.set(key, { bucket, value: val });
-  return val;
+  return ttlCached(cupsStatusCache, cupsStatusInflight, printerName, 8_000, () => cupsPrinterStatus(printerName));
 }
 
 export async function listJobs(printerName: string): Promise<Array<{ id: string; owner: string; size: string; raw: string }>> {
@@ -157,15 +176,10 @@ export async function listJobs(printerName: string): Promise<Array<{ id: string;
   return jobs;
 }
 
-const jobsCache = new Map<string, { bucket: number; value: any }>();
+const jobsCache = new Map<string, { exp: number; value: any }>();
+const jobsInflight = new Map<string, Promise<any>>();
 export async function cachedListJobs(printerName: string) {
-  const bucket = Math.floor(performance.now() / 2000);
-  const key = `${printerName}:${bucket}`;
-  const c = jobsCache.get(key);
-  if (c && c.bucket === bucket) return c.value;
-  const val = await listJobs(printerName);
-  jobsCache.set(key, { bucket, value: val });
-  return val;
+  return ttlCached(jobsCache, jobsInflight, printerName, 4_000, () => listJobs(printerName));
 }
 
 export async function submitPrint(printerName: string, path: string, opts: { copies?: number; grayscale?: boolean; title?: string } = {}): Promise<CommandResult> {
@@ -220,6 +234,7 @@ export async function detectSaneDevice(printerIp = ""): Promise<[string | null, 
 const deviceCache = new Map<string, { device: string | null; backend: string | null; ts: number }>();
 const DEVICE_CACHE_TTL_MS = 45_000;
 
+const deviceInflight = new Map<string, Promise<[string | null, string | null]>>();
 export async function detectSaneDeviceCached(printerIp = "", forceRefresh = false): Promise<[string | null, string | null]> {
   const key = printerIp || "__any__";
   const now = Date.now();
@@ -227,13 +242,26 @@ export async function detectSaneDeviceCached(printerIp = "", forceRefresh = fals
   if (!forceRefresh && cached && now - cached.ts < DEVICE_CACHE_TTL_MS) {
     return [cached.device, cached.backend];
   }
-  const res = await detectSaneDevice(printerIp);
-  deviceCache.set(key, { device: res[0], backend: res[1], ts: now });
-  // also prime generic key if printerIp specific missed but generic has result
-  if (res[0] && !deviceCache.has("__any__")) {
-    deviceCache.set("__any__", { device: res[0], backend: res[1], ts: now });
-  }
-  return res;
+  const ongoing = deviceInflight.get(key);
+  if (ongoing && !forceRefresh) return ongoing;
+  const p = detectSaneDevice(printerIp).then((res) => {
+    if (deviceCache.size > 32) {
+      const oldest = deviceCache.keys().next().value;
+      if (oldest !== undefined) deviceCache.delete(oldest);
+    }
+    deviceCache.set(key, { device: res[0], backend: res[1], ts: Date.now() });
+    // also prime generic key if printerIp specific missed but generic has result
+    if (res[0] && !deviceCache.has("__any__")) {
+      deviceCache.set("__any__", { device: res[0], backend: res[1], ts: Date.now() });
+    }
+    deviceInflight.delete(key);
+    return res;
+  }, (e) => {
+    deviceInflight.delete(key);
+    throw e;
+  });
+  deviceInflight.set(key, p);
+  return p;
 }
 
 export function clearDeviceCache() {
@@ -254,36 +282,26 @@ function jpegQualityForDpi(dpi: number): number {
   return 88;
 }
 
-const scannerCache = new Map<string, { bucket: number; value: any }>();
+const scannerCache = new Map<string, { exp: number; value: any }>();
+const scannerInflight = new Map<string, Promise<any>>();
 export async function scannerStatus(printerIp: string): Promise<{ ok: boolean; state: string; detail: string; backend: string | null; device: string | null; open_source: boolean }> {
-  const bucket = Math.floor(performance.now() / 5000);
-  const key = `${printerIp}:${bucket}`;
-  const c = scannerCache.get(key);
-  if (c && c.bucket === bucket) return c.value;
-
-  const hasBridge = await tcpOpen("127.0.0.1", 6566, 200);
-  let val: any;
-  if (hasBridge) {
-    val = {
-      ok: true,
-      state: "ready",
-      detail: "Epson compatibility bridge is online",
-      backend: "Epson compatibility bridge",
-      device: null,
-      open_source: false,
-    };
-  } else {
-    val = {
-      ok: false,
-      state: "starting",
-      detail: "The automatic scanner service is still starting.",
-      backend: null,
-      device: null,
-      open_source: false,
-    };
-  }
-  scannerCache.set(key, { bucket, value: val });
-  return val;
+  return ttlCached(scannerCache, scannerInflight, printerIp || "__none__", 15_000, async () => {
+    if (!printerIp) {
+      return { ok: false, state: "setup_required", detail: "Add the printer IP below", backend: null, device: null, open_source: false };
+    }
+    // Cheap: bridge TCP check + cached SANE device (no forced scanimage spawn here).
+    // detectSaneDeviceCached is itself TTL-cached (45s) so this stays fast under polling.
+    const [device, backend] = await detectSaneDeviceCached(printerIp).catch((): [null, null] => [null, null]);
+    if (device) {
+      const openSource = backend === "AirScan/WSD" || backend === "Open-source SANE";
+      return { ok: true, state: "ready", detail: openSource ? `Ready via ${backend}` : `Ready via ${backend ?? "SANE"}`, backend, device, open_source: openSource };
+    }
+    const hasBridge = await tcpOpen("127.0.0.1", 6566, 200);
+    if (hasBridge) {
+      return { ok: true, state: "ready", detail: "Epson compatibility bridge is online", backend: "Epson compatibility bridge", device: null, open_source: false };
+    }
+    return { ok: false, state: "starting", detail: "The automatic scanner service is still starting.", backend: null, device: null, open_source: false };
+  });
 }
 
 export function clearStatusCaches() {
@@ -291,6 +309,10 @@ export function clearStatusCaches() {
   cupsStatusCache.clear();
   jobsCache.clear();
   scannerCache.clear();
+  reachableInflight.clear();
+  cupsStatusInflight.clear();
+  jobsInflight.clear();
+  scannerInflight.clear();
   // device cache kept intentionally for perf, but caller can clearDeviceCache() after config change
 }
 
@@ -317,7 +339,9 @@ export async function scanDocument(
     return [commandResult(false, "", "No network scanner detected. The hub checked AirScan/WSD and the localhost SANE compatibility bridge."), null];
   }
 
-  await Bun.$`mkdir -p ${outputDir}`.quiet();
+  const { mkdirSync, unlinkSync } = await import("node:fs");
+  try { mkdirSync(outputDir, { recursive: true }); } catch {}
+  const safeUnlink = (p: string) => { try { unlinkSync(p); } catch {} };
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, -5) + `_${String(Date.now()).slice(-6)}`;
   const pngPath = `${outputDir}/scan_${stamp}.png`;
@@ -358,14 +382,14 @@ export async function scanDocument(
 
       if (exitCode === 0) {
         if (opts.control?.isCancelled()) {
-          try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+          safeUnlink(pngPath);
           return [commandResult(false, "", "scan_cancelled", 130), null];
         }
         await Bun.write(pngPath, stdout);
         break;
       }
       const errText = (stderr || "").trim();
-      try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+      safeUnlink(pngPath);
       const isBusy = errText.toLowerCase().includes("busy");
       const isNoDev = errText.toLowerCase().includes("no scanners") || errText.toLowerCase().includes("inval");
       if (isBusy && attempt === 0) {
@@ -392,15 +416,15 @@ export async function scanDocument(
       if (timeoutId) clearTimeout(timeoutId);
       const msg = String(exc?.message || exc);
       if (opts.control?.isCancelled()) {
-        try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+        safeUnlink(pngPath);
         return [commandResult(false, "", "scan_cancelled", 130), null];
       }
       if (msg.startsWith("scan_timeout:")) {
-        try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+        safeUnlink(pngPath);
         return [commandResult(false, "", `Scanner did not respond within ${Math.round(scanTimeout/1000)}s. Check the printer is awake, paper is on glass, then try again.`, 1), null];
       }
       lastExc = exc;
-      try { await Bun.$`rm -f ${pngPath}`.quiet(); } catch {}
+      safeUnlink(pngPath);
       if (attempt === 0) {
         await Bun.sleep(1500);
         continue;
@@ -425,9 +449,9 @@ export async function scanDocument(
     opts.control?.setProgress?.("Converting scan");
     if (fmt === "jpg" || fmt === "jpeg") {
       const outPath = `${outputDir}/scan_${stamp}.jpg`;
-      const img = Bun.file(pngPath).image();
+      const img = (Bun.file(pngPath) as any).image();
       await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(outPath);
-      await Bun.$`rm -f ${pngPath}`.quiet();
+      safeUnlink(pngPath);
       return [commandResult(true, outPath), outPath];
     } else {
       const outPath = `${outputDir}/scan_${stamp}.pdf`;
@@ -439,11 +463,11 @@ export async function scanDocument(
         image = await pdfDoc.embedPng(pngBytes);
       } catch {
         const tmpJpg = `${outputDir}/.tmp_${stamp}.jpg`;
-        const img = new Bun.Image(pngBytes);
+        const img = new (Bun as any).Image(pngBytes);
         await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(tmpJpg);
         const jpgBytes = await Bun.file(tmpJpg).arrayBuffer();
         image = await pdfDoc.embedJpg(jpgBytes);
-        await Bun.$`rm -f ${tmpJpg}`.quiet();
+        safeUnlink(tmpJpg);
       }
       const { width, height } = image.scale(1);
       // DPI-correct display size: pixels -> points at target dpi
@@ -462,7 +486,7 @@ export async function scanDocument(
       page.drawImage(image, { x, y, width: drawW, height: drawH });
       const pdfBytes = await pdfDoc.save();
       await Bun.write(outPath, pdfBytes);
-      await Bun.$`rm -f ${pngPath}`.quiet();
+      safeUnlink(pngPath);
       return [commandResult(true, outPath), outPath];
     }
   } catch (exc: any) {

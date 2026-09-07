@@ -9,11 +9,13 @@ import { ThemeProvider } from "./styles/ThemeProvider";
 
 const qc = new QueryClient({
   defaultOptions: {
-    queries: { refetchOnWindowFocus: false, retry: 1 },
+    queries: { refetchOnWindowFocus: false, refetchOnReconnect: true, retry: 1, staleTime: 5000, gcTime: 5 * 60 * 1000 },
   },
 });
 
-const root = document.getElementById("root")!;
+const el = document.getElementById("root");
+if (!el) throw new Error("Home Print Hub failed to start: missing #root element");
+const root = el;
 createRoot(root).render(
   <React.StrictMode>
     <QueryClientProvider client={qc}>

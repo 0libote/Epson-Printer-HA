@@ -31,17 +31,29 @@ export async function main(): Promise<void> {
   initHistory();
   console.log("[history] Persistent print history collector started.");
   let lastCompletedPoll = -COMPLETED_POLL_SECONDS;
+  let running = false;
   while (true) {
+    const tickStart = Date.now();
     try {
-      const now = Date.now() / 1000;
-      const includeCompleted = now - lastCompletedPoll >= COMPLETED_POLL_SECONDS;
-      const name = await currentPrinterName();
-      await syncPrintHistory(name, { includeCompleted });
-      if (includeCompleted) lastCompletedPoll = now;
+      if (!running) {
+        running = true;
+        try {
+          const now = Date.now() / 1000;
+          const includeCompleted = now - lastCompletedPoll >= COMPLETED_POLL_SECONDS;
+          const name = await currentPrinterName();
+          await syncPrintHistory(name, { includeCompleted });
+          if (includeCompleted) lastCompletedPoll = now;
+        } finally {
+          running = false;
+        }
+      }
     } catch (exc: any) {
+      running = false;
       console.log(`[history] Sync failed: ${exc?.message ?? String(exc)}`);
     }
-    await Bun.sleep(POLL_INTERVAL_SECONDS * 1000);
+    // account for sync duration so a slow CUPS fetch can't cause overlap/drift
+    const elapsed = Date.now() - tickStart;
+    await Bun.sleep(Math.max(1000, POLL_INTERVAL_SECONDS * 1000 - elapsed));
   }
 }
 
