@@ -165,34 +165,6 @@ async function addCsrf(form: FormData): Promise<string> {
   return csrf;
 }
 
-export async function postPrint(form: FormData) {
-  const csrf = await addCsrf(form);
-  return formRequest(fetch("/print", {
-    method: "POST",
-    body: form,
-    credentials: "same-origin",
-    headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
-  }));
-}
-export async function postScan(form: FormData) {
-  const csrf = await addCsrf(form);
-  return formRequest(fetch("/scan", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
-}
-export async function postClientSettings(form: FormData) {
-  const csrf = await addCsrf(form);
-  return formRequest(fetch("/client-settings", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
-}
-export async function postSetup(form: FormData) {
-  const csrf = await addCsrf(form);
-  return formRequest(fetch("/setup", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
-}
-export async function cancelPrintJob(jobId: string) {
-  if (!/^[A-Za-z0-9_.-]+-\d+$/.test(jobId)) throw new Error("Invalid print job id");
-  const form = new FormData();
-  const csrf = await addCsrf(form);
-  return formRequest(fetch(`/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
-}
-
 async function csrfAwareFetch(input: RequestInfo, init: RequestInit, retryBody?: () => RequestInit): Promise<Response> {
   let res = await fetch(input, init);
   if (res.status === 400) {
@@ -219,6 +191,38 @@ async function csrfAwareFetch(input: RequestInfo, init: RequestInit, retryBody?:
     }
   }
   return res;
+}
+
+function formInit(form: FormData, token: string): RequestInit {
+  return {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+    headers: { "X-CSRF-Token": token, Accept: "application/json" },
+  };
+}
+
+export async function postPrint(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(csrfAwareFetch("/print", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+}
+export async function postScan(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(csrfAwareFetch("/scan", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+}
+export async function postClientSettings(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(csrfAwareFetch("/client-settings", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+}
+export async function postSetup(form: FormData) {
+  const csrf = await addCsrf(form);
+  return formRequest(csrfAwareFetch("/setup", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+}
+export async function cancelPrintJob(jobId: string) {
+  if (!/^[A-Za-z0-9_.-]+-\d+$/.test(jobId)) throw new Error("Invalid print job id");
+  const form = new FormData();
+  const csrf = await addCsrf(form);
+  return formRequest(csrfAwareFetch(`/jobs/${encodeURIComponent(jobId)}/cancel`, formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
 }
 
 export async function renameScan(oldName: string, newName: string): Promise<{ name: string }> {

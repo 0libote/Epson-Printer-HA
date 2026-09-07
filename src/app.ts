@@ -12,6 +12,7 @@ import {
   cachedPrinterReachable,
   cancelJob,
   clearStatusCaches,
+  cupsPrinterStatus,
   runCommand,
   scanDocument,
   scannerStatus,
@@ -177,9 +178,26 @@ function secureFilename(name: string): string {
 
 function validateUploadBuffer(buf: ArrayBuffer, size: number, suffix: string): string | null {
   try {
-    if (size === 0) return "The selected file is empty.";
+    const byteLength = (buf as ArrayBuffer).byteLength ?? 0;
+    if (size === 0 && byteLength === 0) return "The selected file is empty.";
+    if (size === 0 || byteLength === 0) return "The selected file is empty.";
     const prefix = new Uint8Array(buf.slice(0, 16));
-    if (suffix === ".pdf" && !startsWith(prefix, new TextEncoder().encode("%PDF-"))) return "That file does not appear to be a valid PDF.";
+    // PDFs must start with %PDF- at offset 0, but some generators prepend a
+    // BOM or whitespace. Per spec the header lives within the first 1024
+    // bytes, so scan a small window instead of rejecting such files outright.
+    if (suffix === ".pdf") {
+      const window = new Uint8Array(buf.slice(0, Math.min(byteLength, 1024)));
+      const needle = new TextEncoder().encode("%PDF-");
+      let found = false;
+      outer: for (let i = 0; i + needle.length <= window.length; i++) {
+        for (let k = 0; k < needle.length; k++) {
+          if (window[i + k] !== needle[k]) continue outer;
+        }
+        found = true;
+        break;
+      }
+      if (!found) return "That file does not appear to be a valid PDF.";
+    }
     if (suffix === ".png" && !startsWith(prefix, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "That file does not appear to be a valid PNG image.";
     if ((suffix === ".jpg" || suffix === ".jpeg") && !(prefix[0] === 0xff && prefix[1] === 0xd8 && prefix[2] === 0xff)) return "That file does not appear to be a valid JPEG image.";
     if (suffix === ".txt") {
@@ -851,7 +869,11 @@ async function renderIndex(c:any):Promise<string>{
 app.get("/api/csrf", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
-  const token=getCsrfToken(c);
+  // Reuse the middleware-issued token when present: calling getCsrfToken()
+  // again would mint a second token and emit two Set-Cookie headers with
+  // different values, leaving strict clients with a mismatched pair.
+  let token: string;
+  try { token=(c as any).get("csrf_token_tmp") || getCookie(c,"csrf_token") || getCsrfToken(c); }catch{ token=getCsrfToken(c); }
   return c.json({ csrf_token: token });
 });
 
@@ -976,6 +998,11 @@ app.post("/print", async(c)=>{
     if(wantsJson(c)) return c.json({ ok:false, error: msg }, 413);
     setFlash(c,"error",msg); return c.redirect("/",302);
   }
+  // Fail fast with an actionable message when the CUPS queue is missing or
+  // disabled instead of surfacing a cryptic `lp` stderr after upload.
+  // (Checked after file validation so invalid files still get the precise
+  // validation error, and oversized/field errors above take precedence.)
+  const queueName=currentPrinterName();
   const uploadDir=join(APP_DIR,"uploads");
   mkdirSync(uploadDir,{recursive:true});
   const workDir=join(uploadDir,`print-${randomBytes(6).toString("hex")}`);
@@ -990,11 +1017,24 @@ app.post("/print", async(c)=>{
       if(wantsJson(c)) { printOk=false; printMsg=err; }
       else { setFlash(c,"error",err); return c.redirect("/",302); }
     } else {
-      await Bun.write(target, buf);
-      const result=await submitPrint(currentPrinterName(), target, {copies, grayscale, title:name});
-      clearStatusCaches();
-      printOk=result.ok; printMsg=result.ok?"File added to the print queue.":(result.stderr||"Print failed.");
-      if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
+      try {
+        const queueStatus=await cupsPrinterStatus(queueName);
+        if(!queueStatus.ok){
+          const msg=`Print queue '${queueName}' is not ready (${queueStatus.detail || queueStatus.state}). Re-save the printer settings, then try again.`;
+          if(wantsJson(c)) { printOk=false; printMsg=msg; }
+          else { setFlash(c,"error",msg); return c.redirect("/",302); }
+        }
+      } catch { /* fall through to lp and report its error */ }
+      if(!printMsg){
+        await Bun.write(target, buf);
+        const result=await submitPrint(queueName, target, {copies, grayscale, title:name});
+        clearStatusCaches();
+        // lp sometimes reports errors on stdout; never return a bare "Print failed."
+        const detail=(result.stderr || result.stdout || "").trim();
+        printOk=result.ok; printMsg=result.ok?"File added to the print queue.":(detail||"Print failed.");
+        if(!result.ok) console.error(`[print] lp failed queue=${queueName} file=${name} copies=${copies}: ${detail || `exit ${result.returncode}`}`);
+        if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
+      }
     }
   } finally { try{ _rmSync(workDir, { recursive: true, force: true }); }catch{} }
   if(wantsJson(c)){

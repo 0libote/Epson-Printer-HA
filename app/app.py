@@ -207,7 +207,9 @@ def _validate_upload(path: Path, suffix: str) -> str | None:
             return "The selected file is empty."
         with path.open("rb") as upload:
             prefix = upload.read(16)
-        if suffix == ".pdf" and not prefix.startswith(b"%PDF-"):
+            upload.seek(0)
+            window = upload.read(1024)
+        if suffix == ".pdf" and b"%PDF-" not in window:
             return "That file does not appear to be a valid PDF."
         if suffix == ".png" and not prefix.startswith(b"\x89PNG\r\n\x1a\n"):
             return "That file does not appear to be a valid PNG image."
@@ -456,7 +458,8 @@ def print_file():
             title=name,
         )
     clear_status_caches()
-    message = "File added to the print queue." if result.ok else (result.stderr or "Print failed.")
+    detail = (result.stderr or result.stdout or "").strip()
+    message = "File added to the print queue." if result.ok else (detail or "Print failed.")
     flash(message, "success" if result.ok else "error")
     return redirect(url_for("index"))
 

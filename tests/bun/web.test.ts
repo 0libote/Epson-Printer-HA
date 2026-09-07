@@ -319,4 +319,100 @@ describe("web - Bun Hono", () => {
     expect(text).toContain("That file is too large");
     appModule._setMaxUploadForTest(128);
   });
+
+  test("/api/csrf emits a single token matching the JSON body", async () => {
+    const client = createClient(appModule.app);
+    client.clear();
+    const res = await client.request("/api/csrf", { headers: { Accept: "application/json" } });
+    expect(res.status).toBe(200);
+    const cookies = res.headers.getSetCookie?.() || [];
+    // middleware + route must not mint two different tokens
+    const csrfCookies = cookies.filter((c) => c.startsWith("csrf_token="));
+    expect(csrfCookies.length).toBe(1);
+    const data: any = await res.json();
+    const cookieVal = decodeURIComponent(csrfCookies[0].split(";")[0].split("=")[1]);
+    expect(data.csrf_token).toBe(cookieVal);
+  });
+
+  test("print with missing CUPS queue returns an actionable error", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10" }));
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const form = new FormData();
+    form.set("_csrf_token", csrf);
+    form.set("copies", "1");
+    form.set("file", new File([new TextEncoder().encode("%PDF-1.4\n")], "document.pdf", { type: "application/pdf" }));
+    const res = await client.request("/print", {
+      method: "POST",
+      body: form,
+      headers: { Accept: "application/json", "X-CSRF-Token": csrf },
+    });
+    // no CUPS queue exists in the test env, so the pre-check must explain that
+    expect(res.status).toBe(500);
+    const data: any = await res.json();
+    expect(data.ok).toBe(false);
+    expect(String(data.error || "")).toContain("Print queue");
+  });
+
+  test("pdf with leading whitespace is not rejected as invalid", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10" }));
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const form = new FormData();
+    form.set("_csrf_token", csrf);
+    form.set("copies", "1");
+    form.set("file", new File([new TextEncoder().encode("\n\n%PDF-1.4\n")], "document.pdf", { type: "application/pdf" }));
+    const res = await client.request("/print", {
+      method: "POST",
+      body: form,
+      headers: { Accept: "application/json", "X-CSRF-Token": csrf },
+    });
+    const data: any = await res.json().catch(() => ({}));
+    // must not fail file validation; it should reach the (missing) queue check instead
+    expect(String(data.error || "")).not.toContain("does not appear to be a valid PDF");
+  });
+
+  test("lp failure details from stdout are surfaced, not a bare message", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10", printer_name: "Ready_Printer" }));
+    // fake a ready queue (lpstat -p) but a failing lp that reports on stdout
+    const originalSpawn = Bun.spawn;
+    (Bun as any).spawn = (args: string[], opts: any) => {
+      if (args[0] === "lpstat") {
+        return {
+          stdout: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("printer Ready_Printer is idle. enabled since today")); c.close(); } }),
+          stderr: new ReadableStream({ start(c) { c.close(); } }),
+          exited: Promise.resolve(0),
+        } as any;
+      }
+      if (args[0] === "lp") {
+        return {
+          stdout: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("Unsupported format")); c.close(); } }),
+          stderr: new ReadableStream({ start(c) { c.close(); } }),
+          exited: Promise.resolve(1),
+        } as any;
+      }
+      return originalSpawn(args, opts);
+    };
+    try {
+      const client = createClient(appModule.app);
+      const csrf = await getCsrf(client, appModule.app);
+      const form = new FormData();
+      form.set("_csrf_token", csrf);
+      form.set("copies", "1");
+      form.set("file", new File([new TextEncoder().encode("%PDF-1.4\n")], "document.pdf", { type: "application/pdf" }));
+      const res = await client.request("/print", {
+        method: "POST",
+        body: form,
+        headers: { Accept: "application/json", "X-CSRF-Token": csrf },
+      });
+      expect(res.status).toBe(500);
+      const data: any = await res.json();
+      expect(String(data.error || "")).toContain("Unsupported format");
+    } finally {
+      (Bun as any).spawn = originalSpawn;
+    }
+  });
 });
