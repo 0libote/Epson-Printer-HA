@@ -234,18 +234,24 @@ export async function deleteScan(name: string): Promise<void> {
 export async function fetchScans(): Promise<ScansResponse> {
   return readJson<ScansResponse>(await fetch("/api/scans?limit=100", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
-export async function startScanJob(opts: { dpi: string; mode: string; format: string }): Promise<ScanJobResponse> {
+export async function startScanJob(opts: { dpi: string; mode: string; format: string; force?: boolean }): Promise<ScanJobResponse> {
   const csrf = await ensureCsrf();
   const makeInit = (token: string): RequestInit => ({
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": token, Accept: "application/json" },
-    body: JSON.stringify({ dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, _csrf_token: token }),
+    body: JSON.stringify({ dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, force: opts.force ? true : undefined, _csrf_token: token }),
   });
   const res = await csrfAwareFetch("/api/scan", makeInit(csrf), () => makeInit(cachedCsrf || csrf));
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : { error: await res.text().catch(() => "") };
-  if (!res.ok) throw new Error(data.error || data.message || `Scan failed ${res.status}`);
+  if (!res.ok) {
+    const err: any = new Error(data.error || data.message || `Scan failed ${res.status}`);
+    err.status = res.status;
+    err.jobId = (data as any).jobId;
+    err.jobState = (data as any).state;
+    throw err;
+  }
   return data as ScanJobResponse;
 }
 export async function pollScanJob(jobId: string): Promise<ScanJobStatus["job"]> {
@@ -258,4 +264,13 @@ export async function cancelScanJob(jobId: string): Promise<void> {
   if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error("Invalid scan job id");
   const csrf = await addCsrf(form);
   await formRequest(fetch(`/api/scan/jobs/${jobId}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
+}
+export async function cancelAllScans(): Promise<{ cancelled: number }> {
+  const form = new FormData();
+  const csrf = await addCsrf(form);
+  const res = await fetch("/api/scan/cancel-all", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } });
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
+  if (!res.ok) throw new Error((data as any).error || `Request failed ${res.status}`);
+  return data as { cancelled: number };
 }

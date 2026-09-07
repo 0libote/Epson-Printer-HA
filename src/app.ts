@@ -60,12 +60,15 @@ if (Boolean(WEB_USERNAME) !== Boolean(WEB_PASSWORD)) {
 
 mkdirSync(APP_DIR, { recursive: true });
 mkdirSync(SCAN_DIR, { recursive: true });
-// Cleanup stale operation locks from previous crash (older than 5 min)
+// Cleanup stale operation locks from previous crash.
+// The scanner lock must always be cleared on boot: in-memory scan jobs do not
+// survive a restart, so any leftover .scanner.lock directory can only be stale
+// and would otherwise block scans with "already in progress" for up to 5 min.
 for (const lockName of ["cups-config", "scanner"]) {
   const lockPath = join(APP_DIR, `.${lockName}.lock`);
   try {
     const st = statSync(lockPath);
-    if (Date.now() - st.mtimeMs > 5 * 60 * 1000) {
+    if (lockName === "scanner" || Date.now() - st.mtimeMs > 5 * 60 * 1000) {
       try { require("node:fs").rmdirSync(lockPath); } catch {}
     }
   } catch {}
@@ -351,6 +354,54 @@ let activeScanJobId: string | null = null;
 
 export function _getScanJobsForTest(){ return scanJobs; }
 export function _resetScanJobsForTest(){ scanJobs.clear(); activeScanJobId=null; }
+// A scan (incl. 600dpi retry + conversion) takes at most ~6-7 min. Anything
+// active longer than this is hung/crashed — reap it so one stuck job doesn't
+// block all future scans with "already in progress" forever.
+export const SCAN_JOB_STALE_MS = 8 * 60 * 1000;
+function isScanJobActive(j: ScanJob): boolean {
+  return j.state === "queued" || j.state === "scanning" || j.state === "converting";
+}
+function reapStaleScanJobs(): void {
+  const now = Date.now();
+  for (const j of scanJobs.values()) {
+    if (!isScanJobActive(j)) continue;
+    const age = now - (j.startedAt ?? j.createdAt);
+    if (age > SCAN_JOB_STALE_MS) {
+      try { j.cancelProcess?.(); } catch {}
+      j.cancelProcess = undefined;
+      j.state = "error";
+      j.error = "Scan timed out and was cleared. Please try again.";
+      j.progress = "Failed";
+      j.finishedAt = now;
+    }
+  }
+  // activeScanJobId must never point at a finished/missing job, or every new
+  // scan would be rejected as "already in progress".
+  if (activeScanJobId) {
+    const active = scanJobs.get(activeScanJobId);
+    if (!active || !isScanJobActive(active)) activeScanJobId = null;
+  }
+}
+function findActiveScanJob(): ScanJob | null {
+  reapStaleScanJobs();
+  for (const j of scanJobs.values()) {
+    if (isScanJobActive(j)) return j;
+  }
+  if (activeScanJobId) {
+    const active = scanJobs.get(activeScanJobId);
+    if (active && isScanJobActive(active)) return active;
+  }
+  return null;
+}
+function clearStaleScannerFsLock(): void {
+  const lockPath = join(SCAN_DIR, "..", ".scanner.lock");
+  try {
+    const st = statSync(lockPath);
+    if (Date.now() - st.mtimeMs > SCAN_JOB_STALE_MS) {
+      try { require("node:fs").rmdirSync(lockPath); } catch {}
+    }
+  } catch {}
+}
 function createScanJob(printerIp:string, dpi:number, mode:string, fmt:string):ScanJob{
   const id=randomBytes(6).toString("hex");
   const job:ScanJob={ id, state:"queued", printerIp, dpi, mode, fmt, createdAt:Date.now(), cancelRequested:false, progress:"Queued" };
@@ -1217,20 +1268,38 @@ app.post("/api/scan", async(c)=>{
   }
   if(!["Color","Gray","Lineart"].includes(mode)) mode="Color";
   fmt=fmt.toLowerCase(); if(!["pdf","png","jpg","jpeg"].includes(fmt)) fmt="pdf";
-  for(const j of scanJobs.values()){
-    if(j.state==="queued"||j.state==="scanning"||j.state==="converting"){
-      return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:j.id }, 409);
+  // Drop hung jobs (see SCAN_JOB_STALE_MS) and clear a dangling activeScanJobId
+  // so one crashed scan can't block everything forever.
+  reapStaleScanJobs();
+  clearStaleScannerFsLock();
+  const force = String((body as any)["force"] ?? c.req.query("force") ?? "").toLowerCase() === "true" || String((body as any)["force"] ?? "") === "1" || c.req.query("force") === "1";
+  let blocker = findActiveScanJob();
+  if (blocker && force) {
+    blocker.cancelRequested = true;
+    try { blocker.cancelProcess?.(); } catch {}
+    blocker.cancelProcess = undefined;
+    if (blocker.state === "queued" || !blocker.startedAt) {
+      blocker.state = "cancelled";
+      blocker.error = "Scan cancelled.";
+      blocker.finishedAt = Date.now();
+    } else {
+      // A running scanimage process may need a moment to die; mark it failed
+      // so the new job can start immediately instead of 409-looping.
+      blocker.state = "error";
+      blocker.error = "Scan cancelled to start a new scan.";
+      blocker.finishedAt = Date.now();
     }
+    if (activeScanJobId === blocker.id) activeScanJobId = null;
+    try { require("node:fs").rmdirSync(join(SCAN_DIR, "..", ".scanner.lock")); } catch {}
+    blocker = null;
   }
-  if(activeScanJobId){
-    const active=scanJobs.get(activeScanJobId);
-    if(active && (active.state==="queued"||active.state==="scanning"||active.state==="converting")){
-      return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:active.id }, 409);
-    }
+  if(blocker){
+    const elapsedS = Math.floor((Date.now() - (blocker.startedAt ?? blocker.createdAt)) / 1000);
+    return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:blocker.id, state:blocker.state, elapsed:elapsedS }, 409);
   }
   // also check filesystem lock for legacy sync jobs
   const lockPath=join(SCAN_DIR, "..", ".scanner.lock");
-  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < 5*60*1000){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} }catch{}
+  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { try { require("node:fs").rmdirSync(lockPath); } catch {} } }catch{}
   const job=createScanJob(printerIp, dpi, mode, fmt);
   // fire and forget
   setTimeout(()=>{ executeScanJob(job).catch(()=>{}); }, 10);
@@ -1240,6 +1309,7 @@ app.get("/api/scan/jobs/:id", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   const id=c.req.param("id");
+  reapStaleScanJobs();
   const job=scanJobs.get(id);
   if(!job) return c.json({ ok:false, error:"Job not found" },404);
   const elapsed= job.startedAt ? Math.floor(( (job.finishedAt||Date.now()) - job.startedAt)/1000) : 0;
@@ -1266,8 +1336,32 @@ app.post("/api/scan/jobs/:id/cancel", async(c)=>{
 app.get("/api/scan/jobs", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
+  reapStaleScanJobs();
   const jobs=[...scanJobs.values()].sort((a,b)=>b.createdAt-a.createdAt).slice(0,20);
   return c.json({ jobs: jobs.map(j=>({ id:j.id, state:j.state, dpi:j.dpi, mode:j.mode, fmt:j.fmt, createdAt:j.createdAt, startedAt:j.startedAt, finishedAt:j.finishedAt, progress:j.progress, resultName:j.resultName, error:j.error })) });
+});
+// Recovery: cancel any stuck/active scan jobs + clear a stale fs lock.
+// Lets the UI offer "cancel stuck scan" instead of 409-looping forever.
+app.post("/api/scan/cancel-all", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  const body=await c.req.parseBody().catch(()=>({} as any));
+  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  reapStaleScanJobs();
+  let cancelled = 0;
+  for(const j of scanJobs.values()){
+    if(isScanJobActive(j)){
+      j.cancelRequested=true;
+      try { j.cancelProcess?.(); } catch {}
+      j.cancelProcess=undefined;
+      j.state="cancelled"; j.error="Scan cancelled."; j.progress="Cancelled"; j.finishedAt=Date.now();
+      cancelled++;
+    }
+  }
+  activeScanJobId=null;
+  try { require("node:fs").rmdirSync(join(SCAN_DIR, "..", ".scanner.lock")); } catch {}
+  try { require("node:fs").rmdirSync(join(APP_DIR, ".scanner.lock")); } catch {}
+  return c.json({ ok:true, cancelled });
 });
 
 // In-flight dedup for /api/status: concurrent dashboard polls share one backend fan-out

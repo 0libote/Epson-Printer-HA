@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ScanLine, X } from "lucide-react";
 import { useToast } from "./Toast";
-import { postScan, startScanJob, pollScanJob, cancelScanJob } from "../lib/api";
+import { postScan, startScanJob, pollScanJob, cancelScanJob, cancelAllScans } from "../lib/api";
 import { s as ui, Card, CardHeader, ProgressBar } from "./ui";
 
 const s = stylex.create({
@@ -45,6 +45,8 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
   const [progress, setProgress] = useState("");
   const [elapsed, setElapsed] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [stuckJobId, setStuckJobId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const cancelRef = useRef(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -68,6 +70,7 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
     }
     cancelRef.current = false;
     setBusy(true);
+    setStuckJobId(null);
     setProgress("Contacting scanner");
     setElapsed(0);
     setStartedAt(Date.now());
@@ -124,12 +127,33 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
         } catch (e2: any) {
           push({ kind: "error", title: "Scan failed", desc: String(e2.message || e2).slice(0, 220) });
         }
-      } else if (!msg.toLowerCase().includes("already in progress") && !msg.toLowerCase().includes("timed out")) {
+      } else if (msg.toLowerCase().includes("already in progress") || err?.status === 409) {
+        // Backend rejected us because another job is active (possibly stuck).
+        // Remember the blocker so the UI can offer cancel-and-retry.
+        setStuckJobId(typeof err?.jobId === "string" ? err.jobId : null);
+        push({ kind: "error", title: "A scan is already running", desc: "Wait for it to finish — or cancel the stuck scan below and try again." });
+      } else if (!msg.toLowerCase().includes("timed out")) {
         push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 220) });
       }
     } finally {
       setBusy(false);
       setJobId(null);
+    }
+  };
+
+  const clearStuck = async (andRetry: boolean) => {
+    setClearing(true);
+    try {
+      if (stuckJobId) {
+        try { await cancelScanJob(stuckJobId); } catch {}
+      }
+      await cancelAllScans();
+      setStuckJobId(null);
+      push({ kind: "success", title: "Stuck scan cleared", desc: andRetry ? "Try scanning again now." : undefined });
+    } catch (err: any) {
+      push({ kind: "error", title: "Couldn't clear the stuck scan", desc: String(err.message || err).slice(0, 220) });
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -189,6 +213,16 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
           </div>
         ) : null}
         <p {...stylex.props(ui.help)} style={{ marginTop: 12 }}>Place the page face-down on the glass, then scan.</p>
+        {stuckJobId ? (
+          <div {...stylex.props(ui.noteBox)} style={{ marginTop: 12 }}>
+            A previous scan looks stuck. Clear it, then try again.
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={clearing || busy} onClick={() => clearStuck(false)}>
+                {clearing ? "Clearing…" : "Cancel stuck scan"}
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div style={{ marginTop: 14 }}>
           <button {...stylex.props(ui.buttonPrimary, ui.buttonTeal, busy && ui.buttonPrimaryDisabled)} type="submit" disabled={busy}>
             {busy ? <><Loader2 size={16} className="spin" /> Scanning{elapsed > 0 ? ` · ${elapsed}s` : "…"}</> : "Scan"}
