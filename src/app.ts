@@ -64,14 +64,18 @@ mkdirSync(APP_DIR, { recursive: true });
 mkdirSync(SCAN_DIR, { recursive: true });
 // Cleanup stale operation locks from previous crash.
 // The scanner lock must always be cleared on boot: in-memory scan jobs do not
-// survive a restart, so any leftover .scanner.lock directory can only be stale
+// survive a restart, so any leftover .scanner.lock can only be stale
 // and would otherwise block scans with "already in progress" for up to 5 min.
+// NOTE: legacy Python builds used a *file* lock (fcntl) at the same path while
+// Bun uses a *directory* lock (mkdir). Either form — or a crashed mkdir — must
+// be removed here with rmSync (handles files and dirs); rmdirSync alone leaves
+// a legacy file lock behind and blocks every future scan.
 for (const lockName of ["cups-config", "scanner"]) {
   const lockPath = join(APP_DIR, `.${lockName}.lock`);
   try {
     const st = statSync(lockPath);
     if (lockName === "scanner" || Date.now() - st.mtimeMs > 5 * 60 * 1000) {
-      try { require("node:fs").rmdirSync(lockPath); } catch {}
+      try { require("node:fs").rmSync(lockPath, { recursive: true, force: true }); } catch {}
     }
   } catch {}
 }
@@ -145,18 +149,47 @@ function saveSettingsSync(data: Record<string, any>) {
   _invalidateSettingsCache();
 }
 
-const operationLocks = new Map<string, boolean>();
+const operationLocks = new Map<string, number>();
+export function _clearOperationLockForTest(name?: string) {
+  if (name) operationLocks.delete(name);
+  else operationLocks.clear();
+}
+function operationLockStaleMs(name: string): number {
+  // A full 600dpi scan + retry + conversion can take ~6-7 min; never treat a
+  // scanner lock younger than that as stale. Other ops are quick (5 min cap).
+  return name === "scanner" ? 8 * 60 * 1000 : 5 * 60 * 1000;
+}
+function removeOperationLockFs(lockPath: string): void {
+  // rmSync with recursive+force removes both legacy file locks (Python fcntl
+  // era) and directory locks (Bun mkdir era). rmdirSync/unlinkSync alone only
+  // handle one form and leave the other behind forever.
+  try { require("node:fs").rmSync(lockPath, { recursive: true, force: true }); } catch {}
+}
 async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise<{ acquired: boolean; result?: T }> {
   const lockPath = join(APP_DIR, `.${name}.lock`);
-  if (operationLocks.get(name)) return { acquired: false };
+  const staleMs = operationLockStaleMs(name);
+  const heldAt = operationLocks.get(name);
+  if (heldAt !== undefined) {
+    if (Date.now() - heldAt > staleMs) {
+      // Previous holder hung/crashed without reaching finally (e.g. a
+      // scanimage promise that never settled). Reap it so one stuck scan
+      // can't block everything until container restart.
+      operationLocks.delete(name);
+      removeOperationLockFs(lockPath);
+    } else {
+      return { acquired: false };
+    }
+  }
   try {
     mkdirSync(lockPath);
   } catch {
-    // Check for stale lock older than 5 minutes
+    // mkdir fails when the path already exists as a dir *or* as a legacy
+    // file. Check mtime: stale locks are removed (file or dir), fresh ones
+    // mean someone else is genuinely running.
     try {
       const st = statSync(lockPath);
-      if (Date.now() - st.mtimeMs > 5 * 60 * 1000) {
-        try { require("node:fs").rmdirSync(lockPath); } catch {}
+      if (Date.now() - st.mtimeMs > staleMs) {
+        removeOperationLockFs(lockPath);
         mkdirSync(lockPath);
       } else {
         return { acquired: false };
@@ -165,9 +198,9 @@ async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise
       return { acquired: false };
     }
   }
-  operationLocks.set(name, true);
+  operationLocks.set(name, Date.now());
   try { const result = await fn(); return { acquired: true, result }; }
-  finally { operationLocks.delete(name); try { require("node:fs").rmdirSync(lockPath); } catch {} }
+  finally { operationLocks.delete(name); removeOperationLockFs(lockPath); }
 }
 
 function secureFilename(name: string): string {
@@ -372,7 +405,7 @@ const scanJobs = new Map<string, ScanJob>();
 let activeScanJobId: string | null = null;
 
 export function _getScanJobsForTest(){ return scanJobs; }
-export function _resetScanJobsForTest(){ scanJobs.clear(); activeScanJobId=null; }
+export function _resetScanJobsForTest(){ scanJobs.clear(); activeScanJobId=null; operationLocks.delete("scanner"); }
 // A scan (incl. 600dpi retry + conversion) takes at most ~6-7 min. Anything
 // active longer than this is hung/crashed — reap it so one stuck job doesn't
 // block all future scans with "already in progress" forever.
@@ -417,7 +450,7 @@ function clearStaleScannerFsLock(): void {
   try {
     const st = statSync(lockPath);
     if (Date.now() - st.mtimeMs > SCAN_JOB_STALE_MS) {
-      try { require("node:fs").rmdirSync(lockPath); } catch {}
+      removeOperationLockFs(lockPath);
     }
   } catch {}
 }
@@ -1149,8 +1182,8 @@ app.get("/api/scans/:filename/thumb", async(c)=>{
     // quick check: if file too small skip
     if(srcBytes.byteLength>0){
       const img=new (Bun as any).Image(srcBytes);
-      // @ts-ignore
-      await img.webp({ quality: 70 }).resize({ width: 180 }).write(thumbPath);
+      // Bun.Image.resize takes positional width (resize(180)), not an object.
+      await img.resize(180).webp({ quality: 70 }).write(thumbPath);
       const thumbFile=Bun.file(thumbPath);
       if(await thumbFile.exists()){
         return new Response(thumbFile.stream(),{headers:{"Content-Type":"image/webp","Cache-Control":"private, max-age=3600"}});
@@ -1343,7 +1376,8 @@ app.post("/api/scan", async(c)=>{
       blocker.finishedAt = Date.now();
     }
     if (activeScanJobId === blocker.id) activeScanJobId = null;
-    try { require("node:fs").rmdirSync(join(SCAN_DIR, "..", ".scanner.lock")); } catch {}
+    removeOperationLockFs(join(SCAN_DIR, "..", ".scanner.lock"));
+    _clearOperationLockForTest("scanner");
     blocker = null;
   }
   if(blocker){
@@ -1352,7 +1386,7 @@ app.post("/api/scan", async(c)=>{
   }
   // also check filesystem lock for legacy sync jobs
   const lockPath=join(SCAN_DIR, "..", ".scanner.lock");
-  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { try { require("node:fs").rmdirSync(lockPath); } catch {} } }catch{}
+  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { removeOperationLockFs(lockPath); _clearOperationLockForTest("scanner"); } }catch{}
   const job=createScanJob(printerIp, dpi, mode, fmt);
   // fire and forget
   setTimeout(()=>{ executeScanJob(job).catch(()=>{}); }, 10);
@@ -1393,8 +1427,10 @@ app.get("/api/scan/jobs", async(c)=>{
   const jobs=[...scanJobs.values()].sort((a,b)=>b.createdAt-a.createdAt).slice(0,20);
   return c.json({ jobs: jobs.map(j=>({ id:j.id, state:j.state, dpi:j.dpi, mode:j.mode, fmt:j.fmt, createdAt:j.createdAt, startedAt:j.startedAt, finishedAt:j.finishedAt, progress:j.progress, resultName:j.resultName, error:j.error })) });
 });
-// Recovery: cancel any stuck/active scan jobs + clear a stale fs lock.
-// Lets the UI offer "cancel stuck scan" instead of 409-looping forever.
+// Recovery: cancel any stuck/active scan jobs + clear stale locks (fs + memory).
+// Lets the UI offer "cancel stuck scan" instead of 409-looping forever. This is
+// also the self-heal for legacy file locks: it removes the path whether it is
+// a file or a directory and drops the in-memory holder timestamp.
 app.post("/api/scan/cancel-all", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
@@ -1412,8 +1448,9 @@ app.post("/api/scan/cancel-all", async(c)=>{
     }
   }
   activeScanJobId=null;
-  try { require("node:fs").rmdirSync(join(SCAN_DIR, "..", ".scanner.lock")); } catch {}
-  try { require("node:fs").rmdirSync(join(APP_DIR, ".scanner.lock")); } catch {}
+  _clearOperationLockForTest("scanner");
+  removeOperationLockFs(join(SCAN_DIR, "..", ".scanner.lock"));
+  removeOperationLockFs(join(APP_DIR, ".scanner.lock"));
   return c.json({ ok:true, cancelled });
 });
 
