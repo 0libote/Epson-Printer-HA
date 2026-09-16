@@ -44,7 +44,20 @@ function useCopy() {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        throw new Error("no clipboard");
+        // LAN dashboards commonly use HTTP, where the Clipboard API is absent.
+        const previousFocus = document.activeElement as HTMLElement | null;
+        const field = document.createElement("textarea");
+        field.value = text;
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.appendChild(field);
+        try {
+          field.select();
+          if (!document.execCommand("copy")) throw new Error("Clipboard unavailable");
+        } finally {
+          field.remove();
+          previousFocus?.focus();
+        }
       }
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
