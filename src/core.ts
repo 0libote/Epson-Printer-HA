@@ -369,6 +369,8 @@ export async function scanDocument(
   let fmt = (opts.fmt ?? "pdf").toLowerCase();
   if (!["pdf", "png", "jpg", "jpeg"].includes(fmt)) fmt = "pdf";
 
+  if (opts.control?.isCancelled()) return [commandResult(false, "", "scan_cancelled", 130), null];
+
   // Use cached device (fast) but force refresh on miss
   let [device] = await detectSaneDeviceCached(printerIp);
   if (!device) {
@@ -384,7 +386,18 @@ export async function scanDocument(
   const safeUnlink = (p: string) => { try { unlinkSync(p); } catch {} };
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, -5) + `_${String(Date.now()).slice(-6)}`;
-  const pngPath = `${outputDir}/scan_${stamp}.png`;
+  const pngPath = `${outputDir}/.scan_${stamp}.png`;
+  const publish = async (path: string): Promise<[CommandResult, string | null]> => {
+    if (opts.control?.isCancelled()) {
+      safeUnlink(path);
+      safeUnlink(pngPath);
+      return [commandResult(false, "", "scan_cancelled", 130), null];
+    }
+    const target = path.replace("/.scan_", "/scan_");
+    const { renameSync } = await import("node:fs");
+    renameSync(path, target);
+    return [commandResult(true, target), target];
+  };
   const args = ["scanimage", "--device-name", device, "--mode", mode, "--resolution", String(dpi), "-x", "210", "-y", "297", "--format=png"];
 
   // DPI-aware timeout (higher DPI = larger + slower)
@@ -482,19 +495,19 @@ export async function scanDocument(
   }
 
   if (fmt === "png") {
-    return [commandResult(true, pngPath), pngPath];
+    return publish(pngPath);
   }
 
   try {
     opts.control?.setProgress?.("Converting scan");
     if (fmt === "jpg" || fmt === "jpeg") {
-      const outPath = `${outputDir}/scan_${stamp}.jpg`;
+      const outPath = `${outputDir}/.scan_${stamp}.jpg`;
       const img = (Bun.file(pngPath) as any).image();
       await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(outPath);
       safeUnlink(pngPath);
-      return [commandResult(true, outPath), outPath];
+      return publish(outPath);
     } else {
-      const outPath = `${outputDir}/scan_${stamp}.pdf`;
+      const outPath = `${outputDir}/.scan_${stamp}.pdf`;
       const pngBytes = await Bun.file(pngPath).arrayBuffer();
       const pdfDoc = await PDFDocument.create();
       const page = pdfDoc.addPage([595.28, 841.89]);
@@ -527,9 +540,13 @@ export async function scanDocument(
       const pdfBytes = await pdfDoc.save();
       await Bun.write(outPath, pdfBytes);
       safeUnlink(pngPath);
-      return [commandResult(true, outPath), outPath];
+      return publish(outPath);
     }
   } catch (exc: any) {
-    return [commandResult(true, pngPath, `Conversion failed; saved PNG instead: ${exc}`), pngPath];
+    safeUnlink(pngPath);
+    safeUnlink(`${outputDir}/.scan_${stamp}.jpg`);
+    safeUnlink(`${outputDir}/.scan_${stamp}.pdf`);
+    safeUnlink(`${outputDir}/.tmp_${stamp}.jpg`);
+    return [commandResult(false, "", `Could not convert the scan to ${fmt.toUpperCase()}: ${exc}`), null];
   }
 }

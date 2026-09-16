@@ -1,4 +1,4 @@
-import app from "./app.ts";
+import app, { MAX_UPLOAD_MB } from "./app.ts";
 import { main as historyMain } from "./history_worker.ts";
 
 const port = Number.parseInt(process.env.WEB_PORT || "8080", 10);
@@ -18,6 +18,7 @@ if (import.meta.main) {
     port,
     hostname: "0.0.0.0",
     idleTimeout: 255,
+    maxRequestBodySize: (MAX_UPLOAD_MB + 1) * 1024 * 1024,
     fetch: app.fetch,
     development: false,
   });
@@ -32,7 +33,7 @@ if (import.meta.main) {
     if (_shuttingDown) return;
     _shuttingDown = true;
     console.log(`[server] Received ${sig}, draining…`);
-    try { server.stop(true); } catch {}
+    try { server.stop(false); } catch {}
     // Give in-flight requests a few seconds, then force out so the
     // container doesn't hang supervisord's stopwait.
     setTimeout(() => {

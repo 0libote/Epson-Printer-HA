@@ -35,6 +35,7 @@ export default defineConfig({
     proxy: {
       "/api": { target: "http://localhost:8080", changeOrigin: true },
       "/scans": { target: "http://localhost:8080", changeOrigin: true },
+      "/client-settings": { target: "http://localhost:8080", changeOrigin: true },
       "/setup": { target: "http://localhost:8080", changeOrigin: true },
       "/print": { target: "http://localhost:8080", changeOrigin: true },
       "/scan": { target: "http://localhost:8080", changeOrigin: true },

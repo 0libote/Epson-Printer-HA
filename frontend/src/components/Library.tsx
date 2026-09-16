@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, Download, Pencil, Search, Trash2, X } from "lucide-react";
 import { useToast } from "./Toast";
 import { deleteScan, renameScan, type ScanItem } from "../lib/api";
@@ -123,6 +123,11 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setSelected(previous => new Set([...previous].filter(name => scans.some(scan => scan.name === name))));
+  }, [scans]);
+
 
   const visible = useMemo(() => {
     let out = scans;
@@ -144,6 +149,8 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
 
   const remove = async (name: string) => {
     if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+    if (busy) return;
+    setBusy(true);
     try {
       await deleteScan(name);
       push({ kind: "success", title: "Deleted", desc: name });
@@ -151,17 +158,20 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
       onChanged();
     } catch (err: any) {
       push({ kind: "error", title: "Couldn't delete", desc: String(err.message || err).slice(0, 220) });
-    }
+    } finally { setBusy(false); }
   };
 
   const bulkDelete = async () => {
-    if (selected.size === 0) return;
+    if (selected.size === 0 || busy) return;
     if (!confirm(`Delete ${selected.size} scans?`)) return;
-    const results = await Promise.allSettled([...selected].map((n) => deleteScan(n)));
+    setBusy(true);
+    const names = [...selected];
+    const results = await Promise.allSettled(names.map((n) => deleteScan(n)));
+    setBusy(false);
     const ok = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - ok;
     push({ kind: fail ? "error" : "success", title: fail ? `Deleted ${ok}, ${fail} failed` : `Deleted ${ok} scans` });
-    setSelected(new Set());
+    setSelected(new Set(names.filter((_, i) => results[i].status === "rejected")));
     onChanged();
   };
 
@@ -169,6 +179,8 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
     const base = oldName.replace(/\.[^.]+$/, "");
     const v = renameValue.trim() || base;
     if (!v) return;
+    if (busy) return;
+    setBusy(true);
     try {
       const res = await renameScan(oldName, v);
       push({ kind: "success", title: "Renamed", desc: `${oldName} → ${res.name || v}` });
@@ -177,7 +189,7 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
       onChanged();
     } catch (err: any) {
       push({ kind: "error", title: "Rename failed", desc: String(err.message || err).slice(0, 220) });
-    }
+    } finally { setBusy(false); }
   };
 
   return (
@@ -209,7 +221,7 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
       {selected.size > 0 ? (
         <div {...stylex.props(s.bulkBar)}>
           <span>{selected.size} selected</span>
-          <button {...stylex.props(ui.buttonQuiet, ui.buttonDanger)} onClick={bulkDelete}>
+          <button {...stylex.props(ui.buttonQuiet, ui.buttonDanger)} disabled={busy} onClick={bulkDelete}>
             <Trash2 size={13} /> Delete selected
           </button>
           <button {...stylex.props(ui.buttonQuiet)} onClick={() => setSelected(new Set())}>Clear</button>
@@ -271,7 +283,7 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
                     }}
                     aria-label="New name"
                   />
-                  <button {...stylex.props(s.iconBtn)} onClick={() => doRename(scan.name)} aria-label="Confirm rename"><Check size={14} /></button>
+                  <button {...stylex.props(s.iconBtn)} disabled={busy} onClick={() => doRename(scan.name)} aria-label="Confirm rename"><Check size={14} /></button>
                   <button {...stylex.props(s.iconBtn)} onClick={() => { setRenaming(null); setRenameValue(""); }} aria-label="Cancel rename"><X size={14} /></button>
                 </span>
               ) : (
@@ -296,7 +308,7 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
                 >
                   <Pencil size={13} />
                 </button>
-                <button {...stylex.props(s.iconBtn, s.iconBtnDanger)} onClick={() => remove(scan.name)} title="Delete" aria-label={`Delete ${scan.name}`}>
+                <button {...stylex.props(s.iconBtn, s.iconBtnDanger)} disabled={busy} onClick={() => remove(scan.name)} title="Delete" aria-label={`Delete ${scan.name}`}>
                   <Trash2 size={14} />
                 </button>
               </span>

@@ -128,3 +128,22 @@ Household-ready printing has been verified against a physical XP-2200 over IPP. 
 ## Why this exists
 
 Because installing a manufacturer connectivity suite on every computer just to put ink on A4 paper is a ridiculous use of everyone's afternoon.
+
+## Local development
+
+Install Bun 1.4.2, then run `bun install --frozen-lockfile` and `bun run dev:all`.
+Open `http://localhost:5173` for the dashboard; Vite proxies API and form requests
+(including network-sharing settings) to the backend on port 8080. Set `APP_DATA`
+to a writable directory when running outside Docker. CUPS, SANE and the Epson
+driver are provided by the container; local development alone does not install them.
+
+Run `bun test`, `bun run lint`, `bun run typecheck:web` and `bun run build` before
+submitting changes. The tests include frontend request handling and real PNG/JPG/PDF
+conversion using a fixture scanner process. `scripts/smoke-test.sh IMAGE` checks the
+container's CUPS filter chain and SANE test backend without a physical printer.
+
+Dashboard sections can be bookmarked with `#overview`, `#scans`, `#history` and
+`#settings`. Print selections and running scans survive section changes; a scan's
+progress can also resume after reloading the same browser tab. Completed scans live
+in **Saved scans**. Cancellation waits for the running scanner operation to stop
+before another job can acquire the scanner.

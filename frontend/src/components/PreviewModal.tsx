@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Download, X } from "lucide-react";
 import type { ScanItem } from "../lib/api";
 import { s as ui } from "./ui";
@@ -37,20 +37,31 @@ const s = stylex.create({
 });
 
 export function PreviewModal({ scan, onClose }: { scan: ScanItem; onClose: () => void }) {
+  const modalRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key !== "Tab") return;
+      const nodes = modalRef.current?.querySelectorAll<HTMLElement>('a[href], button, iframe, [tabindex="0"]');
+      if (!nodes?.length) return;
+      const first = nodes[0], last = nodes[nodes.length - 1];
+      if (e.shiftKey && (document.activeElement === first || !modalRef.current?.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
     document.addEventListener("keydown", onKey);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = prev;
+      previousFocus?.focus();
     };
   }, [onClose]);
 
   return (
     <div {...stylex.props(ui.scrim)} role="dialog" aria-modal="true" aria-label={scan.name} onClick={onClose}>
-      <div {...stylex.props(ui.modal)} onClick={(e) => e.stopPropagation()}>
+      <div ref={modalRef} {...stylex.props(ui.modal)} onClick={(e) => e.stopPropagation()}>
         <div {...stylex.props(s.head)}>
           <span {...stylex.props(s.title)}>{scan.name}</span>
           <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(ui.buttonQuiet)} style={{ textDecoration: "none" }}>

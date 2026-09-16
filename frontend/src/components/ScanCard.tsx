@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ScanLine, X } from "lucide-react";
 import { useToast } from "./Toast";
-import { postScan, startScanJob, pollScanJob, cancelScanJob, cancelAllScans } from "../lib/api";
+import { startScanJob, pollScanJob, cancelScanJob, cancelAllScans } from "../lib/api";
 import { s as ui, Card, CardHeader, ProgressBar } from "./ui";
 
 const s = stylex.create({
@@ -35,7 +35,7 @@ const DPI_OPTIONS = [
   { value: "600", label: "Max · 600" },
 ];
 
-export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScanned: () => void }) {
+export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: boolean; scannerDetail?: string; onScanned: () => void }) {
   const { push } = useToast();
   const [mode, setMode] = useState("Color");
   const [dpi, setDpi] = useState("300");
@@ -47,13 +47,23 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [stuckJobId, setStuckJobId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
-  const cancelRef = useRef(false);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const [blocked, setBlocked] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const onScannedRef = useRef(onScanned);
+  onScannedRef.current = onScanned;
 
-  useEffect(() => () => {
-    cancelRef.current = true;
-    for (const t of timers.current) clearTimeout(t);
-    timers.current = [];
+  useEffect(() => {
+    let disposed = false;
+    const saved = sessionStorage.getItem("scanJobId");
+    if (saved && /^[a-f0-9]{12}$/.test(saved)) {
+      pollScanJob(saved).then(job => {
+        if (disposed) return;
+        setJobId(saved);
+        setStartedAt(job.startedAt || job.createdAt);
+        setBusy(true);
+      }).catch(() => { sessionStorage.removeItem("scanJobId"); });
+    }
+    return () => { disposed = true; };
   }, []);
 
   useEffect(() => {
@@ -62,96 +72,86 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
     return () => clearInterval(id);
   }, [busy, startedAt]);
 
+  useEffect(() => {
+    if (!jobId) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
+    const poll = async () => {
+      try {
+        const job = await pollScanJob(jobId);
+        if (disposed) return;
+        failures = 0;
+        setProgress(job.progress);
+        setStartedAt(job.startedAt || job.createdAt);
+        if (["done", "error", "cancelled"].includes(job.state)) {
+          sessionStorage.removeItem("scanJobId");
+          setBusy(false);
+          setCancelling(false);
+          setJobId(null);
+          if (job.state === "done") {
+            push({ kind: "success", title: "Scan complete", desc: job.resultName });
+            onScannedRef.current();
+          } else {
+            push({ kind: job.state === "cancelled" ? "info" : "error", title: job.state === "cancelled" ? "Scan cancelled" : "Scan failed", desc: job.error });
+          }
+          return;
+        }
+      } catch (err: any) {
+        if (disposed) return;
+        failures++;
+        setProgress("Connection interrupted. Reconnecting to the scan…");
+        if (failures >= 7) {
+          setBusy(false);
+          setCancelling(false);
+          setJobId(null);
+          setBlocked(true);
+          setStuckJobId(jobId);
+          push({ kind: "error", title: "Lost contact with the scan", desc: "The scanner may still be running. Check saved scans or cancel it before retrying." });
+          return;
+        }
+      }
+      timer = setTimeout(poll, 1500);
+    };
+    void poll();
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [jobId, push]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!["150", "200", "300", "600"].includes(dpi)) {
-      push({ kind: "error", title: "Pick a valid quality setting." });
-      return;
-    }
-    cancelRef.current = false;
     setBusy(true);
-    setStuckJobId(null);
     setProgress("Contacting scanner");
     setElapsed(0);
     setStartedAt(Date.now());
     try {
       const { jobId: id } = await startScanJob({ dpi, mode, format: fmt });
+      sessionStorage.setItem("scanJobId", id);
       setJobId(id);
-      let done = false;
-      let polls = 0;
-      let consecutiveErrors = 0;
-      while (!done && !cancelRef.current) {
-        await new Promise<void>((r) => { const t = setTimeout(() => r(), 1500); timers.current.push(t); });
-        if (cancelRef.current) break;
-        polls++;
-        if (polls > 300) {
-          push({ kind: "error", title: "Scan timed out", desc: "Still not done after several minutes. Check the printer, then try again." });
-          break;
-        }
-        try {
-          const job = await pollScanJob(id);
-          consecutiveErrors = 0;
-          setProgress(job.progress);
-          if (job.state === "done") {
-            done = true;
-            push({ kind: "success", title: "Scan complete", desc: `${job.resultName || "Scan"} · ${fmt.toUpperCase()} · ${dpi} dpi · ${job.elapsed}s` });
-            onScanned();
-          } else if (job.state === "error" || job.state === "cancelled") {
-            done = true;
-            if (cancelRef.current) break;
-            const msg = job.error || "Scan failed";
-            if (msg.toLowerCase().includes("already in progress")) {
-              push({ kind: "error", title: "A scan is already running", desc: "Wait for it to finish before starting another." });
-            } else if (msg.toLowerCase().includes("cancel")) {
-              push({ kind: "info", title: "Scan cancelled" });
-            } else {
-              push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 240) });
-            }
-          }
-        } catch (pollErr: any) {
-          consecutiveErrors++;
-          if (consecutiveErrors > 6) throw pollErr;
-        }
-      }
+      setBlocked(false);
+      setStuckJobId(null);
     } catch (err: any) {
-      const msg = String(err.message || err);
-      if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
-        try {
-          const fd = new FormData();
-          fd.set("dpi", dpi);
-          fd.set("mode", mode);
-          fd.set("format", fmt);
-          await postScan(fd);
-          push({ kind: "success", title: "Scan complete", desc: `Saved as ${fmt.toUpperCase()} · ${dpi} dpi` });
-          onScanned();
-        } catch (e2: any) {
-          push({ kind: "error", title: "Scan failed", desc: String(e2.message || e2).slice(0, 220) });
-        }
-      } else if (msg.toLowerCase().includes("already in progress") || err?.status === 409) {
-        // Backend rejected us because another job is active (possibly stuck).
-        // Remember the blocker so the UI can offer cancel-and-retry.
-        setStuckJobId(typeof err?.jobId === "string" ? err.jobId : null);
-        push({ kind: "error", title: "A scan is already running", desc: "Wait for it to finish — or cancel the stuck scan below and try again." });
-      } else if (!msg.toLowerCase().includes("timed out")) {
-        push({ kind: "error", title: "Scan failed", desc: msg.slice(0, 220) });
-      }
-    } finally {
       setBusy(false);
-      setJobId(null);
+      if (err.status === 409) {
+        setBlocked(true);
+        setStuckJobId(err.jobId || null);
+        push({ kind: "info", title: "A scan is already running", desc: "Wait for it to finish, or cancel it below." });
+      } else {
+        push({ kind: "error", title: "Couldn't start the scan", desc: String(err.message || err).slice(0, 240) });
+      }
     }
   };
 
-  const clearStuck = async (andRetry: boolean) => {
+  const clearStuck = async () => {
     setClearing(true);
     try {
-      if (stuckJobId) {
-        try { await cancelScanJob(stuckJobId); } catch {}
-      }
-      await cancelAllScans();
+      if (stuckJobId) await cancelScanJob(stuckJobId);
+      else await cancelAllScans();
+      sessionStorage.removeItem("scanJobId");
+      setBlocked(false);
       setStuckJobId(null);
-      push({ kind: "success", title: "Stuck scan cleared", desc: andRetry ? "Try scanning again now." : undefined });
+      push({ kind: "info", title: "Cancellation requested", desc: "Allow the scanner to stop before trying again." });
     } catch (err: any) {
-      push({ kind: "error", title: "Couldn't clear the stuck scan", desc: String(err.message || err).slice(0, 220) });
+      push({ kind: "error", title: "Couldn't cancel the scan", desc: String(err.message || err).slice(0, 220) });
     } finally {
       setClearing(false);
     }
@@ -159,11 +159,12 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
 
   const cancel = async () => {
     if (!jobId) return;
-    cancelRef.current = true;
-    setProgress("Cancelling");
+    setCancelling(true);
     try {
       await cancelScanJob(jobId);
+      setProgress("Cancelling");
     } catch (err: any) {
+      setCancelling(false);
       push({ kind: "error", title: "Couldn't cancel the scan", desc: String(err.message || err).slice(0, 220) });
     }
   };
@@ -175,18 +176,18 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
         tileBg={vars.tealSoft as string}
         tileColor={vars.teal as string}
         title="Scan"
-        sub="Flatbed · A4 · straight to this device"
+        sub="Flatbed · A4 · saved to the scan library"
       />
       {!scannerOk && !busy ? (
         <div {...stylex.props(s.dormant)}>
-          The scanner is warming up. You can still try — the scan will go through as soon as it's ready.
+          {scannerDetail || "Scanner not detected. Check that the printer is awake and connected before trying a scan."}
         </div>
       ) : null}
       <form onSubmit={submit} style={{ marginTop: scannerOk || busy ? 0 : 12 }}>
         <div {...stylex.props(s.grid)}>
           <label {...stylex.props(ui.fieldLabel)}>
             Colour
-            <select {...stylex.props(ui.select)} value={mode} onChange={(e) => setMode(e.target.value)}>
+            <select disabled={busy} {...stylex.props(ui.select)} value={mode} onChange={(e) => setMode(e.target.value)}>
               <option>Color</option>
               <option>Gray</option>
               <option>Lineart</option>
@@ -194,13 +195,13 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
             Quality
-            <select {...stylex.props(ui.select)} value={dpi} onChange={(e) => setDpi(e.target.value)}>
+            <select disabled={busy} {...stylex.props(ui.select)} value={dpi} onChange={(e) => setDpi(e.target.value)}>
               {DPI_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
             Format
-            <select {...stylex.props(ui.select)} value={fmt} onChange={(e) => setFmt(e.target.value)}>
+            <select disabled={busy} {...stylex.props(ui.select)} value={fmt} onChange={(e) => setFmt(e.target.value)}>
               <option value="pdf">PDF</option>
               <option value="png">PNG</option>
               <option value="jpg">JPG</option>
@@ -213,25 +214,25 @@ export function ScanCard({ scannerOk, onScanned }: { scannerOk: boolean; onScann
           </div>
         ) : null}
         <p {...stylex.props(ui.help)} style={{ marginTop: 12 }}>Place the page face-down on the glass, then scan.</p>
-        {stuckJobId ? (
+        {blocked ? (
           <div {...stylex.props(ui.noteBox)} style={{ marginTop: 12 }}>
-            A previous scan looks stuck. Clear it, then try again.
+            Another scan may be running. Cancel it only if you want to stop that scan.
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-              <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={clearing || busy} onClick={() => clearStuck(false)}>
-                {clearing ? "Clearing…" : "Cancel stuck scan"}
+              <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={clearing || busy} onClick={clearStuck}>
+                {clearing ? "Clearing…" : "Cancel existing scan"}
               </button>
             </div>
           </div>
         ) : null}
         <div style={{ marginTop: 14 }}>
-          <button {...stylex.props(ui.buttonPrimary, ui.buttonTeal, busy && ui.buttonPrimaryDisabled)} type="submit" disabled={busy}>
+          <button {...stylex.props(ui.buttonPrimary, ui.buttonTeal, busy && ui.buttonPrimaryDisabled)} type="submit" disabled={busy || clearing}>
             {busy ? <><Loader2 size={16} className="spin" /> Scanning{elapsed > 0 ? ` · ${elapsed}s` : "…"}</> : "Scan"}
           </button>
           {busy ? (
             <div style={{ marginTop: 10 }}>
               <ProgressBar color={vars.teal as string} />
               <p {...stylex.props(s.stage)}>{progress || "Working"} · {elapsed}s</p>
-              <button type="button" {...stylex.props(ui.buttonQuiet, ui.buttonDanger, s.cancel)} onClick={cancel}>
+              <button type="button" {...stylex.props(ui.buttonQuiet, ui.buttonDanger, s.cancel)} onClick={cancel} disabled={!jobId || cancelling}>
                 <X size={13} /> Cancel scan
               </button>
             </div>

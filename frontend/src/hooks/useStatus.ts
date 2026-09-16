@@ -27,7 +27,7 @@ export function useStatus(enabled = true) {
 export function useHistory(limit = 100) {
   return useQuery({
     queryKey: ["history", limit],
-    queryFn: fetchHistory,
+    queryFn: () => fetchHistory(limit),
     refetchInterval: 15000,
     refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
@@ -40,7 +40,7 @@ export function useHistory(limit = 100) {
 export function useScans(limit = 100, enabled = true) {
   return useQuery({
     queryKey: ["scans", limit],
-    queryFn: fetchScans,
+    queryFn: () => fetchScans(limit),
     enabled,
     refetchInterval: 15000,
     refetchIntervalInBackground: false,

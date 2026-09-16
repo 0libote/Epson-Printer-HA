@@ -272,6 +272,8 @@ describe("web - Bun Hono", () => {
     const res = await client.request("/api/status", {});
     const data: any = await res.json();
     expect(data.printer_name).toBe("Home_Epson_XP2200");
+    expect(data.client_setup.ipp_uri).toBe("ipp://printer.home:631/printers/Home_Epson_XP2200");
+    expect(res.headers.get("cache-control")).toBe("no-store");
     // The ipp_uri should use printer.home via clientSetup logic? Our api/status uses clientSetup with host header, but if CLIENT_HOST set, it should be printer.home
     // However our api/status clientSetup uses hostHeader from request "localhost" unless CLIENT_HOST overrides.
     // Let's directly test clientSetup logic via making request with host header localhost and checking that api returns host via CLIENT_HOST.
@@ -415,4 +417,97 @@ describe("web - Bun Hono", () => {
       (Bun as any).spawn = originalSpawn;
     }
   });
+  test("scan deletion requires a token even on the first request", async () => {
+    await Bun.write(join(tmp, "scans", "keep.pdf"), "%PDF-1.4");
+    const client = createClient(appModule.app);
+    const res = await client.request("/api/scans/keep.pdf", { method: "DELETE" });
+    expect(res.status).toBe(400);
+    expect(existsSync(join(tmp, "scans", "keep.pdf"))).toBe(true);
+  });
+
+  test("scan rename and delete update status immediately", async () => {
+    await Bun.write(join(tmp, "scans", "original.pdf"), "%PDF-1.4");
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    expect((await (await client.request("/api/status")).json()).scans).toContain("original.pdf");
+    const renamed = await client.request("/api/scans/original.pdf/rename", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify({ name: "renamed" }),
+    });
+    expect(renamed.status).toBe(200);
+    expect((await (await client.request("/api/status")).json()).scans).toEqual(["renamed.pdf"]);
+    const removed = await client.request("/api/scans/renamed.pdf", { method: "DELETE", headers: { "X-CSRF-Token": csrf } });
+    expect(removed.status).toBe(200);
+    expect((await (await client.request("/api/status")).json()).scans).toEqual([]);
+  });
+
+  test("scan listing reports total independently of the page limit", async () => {
+    await Bun.write(join(tmp, "scans", "one.pdf"), "%PDF-1.4");
+    await Bun.write(join(tmp, "scans", "two.pdf"), "%PDF-1.4");
+    await Bun.write(join(tmp, "scans", ".partial.png"), "unfinished");
+    const response = await createClient(appModule.app).request("/api/scans?limit=1");
+    const data = await response.json();
+    expect(data.scans).toHaveLength(1);
+    expect(data.total).toBe(2);
+  });
+
+  test("JSON null is rejected as a bad request instead of crashing", async () => {
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const res = await client.request("/api/scans/file.pdf/rename", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "null",
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe("Expected a JSON object");
+  });
+
+  test("cancelling a queued scan prevents its scheduled execution", async () => {
+    appModule._resetScanJobsForTest();
+    await Bun.write(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10" }));
+    const warm = spyOn(coreModule, "warmDeviceCache").mockResolvedValue(undefined);
+    const scan = spyOn(coreModule, "scanDocument").mockResolvedValue([{ ok: false, stdout: "", stderr: "unexpected scan", returncode: 1 }, null]);
+    try {
+      const client = createClient(appModule.app);
+      const csrf = await getCsrf(client, appModule.app);
+      const res = await client.request("/api/scan", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify({ dpi: 300 }),
+      });
+      expect(res.status).toBe(202);
+      const { jobId } = await res.json();
+      const cancel = await client.request(`/api/scan/jobs/${jobId}/cancel`, { method: "POST", headers: { "X-CSRF-Token": csrf } });
+      expect(cancel.status).toBe(200);
+      await Bun.sleep(40);
+      const job = (await (await client.request(`/api/scan/jobs/${jobId}`)).json()).job;
+      expect(job.state).toBe("cancelled");
+      expect(scan).not.toHaveBeenCalled();
+    } finally { warm.mockRestore(); scan.mockRestore(); appModule._resetScanJobsForTest(); }
+  });
+
+  test("cancellation keeps the hardware locked until the running scan settles", async () => {
+    appModule._resetScanJobsForTest();
+    await Bun.write(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10" }));
+    let finish!: (value: any) => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<any>(resolve => { finish = resolve; });
+    const warm = spyOn(coreModule, "warmDeviceCache").mockResolvedValue(undefined);
+    const scan = spyOn(coreModule, "scanDocument").mockImplementation(async () => { entered(); return pending; });
+    try {
+      const client = createClient(appModule.app);
+      const csrf = await getCsrf(client, appModule.app);
+      const start = () => client.request("/api/scan", {
+        method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: JSON.stringify({ dpi: 300 }),
+      });
+      expect((await start()).status).toBe(202);
+      await started;
+      expect(existsSync(join(tmp, ".scanner.lock"))).toBe(true);
+      expect((await client.request("/api/scan/cancel-all", { method: "POST", headers: { "X-CSRF-Token": csrf } })).status).toBe(200);
+      expect((await start()).status).toBe(409);
+      expect(existsSync(join(tmp, ".scanner.lock"))).toBe(true);
+      finish([{ ok: false, stdout: "", stderr: "scan_cancelled", returncode: 130 }, null]);
+      await Bun.sleep(10);
+      expect(existsSync(join(tmp, ".scanner.lock"))).toBe(false);
+    } finally { finish([{ ok: false, stdout: "", stderr: "scan_cancelled", returncode: 130 }, null]); warm.mockRestore(); scan.mockRestore(); appModule._resetScanJobsForTest(); }
+  });
+
 });

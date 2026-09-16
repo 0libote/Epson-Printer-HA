@@ -86,9 +86,10 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
   const fileRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
-  const copies = Math.min(99, Math.max(1, Number.parseInt(copiesText, 10) || 1));
+  const copies = Number(copiesText);
 
   const pick = (f: File | null) => {
+    if (busy) return;
     setError(null);
     if (!f) { setFile(null); return; }
     const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
@@ -102,7 +103,7 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
     e.preventDefault();
     setError(null);
     if (!file) { setError("Choose a file first."); return; }
-    if (!/^\d+$/.test(copiesText.trim()) || copies < 1 || copies > 99) {
+    if (!/^\d+$/.test(copiesText.trim()) || !Number.isInteger(copies) || copies < 1 || copies > 99) {
       setError("Copies must be a whole number between 1 and 99.");
       return;
     }
@@ -138,6 +139,10 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
       <form onSubmit={submit}>
         <label
           {...stylex.props(s.drop, dragOver && s.dropActive)}
+          role="button"
+          tabIndex={busy ? -1 : 0}
+          aria-label="Choose a file to print"
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
           onDragEnter={(e) => { e.preventDefault(); dragDepth.current++; setDragOver(true); }}
           onDragOver={(e) => e.preventDefault()}
           onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); }}
@@ -147,6 +152,7 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
             ref={fileRef}
             {...stylex.props(s.fileInput)}
             type="file"
+            disabled={busy}
             accept={ACCEPT.join(",")}
             onChange={(e) => pick(e.target.files?.[0] || null)}
             tabIndex={-1}
@@ -164,7 +170,7 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
             <FileText size={15} style={{ flexShrink: 0, color: vars.textTertiary as string }} />
             <span {...stylex.props(s.chosenName)}>{file.name}</span>
             <span {...stylex.props(s.chosenMeta)}>{(file.size / 1024).toFixed(0)} KB</span>
-            <button type="button" {...stylex.props(s.iconBtn)} aria-label="Remove file" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}>
+            <button type="button" {...stylex.props(s.iconBtn)} disabled={busy} aria-label="Remove file" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}>
               <X size={14} />
             </button>
           </div>
@@ -178,15 +184,15 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
             <input
               {...stylex.props(ui.input)}
               type="number"
+              disabled={busy}
               min={1}
               max={99}
               value={copiesText}
               onChange={(e) => setCopiesText(e.target.value)}
-              onBlur={() => setCopiesText(String(copies))}
             />
           </label>
           <label {...stylex.props(s.check)}>
-            <input type="checkbox" checked={grayscale} onChange={(e) => setGrayscale(e.target.checked)} style={{ width: 16, height: 16, accentColor: vars.accent as string }} />
+            <input type="checkbox" disabled={busy} checked={grayscale} onChange={(e) => setGrayscale(e.target.checked)} style={{ width: 16, height: 16, accentColor: vars.accent as string }} />
             Black &amp; white
           </label>
         </div>
