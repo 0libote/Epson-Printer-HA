@@ -20,7 +20,43 @@ export function commandResult(ok: boolean, stdout = "", stderr = "", returncode 
 }
 
 // Bun.spawn based runCommand with timeout (no listener leaks, no zombie procs)
+// Hardened: global concurrency cap (spawn storms under multi-client polling),
+// output truncation (verbose CUPS/scanimage stderr can't OOM the hub).
+const RUN_CONCURRENCY_MAX = 12;
+let _runActive = 0;
+const _runQueue: Array<() => void> = [];
+
+function _runAcquire(): Promise<void> {
+  if (_runActive < RUN_CONCURRENCY_MAX) {
+    _runActive++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    _runQueue.push(() => {
+      _runActive++;
+      resolve();
+    });
+  });
+}
+
+function _runRelease(): void {
+  _runActive = Math.max(0, _runActive - 1);
+  const next = _runQueue.shift();
+  if (next) next();
+}
+
+const RUN_OUTPUT_MAX = 256 * 1024; // 256KB cap per stream
+function _truncateOutput(s: string): string {
+  if (s.length > RUN_OUTPUT_MAX) return s.slice(0, RUN_OUTPUT_MAX) + "\n…[truncated]";
+  return s;
+}
+
+export function _runStatsForTest() {
+  return { active: _runActive, queued: _runQueue.length, max: RUN_CONCURRENCY_MAX };
+}
+
 export async function runCommand(args: string[], timeout = 30_000, cwd?: string): Promise<CommandResult> {
+  await _runAcquire();
   let proc: any;
   let timer: any = null;
   try {
@@ -47,7 +83,7 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
         Promise.all([stdoutPromise, stderrPromise, exitPromise]),
         timeoutPromise,
       ])) as [string, string, number];
-      return commandResult(code === 0, out.trim(), err.trim(), code);
+      return commandResult(code === 0, _truncateOutput(out.trim()), _truncateOutput(err.trim()), code);
     } catch (exc: any) {
       if (timedOut || exc?.message === "timeout") {
         try { await Promise.race([proc.exited, Bun.sleep(1500)]); } catch {}
@@ -61,9 +97,10 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
       try { proc?.kill(); } catch {}
       return commandResult(false, "", "timeout", 1);
     }
-    return commandResult(false, "", String(exc?.message ?? exc), 1);
+    return commandResult(false, "", _truncateOutput(String(exc?.message ?? exc)).slice(0, 2000), 1);
   } finally {
     if (timer) clearTimeout(timer);
+    _runRelease();
   }
 }
 
@@ -110,9 +147,11 @@ export function tcpOpen(host: string, port: number, timeout = 1000): Promise<boo
   if (!host) return Promise.resolve(false);
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let fallback: any = null;
     const done = (v: boolean) => {
       if (settled) return;
       settled = true;
+      if (fallback) clearTimeout(fallback);
       try { socket.destroy(); } catch {}
       resolve(v);
     };
@@ -123,7 +162,8 @@ export function tcpOpen(host: string, port: number, timeout = 1000): Promise<boo
     socket.on("error", () => done(false));
     socket.on("timeout", () => done(false));
     // hard fallback so a hung kernel connect can never leak the socket
-    setTimeout(() => done(false), timeout + 500).unref?.();
+    fallback = setTimeout(() => done(false), timeout + 500);
+    (fallback as any).unref?.();
   });
 }
 
@@ -298,9 +338,9 @@ export async function scannerStatus(printerIp: string): Promise<{ ok: boolean; s
     }
     const hasBridge = await tcpOpen("127.0.0.1", 6566, 200);
     if (hasBridge) {
-      return { ok: true, state: "ready", detail: "Epson compatibility bridge is online", backend: "Epson compatibility bridge", device: null, open_source: false };
+      return { ok: false, state: "not_detected", detail: "The compatibility bridge is online, but no scanner was detected. Check that the printer is awake and its address is correct.", backend: "Epson compatibility bridge", device: null, open_source: false };
     }
-    return { ok: false, state: "starting", detail: "The automatic scanner service is still starting.", backend: null, device: null, open_source: false };
+    return { ok: false, state: "not_detected", detail: "No scanner detected. Check the printer address and connection. If setup just finished, allow the scanner service a moment to start.", backend: null, device: null, open_source: false };
   });
 }
 
@@ -329,6 +369,8 @@ export async function scanDocument(
   let fmt = (opts.fmt ?? "pdf").toLowerCase();
   if (!["pdf", "png", "jpg", "jpeg"].includes(fmt)) fmt = "pdf";
 
+  if (opts.control?.isCancelled()) return [commandResult(false, "", "scan_cancelled", 130), null];
+
   // Use cached device (fast) but force refresh on miss
   let [device] = await detectSaneDeviceCached(printerIp);
   if (!device) {
@@ -344,7 +386,18 @@ export async function scanDocument(
   const safeUnlink = (p: string) => { try { unlinkSync(p); } catch {} };
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, -5) + `_${String(Date.now()).slice(-6)}`;
-  const pngPath = `${outputDir}/scan_${stamp}.png`;
+  const pngPath = `${outputDir}/.scan_${stamp}.png`;
+  const publish = async (path: string): Promise<[CommandResult, string | null]> => {
+    if (opts.control?.isCancelled()) {
+      safeUnlink(path);
+      safeUnlink(pngPath);
+      return [commandResult(false, "", "scan_cancelled", 130), null];
+    }
+    const target = path.replace("/.scan_", "/scan_");
+    const { renameSync } = await import("node:fs");
+    renameSync(path, target);
+    return [commandResult(true, target), target];
+  };
   const args = ["scanimage", "--device-name", device, "--mode", mode, "--resolution", String(dpi), "-x", "210", "-y", "297", "--format=png"];
 
   // DPI-aware timeout (higher DPI = larger + slower)
@@ -410,7 +463,7 @@ export async function scanDocument(
           continue;
         }
       }
-      const hint = errText || `scanimage exited ${exitCode}`;
+      const hint = (errText || `scanimage exited ${exitCode}`).slice(0, 800);
       return [commandResult(false, "", hint, exitCode), null];
     } catch (exc: any) {
       if (timeoutId) clearTimeout(timeoutId);
@@ -442,19 +495,19 @@ export async function scanDocument(
   }
 
   if (fmt === "png") {
-    return [commandResult(true, pngPath), pngPath];
+    return publish(pngPath);
   }
 
   try {
     opts.control?.setProgress?.("Converting scan");
     if (fmt === "jpg" || fmt === "jpeg") {
-      const outPath = `${outputDir}/scan_${stamp}.jpg`;
+      const outPath = `${outputDir}/.scan_${stamp}.jpg`;
       const img = (Bun.file(pngPath) as any).image();
       await img.jpeg({ quality: jpegQualityForDpi(dpi) }).write(outPath);
       safeUnlink(pngPath);
-      return [commandResult(true, outPath), outPath];
+      return publish(outPath);
     } else {
-      const outPath = `${outputDir}/scan_${stamp}.pdf`;
+      const outPath = `${outputDir}/.scan_${stamp}.pdf`;
       const pngBytes = await Bun.file(pngPath).arrayBuffer();
       const pdfDoc = await PDFDocument.create();
       const page = pdfDoc.addPage([595.28, 841.89]);
@@ -487,9 +540,13 @@ export async function scanDocument(
       const pdfBytes = await pdfDoc.save();
       await Bun.write(outPath, pdfBytes);
       safeUnlink(pngPath);
-      return [commandResult(true, outPath), outPath];
+      return publish(outPath);
     }
   } catch (exc: any) {
-    return [commandResult(true, pngPath, `Conversion failed; saved PNG instead: ${exc}`), pngPath];
+    safeUnlink(pngPath);
+    safeUnlink(`${outputDir}/.scan_${stamp}.jpg`);
+    safeUnlink(`${outputDir}/.scan_${stamp}.pdf`);
+    safeUnlink(`${outputDir}/.tmp_${stamp}.jpg`);
+    return [commandResult(false, "", `Could not convert the scan to ${fmt.toUpperCase()}: ${exc}`), null];
   }
 }

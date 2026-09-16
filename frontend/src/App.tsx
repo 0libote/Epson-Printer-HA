@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "./styles/tokens.stylex";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Clock, FolderOpen, History as HistoryIcon, LayoutGrid, RefreshCw, Settings as SettingsIcon, ShieldAlert } from "lucide-react";
 import { useStatus, useHistory, useScans } from "./hooks/useStatus";
 import { useToast } from "./components/Toast";
@@ -31,6 +31,7 @@ const s = stylex.create({
   tabs: {
     display: "flex",
     gap: "4px",
+    flexWrap: "wrap",
     marginTop: "20px",
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
@@ -41,6 +42,8 @@ const s = stylex.create({
     alignItems: "center",
     gap: "7px",
     padding: "10px 14px",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
     borderWidth: 0,
     borderStyle: "none",
     backgroundColor: "transparent",
@@ -105,7 +108,7 @@ function refreshAll(qc: ReturnType<typeof useQueryClient>) {
 }
 
 export default function App() {
-  const { data, isLoading, isError, error, refetch } = useStatus(true);
+  const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useStatus(true);
   const historyQ = useHistory(100);
   const qc = useQueryClient();
   const { push } = useToast();
@@ -121,13 +124,18 @@ export default function App() {
   const initialInk = data?.ink ?? null;
   const history = historyQ.data?.history || [];
 
-  const host = useMemo(() => {
-    const h = window.location.host;
-    if (h.startsWith("[")) return h.split("]")[0] + "]";
-    return h.split(":")[0] || "localhost";
+  const host = data?.client_setup?.host || window.location.hostname;
+  const readTab = (): Tab => {
+    const hash = window.location.hash.slice(1);
+    return ["overview", "scans", "history", "settings"].includes(hash) ? hash as Tab : "overview";
+  };
+  const [tab, setTab] = useState<Tab>(readTab);
+  useEffect(() => {
+    const update = () => setTab(readTab());
+    window.addEventListener("hashchange", update);
+    return () => window.removeEventListener("hashchange", update);
   }, []);
 
-  const [tab, setTab] = useState<Tab>("overview");
   const [previewScan, setPreviewScan] = useState<ScanItem | null>(null);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -161,7 +169,7 @@ export default function App() {
     );
   }
 
-  if (isError) {
+  if (isError && !data) {
     const msg = (error as any)?.message || "";
     const isAuth = msg.includes("401") || msg.toLowerCase().includes("authentication");
     return (
@@ -206,9 +214,9 @@ export default function App() {
   }
 
   const tabs: Array<{ id: Tab; label: string; icon: ReactNode; count?: number }> = [
-    { id: "overview", label: "Overview", icon: <LayoutGrid size={14} /> },
-    { id: "scans", label: "Scans", icon: <FolderOpen size={14} />, count: scansTotal },
-    { id: "history", label: "History", icon: <HistoryIcon size={14} />, count: history.length },
+    { id: "overview", label: "Print & scan", icon: <LayoutGrid size={14} /> },
+    { id: "scans", label: "Saved scans", icon: <FolderOpen size={14} />, count: scansTotal },
+    { id: "history", label: "Print history", icon: <HistoryIcon size={14} />, count: history.length },
     { id: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
   ];
 
@@ -221,7 +229,8 @@ export default function App() {
           printerState={printer.state}
           printerDetail={`${displayName} · ${printerIp}`}
           scannerOk={!!scanner.ok}
-          scannerDetail={scanner.ok ? scanner.backend || "Ready" : "Warming up…"}
+          scannerState={scanner.state}
+          scannerDetail={scanner.detail || (scanner.ok ? "Ready" : scanner.state.replaceAll("_", " "))}
           queueCount={queue.length}
         />
 
@@ -230,7 +239,7 @@ export default function App() {
             <button
               key={t.id}
               {...stylex.props(s.tab, tab === t.id && s.tabActive)}
-              onClick={() => setTab(t.id)}
+              onClick={() => { window.location.hash = t.id; setTab(t.id); }}
               aria-current={tab === t.id ? "page" : undefined}
             >
               {t.icon} {t.label}
@@ -239,11 +248,10 @@ export default function App() {
           ))}
         </nav>
 
-        {tab === "overview" ? (
-          <>
+        <section hidden={tab !== "overview"} aria-label="Print and scan">
             <div {...stylex.props(s.actionGrid)}>
-              <PrintCard onPrinted={() => refreshAll(qc)} />
-              <ScanCard scannerOk={!!scanner.ok} onScanned={() => refreshAll(qc)} />
+              <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} />
+              <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} onScanned={() => refreshAll(qc)} />
             </div>
             {queue.length > 0 ? (
               <div {...stylex.props(s.stack)}>
@@ -253,11 +261,11 @@ export default function App() {
             <div {...stylex.props(s.stack)}>
               <InkLevels initial={initialInk} />
             </div>
-          </>
-        ) : null}
+        </section>
 
         {tab === "scans" ? (
           <div {...stylex.props(s.stack)}>
+            {scansQ.isError ? <p role="alert">Couldn’t load saved scans: {scansQ.error.message} <button onClick={() => scansQ.refetch()}>Retry</button></p> : null}
             <Library
               scans={scans}
               total={scansTotal}
@@ -272,7 +280,9 @@ export default function App() {
 
         {tab === "history" ? (
           <div {...stylex.props(s.stack)}>
-            <History items={history} />
+            {historyQ.isError ? <p role="alert">Couldn’t load print history: {historyQ.error.message} <button onClick={() => historyQ.refetch()}>Retry</button></p> : null}
+            {!historyQ.isError && historyQ.isLoading ? <output>Loading print history…</output> : null}
+            {!historyQ.isError && !historyQ.isLoading ? <History items={history} /> : null}
           </div>
         ) : null}
 
@@ -285,15 +295,15 @@ export default function App() {
               host={host}
               onSaved={() => refreshAll(qc)}
             />
-            <PrinterAddressSettings printerIp={printerIp} onSaved={() => refreshAll(qc)} />
+            <PrinterAddressSettings printerIp={printerIp} managed={data?.printer_ip_managed} onSaved={() => refreshAll(qc)} />
           </div>
         ) : null}
 
         <div {...stylex.props(s.liveRow)}>
           <Clock size={12} />
           <span>
-            Updated {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            {historyQ.isError ? " · retrying…" : ""}
+            Updated {new Date(dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {isError ? " · Connection lost; showing last known status" : ""}
           </span>
           <span {...stylex.props(s.refreshBtn)}>
             <button

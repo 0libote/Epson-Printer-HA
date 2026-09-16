@@ -99,7 +99,7 @@ describe("core", () => {
     mockRun.mockRestore();
   });
 
-  test("scanner status is fast and briefly cached", async () => {
+  test("a reachable bridge alone does not claim scanner readiness and is cached", async () => {
     // clear caches
     core.clearStatusCaches();
     const mockTcp = spyOn(core, "tcpOpen").mockResolvedValue(true);
@@ -107,16 +107,18 @@ describe("core", () => {
     const first = await core.scannerStatus("192.0.2.10");
     const second = await core.scannerStatus("192.0.2.10");
     expect(first).toEqual(second);
-    expect(first.state).toBe("ready");
+    expect(first.state).toBe("not_detected");
+    expect(first.ok).toBe(false);
+    expect(first.detail).toContain("bridge is online");
     expect(mockTcp).toHaveBeenCalledTimes(1);
     mockTcp.mockRestore();
   });
 
-  test("scanner status reports starting without blocking", async () => {
+  test("scanner status reports missing hardware without claiming it is starting", async () => {
     core.clearStatusCaches();
     const mockTcp = spyOn(core, "tcpOpen").mockResolvedValue(false);
     const status = await core.scannerStatus("192.0.2.10");
-    expect(status.state).toBe("starting");
+    expect(status.state).toBe("not_detected");
     mockTcp.mockRestore();
   });
 });

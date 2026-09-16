@@ -44,7 +44,20 @@ function useCopy() {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
       } else {
-        throw new Error("no clipboard");
+        // LAN dashboards commonly use HTTP, where the Clipboard API is absent.
+        const previousFocus = document.activeElement as HTMLElement | null;
+        const field = document.createElement("textarea");
+        field.value = text;
+        field.style.position = "fixed";
+        field.style.opacity = "0";
+        document.body.appendChild(field);
+        try {
+          field.select();
+          if (!document.execCommand("copy")) throw new Error("Clipboard unavailable");
+        } finally {
+          field.remove();
+          previousFocus?.focus();
+        }
       }
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
@@ -80,7 +93,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
       push({ kind: "error", title: "Display name must be 1–80 characters." });
       return;
     }
-    if (!/^[A-Za-z0-9._-]{1,127}$/.test(queueEdit.trim())) {
+    if (!/^[A-Za-z0-9._-]{1,127}$/.test(queueEdit.trim()) || [".", ".."].includes(queueEdit.trim())) {
       push({ kind: "error", title: "Queue name may only contain letters, numbers, dot, dash and underscore." });
       return;
     }
@@ -113,7 +126,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
             Queue name
-            <input {...stylex.props(ui.input)} {...stylex.props(ui.mono)} value={queueEdit} onChange={(e) => setQueueEdit(e.target.value)} maxLength={127} required />
+            <input {...stylex.props(ui.input, ui.mono)} value={queueEdit} onChange={(e) => setQueueEdit(e.target.value)} maxLength={127} required />
           </label>
         </div>
         <label {...stylex.props(s.toggle)}>
@@ -163,7 +176,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
   );
 }
 
-export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: string; onSaved: () => void }) {
+export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: { printerIp: string; managed?: boolean; onSaved: () => void }) {
   const { push } = useToast();
   const [ip, setIp] = useState(printerIp);
   const [busy, setBusy] = useState(false);
@@ -194,12 +207,13 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
         <h2 {...stylex.props(ui.sectionTitle)}>Printer address</h2>
       </div>
       <form {...stylex.props(s.stack)} onSubmit={submit}>
+        {managed ? <p {...stylex.props(s.p)}>This address is managed by the server configuration. Update PRINTER_IP there to change it.</p> : null}
         <label {...stylex.props(ui.fieldLabel)}>
-          Printer IP address
-          <input {...stylex.props(ui.input)} {...stylex.props(ui.mono)} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
+          <span>Printer IP address</span>
+          <input {...stylex.props(ui.input, ui.mono)} disabled={managed || busy} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
         </label>
         <div>
-          <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy} style={busy ? { opacity: 0.5 } : undefined}>
+          <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy || managed} style={busy ? { opacity: 0.5 } : undefined}>
             {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save address
           </button>
         </div>

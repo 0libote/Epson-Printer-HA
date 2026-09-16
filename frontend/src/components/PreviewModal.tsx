@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Download, X } from "lucide-react";
 import type { ScanItem } from "../lib/api";
 import { s as ui } from "./ui";
@@ -37,20 +37,23 @@ const s = stylex.create({
 });
 
 export function PreviewModal({ scan, onClose }: { scan: ScanItem; onClose: () => void }) {
+  const modalRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
+    const dialog = modalRef.current;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    dialog?.showModal();
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      dialog?.close();
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
-    <div {...stylex.props(ui.scrim)} role="dialog" aria-modal="true" aria-label={scan.name} onClick={onClose}>
-      <div {...stylex.props(ui.modal)} onClick={(e) => e.stopPropagation()}>
+      <dialog ref={modalRef} {...stylex.props(ui.modal)} aria-label={scan.name}
+        onCancel={(event) => { event.preventDefault(); onClose(); }}>
         <div {...stylex.props(s.head)}>
           <span {...stylex.props(s.title)}>{scan.name}</span>
           <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(ui.buttonQuiet)} style={{ textDecoration: "none" }}>
@@ -80,7 +83,6 @@ export function PreviewModal({ scan, onClose }: { scan: ScanItem; onClose: () =>
             loading="lazy"
           />
         )}
-      </div>
-    </div>
+      </dialog>
   );
 }

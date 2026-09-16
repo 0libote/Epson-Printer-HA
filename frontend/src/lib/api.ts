@@ -32,6 +32,8 @@ export type InkStatus = {
 
 export type StatusResponse = {
   printer_ip: string;
+  printer_ip_managed?: boolean;
+  client_setup?: { host: string; ipp_uri: string; http_uri: string; queue_path: string };
   printer_name: string;
   display_name: string;
   network_sharing: boolean;
@@ -42,6 +44,8 @@ export type StatusResponse = {
   recent_prints: HistoryItem[];
   scans: string[];
   ink?: InkStatus | null;
+  max_upload_mb?: number;
+  max_scan_files?: number;
 };
 
 export type HistoryItem = {
@@ -65,41 +69,32 @@ function getCookie(name: string): string | null {
 }
 
 export function getCsrfToken(): string {
-  // try cookie first (Hono sets csrf_token httpOnly? No, httpOnly true but we also embed in HTML - for SPA we need to fetch token via GET / which sets cookie, and also we can read from meta or endpoint)
-  // Hono sets httpOnly:true so JS cannot read it. We'll instead fetch it via reading the HTML csrf hidden input initially or via new endpoint /api/csrf.
-  // For now, try to read from cookie if not httpOnly, else try to fetch.
   return getCookie("csrf_token") || "";
 }
 
 export async function fetchCsrf(): Promise<string> {
-  // hitting / will set cookie and we can parse HTML for token, but better to hit new endpoint
-  try {
-    const r = await fetch("/api/csrf", { credentials: "same-origin" });
-    if (r.ok) {
-      const j = await r.json();
-      return j.csrf_token || "";
-    }
-  } catch {}
-  // fallback: fetch / and parse
-  try {
-    const r = await fetch("/", { credentials: "same-origin" });
-    const t = await r.text();
-    const m = t.match(/name="_csrf_token" value="([^"]+)"/);
-    if (m) return m[1];
-  } catch {}
-  return "";
+  const data = await readJson<{ csrf_token: string }>(await fetch("/api/csrf", {
+    credentials: "same-origin", headers: { Accept: "application/json" },
+  }));
+  if (!data.csrf_token) throw new Error("The server did not issue a CSRF token. Reload and try again.");
+  return data.csrf_token;
 }
 
 let cachedCsrf: string | null = null;
+let csrfPending: Promise<string> | null = null;
 export function clearCachedCsrf() { cachedCsrf = null; }
 export async function ensureCsrf(): Promise<string> {
+  const cookie = getCsrfToken();
+  if (cookie) {
+    cachedCsrf = cookie;
+    return cookie;
+  }
   if (cachedCsrf) return cachedCsrf;
-  // try cookie-readable first
-  let t = getCsrfToken();
-  if (t) { cachedCsrf = t; return t; }
-  t = await fetchCsrf();
-  cachedCsrf = t;
-  return t;
+  csrfPending ??= fetchCsrf().then(token => {
+    cachedCsrf = token;
+    return token;
+  }).finally(() => { csrfPending = null; });
+  return csrfPending;
 }
 
 function isCsrfError(msg: string) {
@@ -128,8 +123,8 @@ async function readJson<T>(res: Response): Promise<T> {
 export async function fetchStatus(): Promise<StatusResponse> {
   return readJson<StatusResponse>(await fetch("/api/status", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
-export async function fetchHistory(): Promise<HistoryResponse> {
-  return readJson<HistoryResponse>(await fetch("/api/history?limit=100", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+export async function fetchHistory(limit = 100): Promise<HistoryResponse> {
+  return readJson<HistoryResponse>(await fetch(`/api/history?limit=${limit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function fetchHealth(): Promise<{ ok: boolean }> {
   return readJson<{ ok: boolean }>(await fetch("/api/health", { credentials: "same-origin", headers: { Accept: "application/json" } }));
@@ -140,19 +135,9 @@ export async function fetchInk(refresh = false): Promise<InkStatus> {
 }
 
 async function parseFormResponse(res: Response): Promise<{ ok: boolean; message?: string; redirect?: string }> {
-  // server may return JSON for accept json, or redirect
-  const ct = res.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j.error || j.message || `Request failed ${res.status}`);
-    return j;
-  }
-  if (res.redirected || res.status === 302 || res.status === 303) return { ok: res.ok, redirect: res.url };
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(txt.slice(0, 400) || `Request failed ${res.status}`);
-  }
-  return { ok: true };
+  const data = await readJson<{ ok: boolean; message?: string }>(res);
+  if (data.ok !== true) throw new Error(data.message || "The server did not confirm the operation.");
+  return data;
 }
 
 async function formRequest(res: Promise<Response>): Promise<{ ok: boolean; message?: string; redirect?: string }> {
@@ -245,7 +230,7 @@ export async function renameScan(oldName: string, newName: string): Promise<{ na
 }
 export async function deleteScan(name: string): Promise<void> {
   const csrf = await ensureCsrf();
-  const res = await fetch(`/api/scans/${encodeURIComponent(name)}`, {
+  const res = await csrfAwareFetch(`/api/scans/${encodeURIComponent(name)}`, {
     method: "DELETE",
     credentials: "same-origin",
     headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
@@ -257,8 +242,8 @@ export async function deleteScan(name: string): Promise<void> {
 }
 
 // — scan library helpers —
-export async function fetchScans(): Promise<ScansResponse> {
-  return readJson<ScansResponse>(await fetch("/api/scans?limit=100", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+export async function fetchScans(limit = 100): Promise<ScansResponse> {
+  return readJson<ScansResponse>(await fetch(`/api/scans?limit=${limit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function startScanJob(opts: { dpi: string; mode: string; format: string; force?: boolean }): Promise<ScanJobResponse> {
   const csrf = await ensureCsrf();
@@ -289,12 +274,12 @@ export async function cancelScanJob(jobId: string): Promise<void> {
   const form = new FormData();
   if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error("Invalid scan job id");
   const csrf = await addCsrf(form);
-  await formRequest(fetch(`/api/scan/jobs/${jobId}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
+  await formRequest(csrfAwareFetch(`/api/scan/jobs/${jobId}/cancel`, { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } }));
 }
 export async function cancelAllScans(): Promise<{ cancelled: number }> {
   const form = new FormData();
   const csrf = await addCsrf(form);
-  const res = await fetch("/api/scan/cancel-all", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } });
+  const res = await csrfAwareFetch("/api/scan/cancel-all", { method: "POST", body: form, credentials: "same-origin", headers: { "X-CSRF-Token": csrf, Accept: "application/json" } });
   const ct = res.headers.get("content-type") || "";
   const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
   if (!res.ok) throw new Error((data as any).error || `Request failed ${res.status}`);

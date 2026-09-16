@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { useState, useEffect, useRef, createContext, useContext, type ReactNode } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext, type ReactNode } from "react";
 import { Check, AlertCircle, Info, X } from "lucide-react";
 
 type Toast = { id: string; kind: "success" | "error" | "info"; title: string; desc?: string };
@@ -71,17 +71,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const m = timers.current;
     return () => { for (const t of m.values()) clearTimeout(t); m.clear(); };
   }, []);
-  const dismiss = (id: string) => {
+  const dismiss = useCallback((id: string) => {
     const t = timers.current.get(id);
     if (t) { clearTimeout(t); timers.current.delete(id); }
     setToasts((p) => p.filter((x) => x.id !== id));
-  };
-  const push = (t: Omit<Toast, "id">) => {
+  }, []);
+  const push = useCallback((t: Omit<Toast, "id">) => {
     const id = makeToastId();
     setToasts((p) => [...p.slice(-3), { ...t, id }]);
     const timer = setTimeout(() => dismiss(id), 4500);
     timers.current.set(id, timer);
-  };
+  }, [dismiss]);
   return (
     <ToastContext.Provider value={{ push }}>
       {children}

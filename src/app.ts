@@ -1,6 +1,3 @@
-// Bun 1.4.2 - Epson Hub Hono server - unique migration 2026-09-06
-// This file replaces Flask app.py with Bun.serve, Hono, bun:sqlite, Bun.Image
-// Contains 683 lines of unique Bun-native logic, not duplicated from legacy
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { join, basename, extname } from "node:path";
@@ -43,6 +40,8 @@ export let SECRET_KEY = process.env.SECRET_KEY || randomBytes(32).toString("hex"
 export let SESSION_COOKIE_SECURE = ["1", "true", "yes", "on"].includes((process.env.SESSION_COOKIE_SECURE || "false").trim().toLowerCase());
 
 export function _setAppDirForTest(dir: string) {
+  _settingsCache = null;
+  _recentScansCache = null;
   APP_DIR = dir;
   SCAN_DIR = join(dir, "scans");
   SETTINGS_FILE = join(dir, "settings.json");
@@ -78,6 +77,34 @@ for (const lockName of ["cups-config", "scanner"]) {
       try { require("node:fs").rmSync(lockPath, { recursive: true, force: true }); } catch {}
     }
   } catch {}
+}
+// Cleanup orphaned print upload workdirs from crashed requests.
+// /print creates uploads/print-<hex>/ per request and removes it in finally,
+// but a SIGKILL between mkdir and cleanup leaks the dir (with the uploaded
+// file inside). Reap anything older than 1h on boot; active uploads are
+// always younger.
+try {
+  const uploadsDir = join(APP_DIR, "uploads");
+  mkdirSync(uploadsDir, { recursive: true });
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const entry of readdirSync(uploadsDir)) {
+    if (!entry.startsWith("print-")) continue;
+    const p = join(uploadsDir, entry);
+    try {
+      const st = statSync(p);
+      if (st.mtimeMs < cutoff) {
+        require("node:fs").rmSync(p, { recursive: true, force: true });
+      }
+    } catch {}
+  }
+} catch {}
+
+/** Truncate verbose subprocess stderr before it reaches UI/JSON (scanimage
+ * can dump MBs of SANE debug — never send that to a browser). */
+function truncateErrorText(s: string, max = 800): string {
+  const t = String(s || "").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max) + "…";
 }
 
 const AUTH_FAILURE_LIMIT = 10;
@@ -149,7 +176,7 @@ function saveSettingsSync(data: Record<string, any>) {
   _invalidateSettingsCache();
 }
 
-const operationLocks = new Map<string, number>();
+const operationLocks = new Map<string, { acquiredAt: number; owner: symbol }>();
 export function _clearOperationLockForTest(name?: string) {
   if (name) operationLocks.delete(name);
   else operationLocks.clear();
@@ -170,7 +197,7 @@ async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise
   const staleMs = operationLockStaleMs(name);
   const heldAt = operationLocks.get(name);
   if (heldAt !== undefined) {
-    if (Date.now() - heldAt > staleMs) {
+    if (Date.now() - heldAt.acquiredAt > staleMs) {
       // Previous holder hung/crashed without reaching finally (e.g. a
       // scanimage promise that never settled). Reap it so one stuck scan
       // can't block everything until container restart.
@@ -198,9 +225,15 @@ async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise
       return { acquired: false };
     }
   }
-  operationLocks.set(name, Date.now());
+  const owner = Symbol(name);
+  operationLocks.set(name, { acquiredAt: Date.now(), owner });
   try { const result = await fn(); return { acquired: true, result }; }
-  finally { operationLocks.delete(name); removeOperationLockFs(lockPath); }
+  finally {
+    if (operationLocks.get(name)?.owner === owner) {
+      operationLocks.delete(name);
+      removeOperationLockFs(lockPath);
+    }
+  }
 }
 
 function secureFilename(name: string): string {
@@ -357,7 +390,7 @@ function listScansDetailed(limit=100):ScanMeta[]{
         }catch{return null;}
       }).filter(Boolean) as Array<{name:string;path:string;size:number;mtimeMs:number;mtime:number}>;
     files.sort((a,b)=>b.mtimeMs - a.mtimeMs);
-    const slice=files.slice(0, Math.max(1,Math.min(limit, 500)));
+    const slice=files.slice(0, Math.max(1,limit));
     return slice.map(f=>{
       const d=new Date(f.mtimeMs); const pad=(n:number)=>String(n).padStart(2,"0");
       const iso=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
@@ -419,6 +452,7 @@ function reapStaleScanJobs(): void {
     if (!isScanJobActive(j)) continue;
     const age = now - (j.startedAt ?? j.createdAt);
     if (age > SCAN_JOB_STALE_MS) {
+      j.cancelRequested = true;
       try { j.cancelProcess?.(); } catch {}
       j.cancelProcess = undefined;
       j.state = "error";
@@ -445,8 +479,14 @@ function findActiveScanJob(): ScanJob | null {
   }
   return null;
 }
+function scannerLockPath(): string {
+  // Single canonical path for the scanner mutex. (Older code spelled it as
+  // join(SCAN_DIR, "..", ".scanner.lock") in some places — same inode, but
+  // one spelling avoids confusion and missed cleanups.)
+  return join(APP_DIR, ".scanner.lock");
+}
 function clearStaleScannerFsLock(): void {
-  const lockPath = join(SCAN_DIR, "..", ".scanner.lock");
+  const lockPath = scannerLockPath();
   try {
     const st = statSync(lockPath);
     if (Date.now() - st.mtimeMs > SCAN_JOB_STALE_MS) {
@@ -469,6 +509,7 @@ function createScanJob(printerIp:string, dpi:number, mode:string, fmt:string):Sc
   return job;
 }
 async function executeScanJob(job:ScanJob){
+  if (job.cancelRequested || job.state !== "queued") return;
   if(activeScanJobId && activeScanJobId!==job.id){
     job.state="error"; job.error="A scan is already in progress. Wait for it to finish before starting another."; job.finishedAt=Date.now(); return;
   }
@@ -477,6 +518,10 @@ async function executeScanJob(job:ScanJob){
   try {
     // warm cache first for speed
     await warmDeviceCache(job.printerIp).catch(()=>{});
+    if (job.cancelRequested) {
+      job.state="cancelled"; job.error="Scan cancelled."; job.progress="Cancelled"; job.finishedAt=Date.now();
+      return;
+    }
     const lock=await withOperationLock("scanner", async()=>{
       job.progress="Scanning the document";
       const [result, path]=await scanDocument(job.printerIp, SCAN_DIR, {dpi:job.dpi, mode:job.mode, fmt:job.fmt, control:{
@@ -491,11 +536,12 @@ async function executeScanJob(job:ScanJob){
         return result;
       }
       if(result.ok && path){
+        _recentScansCache = null;
         pruneScans();
         job.state="done"; job.resultPath=path; job.resultName=basename(path); job.progress="Done"; job.finishedAt=Date.now();
         // clear thumb cache for new file
       } else {
-        job.state="error"; job.error=result.stderr||"Scan failed."; job.progress="Failed"; job.finishedAt=Date.now();
+        job.state="error"; job.error=truncateErrorText(result.stderr)||"Scan failed."; job.progress="Failed"; job.finishedAt=Date.now();
       }
       return result;
     });
@@ -504,7 +550,7 @@ async function executeScanJob(job:ScanJob){
     }
   } catch(e:any){
     job.state=job.cancelRequested ? "cancelled" : "error";
-    job.error=job.cancelRequested ? "Scan cancelled." : String(e?.message||e);
+    job.error=job.cancelRequested ? "Scan cancelled." : truncateErrorText(String(e?.message||e)) || "Scan failed.";
     job.progress=job.cancelRequested ? "Cancelled" : "Failed";
     job.finishedAt=Date.now();
   } finally {
@@ -539,7 +585,10 @@ function consumeFlash(c:any):Array<{category:string;message:string}>{
 }
 function getCsrfToken(c:any):string{
   let token=getCookie(c,"csrf_token");
-  if(!token){ token=randomBytes(32).toString("hex"); setCookie(c,"csrf_token",token,{path:"/", httpOnly:true, sameSite:"Lax", secure:SESSION_COOKIE_SECURE});}
+  // Double-submit pattern: JS must read the token (api.ts ensureCsrf) so the
+  // cookie is intentionally readable (httpOnly:false, SameSite=Lax). The
+  // server still validates token === cookie on every mutation.
+  if(!token){ token=randomBytes(32).toString("hex"); setCookie(c,"csrf_token",token,{path:"/", httpOnly:false, sameSite:"Lax", secure:SESSION_COOKIE_SECURE});}
   return token;
 }
 function wantsJson(c:any):boolean{
@@ -548,7 +597,7 @@ function wantsJson(c:any):boolean{
   return accept.includes("application/json") || xhr.toLowerCase()==="xmlhttprequest";
 }
 function isCsrfValid(c:any, body:any):boolean{
-  const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
+  const token=String(body?.["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
   const expected=getCookie(c,"csrf_token")||"";
   return !!expected && token===expected;
 }
@@ -631,11 +680,21 @@ function authFailureState(c:any, recordFailure=false):boolean{
 }
 export const app=new Hono();
 app.use("*", async(c,next)=>{
+  const start = Date.now();
   if(c.req.method==="GET"){
     const t=getCsrfToken(c);
     try{ (c as any).set("csrf_token_tmp", t); }catch{}
   }
+  if (c.req.path.startsWith("/api/") || c.req.path === "/") c.header("Cache-Control", "no-store");
   await next();
+  // Slow-request log: the hub should stay <1s for cached polls; anything
+  // slower usually means CUPS/scanimage is wedged — surface it in docker logs.
+  try {
+    const ms = Date.now() - start;
+    if (ms > 2000) {
+      console.warn(`[web] slow request ${ms}ms`);
+    }
+  } catch {}
 });
 
 function requireAuth(c:any):Response|null{
@@ -1099,8 +1158,8 @@ app.post("/scan", async(c)=>{
     const [result, path]=await scanDocument(printerIp, SCAN_DIR, {dpi, mode:String((body as any)["mode"]||"Color"), fmt:String((body as any)["format"]||"pdf")});
     clearStatusCaches();
     scanPath=path;
-    if(result.ok && path){ pruneScans(); scanOk=true; scanMsg=result.stderr||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
-    else { scanOk=false; scanMsg=result.stderr||"Scan failed."; if(!wantsJson(c)) setFlash(c,"error", scanMsg); }
+    if(result.ok && path){ pruneScans(); scanOk=true; scanMsg=truncateErrorText(result.stderr)||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
+    else { scanOk=false; scanMsg=truncateErrorText(result.stderr)||"Scan failed."; if(!wantsJson(c)) setFlash(c,"error", scanMsg); }
   });
   if(!lock.acquired){
     const msg="A scan is already in progress. Wait for it to finish before starting another.";
@@ -1149,8 +1208,8 @@ app.get("/api/scans", async(c)=>{
   try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
   if(Number.isNaN(limit)) limit=100;
   limit=Math.max(1, Math.min(limit, 500));
-  const scans=listScansDetailed(limit);
-  return c.json({ scans, total: scans.length, limit, max: MAX_SCAN_FILES });
+  const allScans = listScansDetailed(Number.MAX_SAFE_INTEGER);
+  return c.json({ scans: allScans.slice(0, limit), total: allScans.length, limit, max: MAX_SCAN_FILES });
 });
 
 app.get("/api/scans/:filename/thumb", async(c)=>{
@@ -1204,7 +1263,7 @@ app.delete("/api/scans/:filename", async(c)=>{
   // CSRF via header for JSON DELETE
   const csrfHeader=c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"";
   const expected=getCookie(c,"csrf_token")||"";
-  if(expected && csrfHeader!==expected){
+  if(!expected || csrfHeader!==expected){
     // also allow body token via query? For DELETE we require header
     return c.text("Invalid or missing CSRF token",400);
   }
@@ -1219,6 +1278,7 @@ app.delete("/api/scans/:filename", async(c)=>{
     return c.json({ok:false, error:String(e)},500);
   }
   try{ unlinkSync(join(SCAN_DIR, `.thumb-${safe}.webp`)); }catch{}
+  _recentScansCache = null;
   return c.json({ok:true, message:`Deleted ${safe}`});
 });
 
@@ -1233,9 +1293,8 @@ app.post("/api/scans/:filename/rename", async(c)=>{
   const ct=c.req.header("content-type")||"";
   if(ct.includes("application/json")){
     try{ body=await c.req.json(); }catch{ body={};}
-    const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
-    const expected=getCookie(c,"csrf_token")||"";
-    if(!expected || token!==expected) return c.text("Invalid or missing CSRF token",400);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ok:false, error:"Expected a JSON object"},400);
+    if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   } else {
     body=await c.req.parseBody();
     if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
@@ -1257,6 +1316,7 @@ app.post("/api/scans/:filename/rename", async(c)=>{
     if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
     return c.json({ok:false, error:String(e)},500);
   }
+  _recentScansCache = null;
   return c.json({ok:true, name:newSafe, oldName:safe});
 });
 
@@ -1339,9 +1399,8 @@ app.post("/api/scan", async(c)=>{
   let body:any={};
   if(ct.includes("application/json")){
     try{ body=await c.req.json(); }catch{ body={};}
-    const token=String(body["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
-    const expected=getCookie(c,"csrf_token")||"";
-    if(!expected || token!==expected) return c.text("Invalid or missing CSRF token",400);
+    if (!body || typeof body !== "object" || Array.isArray(body)) return c.json({ok:false, error:"Expected a JSON object"},400);
+    if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   } else {
     body=await c.req.parseBody();
     if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
@@ -1362,30 +1421,21 @@ app.post("/api/scan", async(c)=>{
   let blocker = findActiveScanJob();
   if (blocker && force) {
     blocker.cancelRequested = true;
+    blocker.progress = "Cancelling";
     try { blocker.cancelProcess?.(); } catch {}
-    blocker.cancelProcess = undefined;
-    if (blocker.state === "queued" || !blocker.startedAt) {
+    if (blocker.state === "queued") {
       blocker.state = "cancelled";
-      blocker.error = "Scan cancelled.";
       blocker.finishedAt = Date.now();
-    } else {
-      // A running scanimage process may need a moment to die; mark it failed
-      // so the new job can start immediately instead of 409-looping.
-      blocker.state = "error";
-      blocker.error = "Scan cancelled to start a new scan.";
-      blocker.finishedAt = Date.now();
+      blocker = null;
     }
-    if (activeScanJobId === blocker.id) activeScanJobId = null;
-    removeOperationLockFs(join(SCAN_DIR, "..", ".scanner.lock"));
-    _clearOperationLockForTest("scanner");
-    blocker = null;
+    // Running jobs retain the hardware lock until their process exits.
   }
   if(blocker){
     const elapsedS = Math.floor((Date.now() - (blocker.startedAt ?? blocker.createdAt)) / 1000);
     return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:blocker.id, state:blocker.state, elapsed:elapsedS }, 409);
   }
   // also check filesystem lock for legacy sync jobs
-  const lockPath=join(SCAN_DIR, "..", ".scanner.lock");
+  const lockPath=scannerLockPath();
   try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { removeOperationLockFs(lockPath); _clearOperationLockForTest("scanner"); } }catch{}
   const job=createScanJob(printerIp, dpi, mode, fmt);
   // fire and forget
@@ -1442,15 +1492,17 @@ app.post("/api/scan/cancel-all", async(c)=>{
     if(isScanJobActive(j)){
       j.cancelRequested=true;
       try { j.cancelProcess?.(); } catch {}
-      j.cancelProcess=undefined;
-      j.state="cancelled"; j.error="Scan cancelled."; j.progress="Cancelled"; j.finishedAt=Date.now();
+      j.progress="Cancelling";
+      if (j.state === "queued") {
+        j.state="cancelled"; j.error="Scan cancelled."; j.finishedAt=Date.now();
+      }
       cancelled++;
     }
   }
-  activeScanJobId=null;
-  _clearOperationLockForTest("scanner");
-  removeOperationLockFs(join(SCAN_DIR, "..", ".scanner.lock"));
-  removeOperationLockFs(join(APP_DIR, ".scanner.lock"));
+  // An orphaned lock can be cleared, but a running holder must release its own.
+  if (!operationLocks.has("scanner") && !findActiveScanJob()) {
+    removeOperationLockFs(scannerLockPath());
+  }
   return c.json({ ok:true, cancelled });
 });
 
@@ -1462,7 +1514,8 @@ app.get("/api/status", async(c)=>{
   if(auth) return auth;
   const printerIp=currentPrinterIp();
   const printerName=currentPrinterName();
-  const key = `${printerIp}:${printerName}`;
+  const client = clientSetup(printerName, c.req.header("host") || new URL(c.req.url).host);
+  const key = `${printerIp}:${printerName}:${client.host}`;
   if (_statusInflight && _statusInflightKey === key) {
     try { return c.json(await _statusInflight); } catch {}
   }
@@ -1479,6 +1532,8 @@ app.get("/api/status", async(c)=>{
       : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
     return {
       printer_ip:printerIp,
+      printer_ip_managed: Boolean(PRINTER_IP_ENV),
+      client_setup: client,
       printer_name:printerName,
       display_name:currentDisplayName(),
       network_sharing:networkSharingEnabledSync(),
@@ -1489,6 +1544,8 @@ app.get("/api/status", async(c)=>{
       recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
       scans,
       ink: printerIp ? getCachedInkLevels(printerIp) : null,
+      max_upload_mb: MAX_UPLOAD_MB,
+      max_scan_files: MAX_SCAN_FILES,
     };
   })();
   _statusInflight = p; _statusInflightKey = key;
@@ -1523,9 +1580,12 @@ app.get("/api/history", async(c)=>{
   let limit=100;
   try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
   if(Number.isNaN(limit)) limit=100;
-  let history:any[]=[];
-  try{history=listPrintHistory(limit);}catch{history=[];}
-  return c.json({history});
+  try {
+    return c.json({ history: listPrintHistory(limit) });
+  } catch (error) {
+    console.error("[history] Could not read print history", error);
+    return c.json({ ok: false, error: "Print history is temporarily unavailable. Try again shortly." }, 503);
+  }
 });
 
 // Cache health probe 10s — Docker HEALTHCHECK + frontend both hit this

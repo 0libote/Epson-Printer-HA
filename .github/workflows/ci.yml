@@ -20,7 +20,9 @@ jobs:
       - name: Install dependencies (Bun 1.4 isolated linker)
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Typecheck
-        run: ./node_modules/.bin/tsc --noEmit
+        run: |
+          bun run lint
+          bun run typecheck:web
       - name: Build frontend (Bun bundler)
         run: |
           bun run build
@@ -35,12 +37,6 @@ jobs:
           docker compose -f compose.zimaos.yml config -q
       - name: Run tests (bun:test - Bun 1.4)
         run: bun test --timeout 10000
-      - name: Legacy Python tests (if still present)
-        run: |
-          if [ -f requirements.txt ]; then
-            pip install -q --only-binary :all: pytest==8.3.5 2>/dev/null || true
-            pytest -q 2>/dev/null || echo "legacy pytest skipped"
-          fi
 
   docker:
     runs-on: ubuntu-latest

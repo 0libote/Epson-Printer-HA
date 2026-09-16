@@ -12,7 +12,6 @@
     "dev:all": "bun --watch src/server.ts & vite --config frontend/vite.config.ts --host 0.0.0.0 --port 5173",
     "start": "bun src/server.ts",
     "build": "vite build --config frontend/vite.config.ts",
-    "build:legacy": "mkdir -p public && cp app/static/app.js public/app.js && cp app/static/style.css public/style.css",
     "preview": "vite preview --config frontend/vite.config.ts",
     "test": "bun test --timeout 10000",
     "test:watch": "bun test --watch --timeout 10000",
