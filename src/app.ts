@@ -79,6 +79,34 @@ for (const lockName of ["cups-config", "scanner"]) {
     }
   } catch {}
 }
+// Cleanup orphaned print upload workdirs from crashed requests.
+// /print creates uploads/print-<hex>/ per request and removes it in finally,
+// but a SIGKILL between mkdir and cleanup leaks the dir (with the uploaded
+// file inside). Reap anything older than 1h on boot; active uploads are
+// always younger.
+try {
+  const uploadsDir = join(APP_DIR, "uploads");
+  mkdirSync(uploadsDir, { recursive: true });
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const entry of readdirSync(uploadsDir)) {
+    if (!entry.startsWith("print-")) continue;
+    const p = join(uploadsDir, entry);
+    try {
+      const st = statSync(p);
+      if (st.mtimeMs < cutoff) {
+        require("node:fs").rmSync(p, { recursive: true, force: true });
+      }
+    } catch {}
+  }
+} catch {}
+
+/** Truncate verbose subprocess stderr before it reaches UI/JSON (scanimage
+ * can dump MBs of SANE debug — never send that to a browser). */
+function truncateErrorText(s: string, max = 800): string {
+  const t = String(s || "").trim();
+  if (t.length <= max) return t;
+  return t.slice(0, max) + "…";
+}
 
 const AUTH_FAILURE_LIMIT = 10;
 const AUTH_FAILURE_WINDOW_SECONDS = 60;
@@ -445,8 +473,14 @@ function findActiveScanJob(): ScanJob | null {
   }
   return null;
 }
+function scannerLockPath(): string {
+  // Single canonical path for the scanner mutex. (Older code spelled it as
+  // join(SCAN_DIR, "..", ".scanner.lock") in some places — same inode, but
+  // one spelling avoids confusion and missed cleanups.)
+  return join(APP_DIR, ".scanner.lock");
+}
 function clearStaleScannerFsLock(): void {
-  const lockPath = join(SCAN_DIR, "..", ".scanner.lock");
+  const lockPath = scannerLockPath();
   try {
     const st = statSync(lockPath);
     if (Date.now() - st.mtimeMs > SCAN_JOB_STALE_MS) {
@@ -495,7 +529,7 @@ async function executeScanJob(job:ScanJob){
         job.state="done"; job.resultPath=path; job.resultName=basename(path); job.progress="Done"; job.finishedAt=Date.now();
         // clear thumb cache for new file
       } else {
-        job.state="error"; job.error=result.stderr||"Scan failed."; job.progress="Failed"; job.finishedAt=Date.now();
+        job.state="error"; job.error=truncateErrorText(result.stderr)||"Scan failed."; job.progress="Failed"; job.finishedAt=Date.now();
       }
       return result;
     });
@@ -504,7 +538,7 @@ async function executeScanJob(job:ScanJob){
     }
   } catch(e:any){
     job.state=job.cancelRequested ? "cancelled" : "error";
-    job.error=job.cancelRequested ? "Scan cancelled." : String(e?.message||e);
+    job.error=job.cancelRequested ? "Scan cancelled." : truncateErrorText(String(e?.message||e)) || "Scan failed.";
     job.progress=job.cancelRequested ? "Cancelled" : "Failed";
     job.finishedAt=Date.now();
   } finally {
@@ -539,7 +573,10 @@ function consumeFlash(c:any):Array<{category:string;message:string}>{
 }
 function getCsrfToken(c:any):string{
   let token=getCookie(c,"csrf_token");
-  if(!token){ token=randomBytes(32).toString("hex"); setCookie(c,"csrf_token",token,{path:"/", httpOnly:true, sameSite:"Lax", secure:SESSION_COOKIE_SECURE});}
+  // Double-submit pattern: JS must read the token (api.ts ensureCsrf) so the
+  // cookie is intentionally readable (httpOnly:false, SameSite=Lax). The
+  // server still validates token === cookie on every mutation.
+  if(!token){ token=randomBytes(32).toString("hex"); setCookie(c,"csrf_token",token,{path:"/", httpOnly:false, sameSite:"Lax", secure:SESSION_COOKIE_SECURE});}
   return token;
 }
 function wantsJson(c:any):boolean{
@@ -631,11 +668,20 @@ function authFailureState(c:any, recordFailure=false):boolean{
 }
 export const app=new Hono();
 app.use("*", async(c,next)=>{
+  const start = Date.now();
   if(c.req.method==="GET"){
     const t=getCsrfToken(c);
     try{ (c as any).set("csrf_token_tmp", t); }catch{}
   }
   await next();
+  // Slow-request log: the hub should stay <1s for cached polls; anything
+  // slower usually means CUPS/scanimage is wedged — surface it in docker logs.
+  try {
+    const ms = Date.now() - start;
+    if (ms > 2000) {
+      console.warn(`[web] slow ${c.req.method} ${c.req.path} ${ms}ms`);
+    }
+  } catch {}
 });
 
 function requireAuth(c:any):Response|null{
@@ -1099,8 +1145,8 @@ app.post("/scan", async(c)=>{
     const [result, path]=await scanDocument(printerIp, SCAN_DIR, {dpi, mode:String((body as any)["mode"]||"Color"), fmt:String((body as any)["format"]||"pdf")});
     clearStatusCaches();
     scanPath=path;
-    if(result.ok && path){ pruneScans(); scanOk=true; scanMsg=result.stderr||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
-    else { scanOk=false; scanMsg=result.stderr||"Scan failed."; if(!wantsJson(c)) setFlash(c,"error", scanMsg); }
+    if(result.ok && path){ pruneScans(); scanOk=true; scanMsg=truncateErrorText(result.stderr)||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
+    else { scanOk=false; scanMsg=truncateErrorText(result.stderr)||"Scan failed."; if(!wantsJson(c)) setFlash(c,"error", scanMsg); }
   });
   if(!lock.acquired){
     const msg="A scan is already in progress. Wait for it to finish before starting another.";
@@ -1376,7 +1422,7 @@ app.post("/api/scan", async(c)=>{
       blocker.finishedAt = Date.now();
     }
     if (activeScanJobId === blocker.id) activeScanJobId = null;
-    removeOperationLockFs(join(SCAN_DIR, "..", ".scanner.lock"));
+    removeOperationLockFs(scannerLockPath());
     _clearOperationLockForTest("scanner");
     blocker = null;
   }
@@ -1385,7 +1431,7 @@ app.post("/api/scan", async(c)=>{
     return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:blocker.id, state:blocker.state, elapsed:elapsedS }, 409);
   }
   // also check filesystem lock for legacy sync jobs
-  const lockPath=join(SCAN_DIR, "..", ".scanner.lock");
+  const lockPath=scannerLockPath();
   try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { removeOperationLockFs(lockPath); _clearOperationLockForTest("scanner"); } }catch{}
   const job=createScanJob(printerIp, dpi, mode, fmt);
   // fire and forget
@@ -1449,8 +1495,7 @@ app.post("/api/scan/cancel-all", async(c)=>{
   }
   activeScanJobId=null;
   _clearOperationLockForTest("scanner");
-  removeOperationLockFs(join(SCAN_DIR, "..", ".scanner.lock"));
-  removeOperationLockFs(join(APP_DIR, ".scanner.lock"));
+  removeOperationLockFs(scannerLockPath());
   return c.json({ ok:true, cancelled });
 });
 
@@ -1489,6 +1534,8 @@ app.get("/api/status", async(c)=>{
       recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
       scans,
       ink: printerIp ? getCachedInkLevels(printerIp) : null,
+      max_upload_mb: MAX_UPLOAD_MB,
+      max_scan_files: MAX_SCAN_FILES,
     };
   })();
   _statusInflight = p; _statusInflightKey = key;

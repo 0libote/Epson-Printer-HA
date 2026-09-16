@@ -8,7 +8,14 @@ services:
       context: .
     container_name: epson-printer-ha
     network_mode: host
+    init: true
+    stop_grace_period: 15s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       PRINTER_IP: "${PRINTER_IP:-}"
       PRINTER_NAME: "${PRINTER_NAME:-Home_Epson_XP2200}"
@@ -35,8 +42,14 @@ services:
       context: ./scan-bridge
     container_name: epson-printer-ha-scan-bridge
     network_mode: host
+    init: true
     # Transient downloads retry inside the container; cap permanent config failures.
     restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       PRINTER_IP: "${PRINTER_IP:-}"
       EPSON_EULA_ACCEPTED: "${EPSON_EULA_ACCEPTED:-false}"

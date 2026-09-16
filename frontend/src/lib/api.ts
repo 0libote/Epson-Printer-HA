@@ -42,6 +42,8 @@ export type StatusResponse = {
   recent_prints: HistoryItem[];
   scans: string[];
   ink?: InkStatus | null;
+  max_upload_mb?: number;
+  max_scan_files?: number;
 };
 
 export type HistoryItem = {

@@ -20,7 +20,43 @@ export function commandResult(ok: boolean, stdout = "", stderr = "", returncode 
 }
 
 // Bun.spawn based runCommand with timeout (no listener leaks, no zombie procs)
+// Hardened: global concurrency cap (spawn storms under multi-client polling),
+// output truncation (verbose CUPS/scanimage stderr can't OOM the hub).
+const RUN_CONCURRENCY_MAX = 12;
+let _runActive = 0;
+const _runQueue: Array<() => void> = [];
+
+function _runAcquire(): Promise<void> {
+  if (_runActive < RUN_CONCURRENCY_MAX) {
+    _runActive++;
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    _runQueue.push(() => {
+      _runActive++;
+      resolve();
+    });
+  });
+}
+
+function _runRelease(): void {
+  _runActive = Math.max(0, _runActive - 1);
+  const next = _runQueue.shift();
+  if (next) next();
+}
+
+const RUN_OUTPUT_MAX = 256 * 1024; // 256KB cap per stream
+function _truncateOutput(s: string): string {
+  if (s.length > RUN_OUTPUT_MAX) return s.slice(0, RUN_OUTPUT_MAX) + "\n…[truncated]";
+  return s;
+}
+
+export function _runStatsForTest() {
+  return { active: _runActive, queued: _runQueue.length, max: RUN_CONCURRENCY_MAX };
+}
+
 export async function runCommand(args: string[], timeout = 30_000, cwd?: string): Promise<CommandResult> {
+  await _runAcquire();
   let proc: any;
   let timer: any = null;
   try {
@@ -47,7 +83,7 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
         Promise.all([stdoutPromise, stderrPromise, exitPromise]),
         timeoutPromise,
       ])) as [string, string, number];
-      return commandResult(code === 0, out.trim(), err.trim(), code);
+      return commandResult(code === 0, _truncateOutput(out.trim()), _truncateOutput(err.trim()), code);
     } catch (exc: any) {
       if (timedOut || exc?.message === "timeout") {
         try { await Promise.race([proc.exited, Bun.sleep(1500)]); } catch {}
@@ -61,9 +97,10 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
       try { proc?.kill(); } catch {}
       return commandResult(false, "", "timeout", 1);
     }
-    return commandResult(false, "", String(exc?.message ?? exc), 1);
+    return commandResult(false, "", _truncateOutput(String(exc?.message ?? exc)).slice(0, 2000), 1);
   } finally {
     if (timer) clearTimeout(timer);
+    _runRelease();
   }
 }
 
@@ -110,9 +147,11 @@ export function tcpOpen(host: string, port: number, timeout = 1000): Promise<boo
   if (!host) return Promise.resolve(false);
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let fallback: any = null;
     const done = (v: boolean) => {
       if (settled) return;
       settled = true;
+      if (fallback) clearTimeout(fallback);
       try { socket.destroy(); } catch {}
       resolve(v);
     };
@@ -123,7 +162,8 @@ export function tcpOpen(host: string, port: number, timeout = 1000): Promise<boo
     socket.on("error", () => done(false));
     socket.on("timeout", () => done(false));
     // hard fallback so a hung kernel connect can never leak the socket
-    setTimeout(() => done(false), timeout + 500).unref?.();
+    fallback = setTimeout(() => done(false), timeout + 500);
+    (fallback as any).unref?.();
   });
 }
 
@@ -410,7 +450,7 @@ export async function scanDocument(
           continue;
         }
       }
-      const hint = errText || `scanimage exited ${exitCode}`;
+      const hint = (errText || `scanimage exited ${exitCode}`).slice(0, 800);
       return [commandResult(false, "", hint, exitCode), null];
     } catch (exc: any) {
       if (timeoutId) clearTimeout(timeoutId);

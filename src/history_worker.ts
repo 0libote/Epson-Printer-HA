@@ -32,6 +32,8 @@ export async function main(): Promise<void> {
   console.log("[history] Persistent print history collector started.");
   let lastCompletedPoll = -COMPLETED_POLL_SECONDS;
   let running = false;
+  let consecutiveFailures = 0;
+  let lastErrorLogged = "";
   while (true) {
     const tickStart = Date.now();
     try {
@@ -43,17 +45,30 @@ export async function main(): Promise<void> {
           const name = await currentPrinterName();
           await syncPrintHistory(name, { includeCompleted });
           if (includeCompleted) lastCompletedPoll = now;
+          consecutiveFailures = 0;
+          lastErrorLogged = "";
         } finally {
           running = false;
         }
       }
     } catch (exc: any) {
       running = false;
-      console.log(`[history] Sync failed: ${exc?.message ?? String(exc)}`);
+      consecutiveFailures++;
+      // Don't spam docker logs every 5s when CUPS is down for hours — log on
+      // change + every 10th failure, with backoff so a wedged CUPS/python
+      // doesn't get hammered.
+      const msg = String(exc?.message ?? String(exc)).slice(0, 300);
+      if (msg !== lastErrorLogged || consecutiveFailures % 10 === 1) {
+        console.log(`[history] Sync failed (${consecutiveFailures}x): ${msg}`);
+        lastErrorLogged = msg;
+      }
     }
-    // account for sync duration so a slow CUPS fetch can't cause overlap/drift
+    // account for sync duration so a slow CUPS fetch can't cause overlap/drift;
+    // back off up to 60s after repeated failures.
+    const backoffMs = Math.min(60_000, POLL_INTERVAL_SECONDS * 1000 * Math.min(8, Math.max(1, consecutiveFailures)));
+    const baseMs = consecutiveFailures > 1 ? backoffMs : POLL_INTERVAL_SECONDS * 1000;
     const elapsed = Date.now() - tickStart;
-    await Bun.sleep(Math.max(1000, POLL_INTERVAL_SECONDS * 1000 - elapsed));
+    await Bun.sleep(Math.max(1000, baseMs - elapsed));
   }
 }
 

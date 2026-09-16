@@ -6,7 +6,7 @@ import { useToast } from "./Toast";
 import { postPrint } from "../lib/api";
 import { s as ui, Card, CardHeader, ProgressBar } from "./ui";
 
-const MAX_MB = 128;
+const FALLBACK_MAX_MB = 128;
 
 const s = stylex.create({
   drop: {
@@ -74,8 +74,9 @@ const s = stylex.create({
 
 const ACCEPT = [".pdf", ".png", ".jpg", ".jpeg", ".txt"];
 
-export function PrintCard({ onPrinted }: { onPrinted: () => void }) {
+export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?: number }) {
   const { push } = useToast();
+  const maxMbEffective = typeof maxMb === "number" && Number.isFinite(maxMb) && maxMb >= 1 ? Math.floor(maxMb) : FALLBACK_MAX_MB;
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [copiesText, setCopiesText] = useState("1");
@@ -93,7 +94,7 @@ export function PrintCard({ onPrinted }: { onPrinted: () => void }) {
     const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
     if (!ACCEPT.includes(ext)) { setError("Supported files: PDF, PNG, JPG and TXT."); setFile(null); return; }
     if (f.size === 0) { setError("The selected file is empty."); setFile(null); return; }
-    if (f.size > MAX_MB * 1024 * 1024) { setError(`That file is too large. The limit is ${MAX_MB} MB.`); setFile(null); return; }
+    if (f.size > maxMbEffective * 1024 * 1024) { setError(`That file is too large. The limit is ${maxMbEffective} MB.`); setFile(null); return; }
     setFile(f);
   };
 
@@ -154,7 +155,7 @@ export function PrintCard({ onPrinted }: { onPrinted: () => void }) {
           <span>
             <span {...stylex.props(s.dropText)}>{dragOver ? "Drop it" : "Choose a file or drag it here"}</span>
             <br />
-            <span {...stylex.props(s.dropHint)}>PDF · PNG · JPG · TXT · up to {MAX_MB} MB</span>
+            <span {...stylex.props(s.dropHint)}>PDF · PNG · JPG · TXT · up to {maxMbEffective} MB</span>
           </span>
         </label>
 

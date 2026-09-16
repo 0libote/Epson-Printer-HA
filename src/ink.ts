@@ -48,12 +48,17 @@ export function keyFromDescription(desc: string): InkKey | null {
   const d = desc.toLowerCase();
   // skip non-ink supplies (waste/maintenance box)
   if (d.includes("waste") || d.includes("maintenance") || d.includes("box")) return null;
-  if (d.includes("black") || d.includes("\bbk\b") || /(^|[^a-z])k([^a-z]|$)/.test(d) && d.includes("ink")) {
-    // careful: single "k" is ambiguous, prefer explicit tokens
-    if (d.includes("black") || d.includes("bk")) return "black";
+  // black: explicit word, "bk" as standalone token (e.g. "BK", "BK ink",
+  // "Ink BK"), or single "k" only when paired with "ink" to avoid matching
+  // random words containing k.
+  if (
+    d.includes("black") ||
+    /(^|[^a-z])bk([^a-z]|$)/.test(d) ||
+    (/(^|[^a-z])k([^a-z]|$)/.test(d) && d.includes("ink"))
+  ) {
+    return "black";
   }
-  if (d.includes("black")) return "black";
-  if (d.includes("cyan") || d.includes(" light cyan")) return "cyan";
+  if (d.includes("cyan")) return "cyan";
   if (d.includes("magenta")) return "magenta";
   if (d.includes("yellow")) return "yellow";
   // short Epson forms: "BK", "C", "M", "Y" as whole description
@@ -493,20 +498,38 @@ function unknownStatus(host: string, message: string): InkStatus {
 export async function fetchInkLevels(host: string): Promise<InkStatus> {
   if (_fetchImpl) return _fetchImpl(host);
   if (!host) return unknownStatus(host, "Printer IP is not configured");
-  // SNMP first (fast LAN UDP), then IPP, then HTTP scrape
-  try {
-    const snmp = await trySnmp(host);
-    if (snmp && snmp.cartridges.length) return snmp;
-  } catch {}
-  try {
-    const ipp = await tryIpp(host);
-    if (ipp && ipp.cartridges.length) return ipp;
-  } catch {}
-  try {
-    const http = await tryHttp(host);
-    if (http && http.cartridges.length) return http;
-  } catch {}
-  return unknownStatus(host, "No ink data: SNMP/IPP/web status all unreachable. Check the printer is awake.");
+  // Hard ceiling: SNMP walks + IPP probes + HTTP scrapes can each stall on a
+  // sleeping printer. Never let one /api/ink call hang for ~45s and trip
+  // client/HA timeouts — race the whole chain against a single deadline.
+  const INK_OVERALL_TIMEOUT_MS = 20_000;
+  const chain = (async (): Promise<InkStatus> => {
+    // SNMP first (fast LAN UDP), then IPP, then HTTP scrape
+    try {
+      const snmp = await trySnmp(host);
+      if (snmp && snmp.cartridges.length) return snmp;
+    } catch {}
+    try {
+      const ipp = await tryIpp(host);
+      if (ipp && ipp.cartridges.length) return ipp;
+    } catch {}
+    try {
+      const http = await tryHttp(host);
+      if (http && http.cartridges.length) return http;
+    } catch {}
+    return unknownStatus(host, "No ink data: SNMP/IPP/web status all unreachable. Check the printer is awake.");
+  })();
+  const timeout = new Promise<InkStatus>((resolve) => {
+    const t = setTimeout(() => {
+      resolve(unknownStatus(host, "Ink check timed out after 20s. The printer may be asleep; try again."));
+    }, INK_OVERALL_TIMEOUT_MS);
+    // don't let the timer hold the process open on its own
+    (t as any).unref?.();
+    chain.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      () => { clearTimeout(t); resolve(unknownStatus(host, "No ink data: SNMP/IPP/web status all unreachable. Check the printer is awake.")); },
+    );
+  });
+  return timeout;
 }
 
 export async function getInkLevels(host: string): Promise<InkStatus> {

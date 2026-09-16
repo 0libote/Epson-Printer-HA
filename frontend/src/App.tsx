@@ -242,7 +242,7 @@ export default function App() {
         {tab === "overview" ? (
           <>
             <div {...stylex.props(s.actionGrid)}>
-              <PrintCard onPrinted={() => refreshAll(qc)} />
+              <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} />
               <ScanCard scannerOk={!!scanner.ok} onScanned={() => refreshAll(qc)} />
             </div>
             {queue.length > 0 ? (

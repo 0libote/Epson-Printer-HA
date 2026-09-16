@@ -12,13 +12,24 @@ PREFER_ENV_SETTINGS="${PREFER_ENV_SETTINGS:-false}"
 lock_root="${CUPS_LOCK_DIR:-/run/epson}"
 lock_dir="${lock_root}/configure-cups.lock"
 lock_attempts="${CUPS_LOCK_ATTEMPTS:-10}"
-ready_attempts="${CUPS_READY_ATTEMPTS:-15}"
+ready_attempts="${CUPS_READY_ATTEMPTS:-30}"
 lock_acquired=false
 for ((attempt = 0; attempt < lock_attempts; attempt++)); do
   if mkdir "$lock_dir" 2>/dev/null; then
     trap 'rmdir "$lock_dir"' EXIT
     lock_acquired=true
     break
+  fi
+  # A SIGKILLed predecessor leaves the mkdir lock behind with no trap to clean
+  # it. Treat locks older than 2 min as stale instead of failing setup until
+  # someone manually rmdirs /run/epson (tmpfs — also cleared on reboot).
+  if [[ -d "$lock_dir" ]]; then
+    lock_age=$(( $(date +%s) - $(stat -c %Y "$lock_dir" 2>/dev/null || echo 0) ))
+    if (( lock_age > 120 )); then
+      echo "[cups] Removing stale queue-configuration lock (${lock_age}s old)."
+      rmdir "$lock_dir" 2>/dev/null || rm -rf "$lock_dir" 2>/dev/null || true
+      continue
+    fi
   fi
   sleep 1
 done
@@ -89,10 +100,24 @@ if [[ "$ready" != "true" ]]; then
   exit 1
 fi
 
+# Fail fast on names CUPS/lpadmin would reject cryptically (mirrors the
+# dashboard's validateQueueName so both surfaces agree).
+if [[ ! "$PRINTER_NAME" =~ ^[A-Za-z0-9._-]{1,127}$ || "$PRINTER_NAME" == "." || "$PRINTER_NAME" == ".." ]]; then
+  echo "[cups] Invalid PRINTER_NAME '$PRINTER_NAME': use only letters, numbers, dot, dash and underscore (max 127 chars)."
+  exit 1
+fi
+
 MODEL="$(lpinfo -m 2>/dev/null | grep -iE 'XP[-_ ]?2200' | head -n1 | awk '{print $1}' || true)"
 if [[ -z "$MODEL" ]]; then
-  echo "[cups] XP-2200 PPD was not found. Installed escpr version may be too old."
-  exit 1
+  echo "[cups] XP-2200 PPD was not found in printer-driver-escpr; trying driverless IPP Everywhere fallback."
+  if lpinfo -m 2>/dev/null | grep -qiE 'everywhere'; then
+    MODEL="everywhere"
+  else
+    echo "[cups] No 'everywhere' driver either. Available Epson models:"
+    lpinfo -m 2>/dev/null | grep -i epson | head -n10 || echo "[cups] (lpinfo returned nothing)"
+    echo "[cups] Installed escpr version may be too old."
+    exit 1
+  fi
 fi
 
 tcp_open() {

@@ -5,7 +5,14 @@ services:
     image: ghcr.io/0libote/epson-printer-ha:latest
     container_name: epson-printer-ha
     network_mode: host
+    init: true
+    stop_grace_period: 15s
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       PRINTER_IP: ""
       PRINTER_NAME: "Home_Epson_XP2200"
@@ -29,7 +36,13 @@ services:
     image: ghcr.io/0libote/epson-printer-ha-scan-bridge:latest
     container_name: epson-printer-ha-scan-bridge
     network_mode: host
+    init: true
     restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       PRINTER_IP: ""
       EPSON_EULA_ACCEPTED: "true"

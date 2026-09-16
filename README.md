@@ -115,7 +115,7 @@ This is deliberately a standard REST configuration rather than a custom Home Ass
 
 ## Verification
 
-CI runs the Python tests, validates both Compose files, builds both images, boots the main image on a non-default web port, configures its real XP-2200 PPD, and sends a generated PDF through the CUPS conversion and ESC/P-R filter chain to a local TCP capture socket. Physical printer and scanner hardware remain the final integration test.
+CI runs the Bun tests and typechecks, validates both Compose files, builds both images, boots the main image on a non-default web port, configures its real XP-2200 PPD, and sends a generated PDF through the CUPS conversion and ESC/P-R filter chain to a local TCP capture socket. Physical printer and scanner hardware remain the final integration test.
 
 ## Security
 
