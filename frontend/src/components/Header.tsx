@@ -23,7 +23,7 @@ const s = stylex.create({
     alignItems: "center",
     gap: "12px",
   },
-  brand: { display: "flex", alignItems: "center", gap: "10px", textDecoration: "none", color: vars.text },
+  brand: { minWidth: 0, display: "flex", alignItems: "center", gap: "10px", textDecoration: "none", color: vars.text },
   mark: {
     width: "32px",
     height: "32px",
@@ -34,11 +34,13 @@ const s = stylex.create({
     placeItems: "center",
     flexShrink: 0,
   },
-  name: { fontFamily: vars.fontSans, fontSize: "15px", fontWeight: 650, letterSpacing: "-0.01em", lineHeight: 1.1 },
-  sub: { fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary },
+  brandText: { minWidth: 0 },
+  name: { display: "block", fontFamily: vars.fontSans, fontSize: "15px", fontWeight: 650, letterSpacing: "-0.01em", lineHeight: 1.1 },
+  sub: { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary },
   spacer: { flex: 1 },
   iconBtn: {
     width: "36px",
+    flexShrink: 0,
     height: "36px",
     borderRadius: vars.radiusFull,
     borderWidth: "1px",
@@ -57,11 +59,10 @@ export function Header({ printerName, displayName, online, setupNeeded }: { prin
   return (
     <header {...stylex.props(s.bar)}>
       <div {...stylex.props(s.inner)}>
-        <a {...stylex.props(s.brand)} href="/">
+        <a {...stylex.props(s.brand)} href="#overview">
           <span {...stylex.props(s.mark)}><Printer size={17} /></span>
-          <span>
+          <span {...stylex.props(s.brandText)}>
             <span {...stylex.props(s.name)}>Print Room</span>
-            <br />
             <span {...stylex.props(s.sub)}>{setupNeeded ? "setup" : displayName || printerName}</span>
           </span>
         </a>
