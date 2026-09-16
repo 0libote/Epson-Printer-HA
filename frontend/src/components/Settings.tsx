@@ -196,7 +196,7 @@ export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: 
       <form {...stylex.props(s.stack)} onSubmit={submit}>
         {managed ? <p {...stylex.props(s.p)}>This address is managed by the server configuration. Update PRINTER_IP there to change it.</p> : null}
         <label {...stylex.props(ui.fieldLabel)}>
-          Printer IP address
+          <span>Printer IP address</span>
           <input {...stylex.props(ui.input, ui.mono)} disabled={managed || busy} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
         </label>
         <div>

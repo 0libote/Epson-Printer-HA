@@ -510,4 +510,14 @@ describe("web - Bun Hono", () => {
     } finally { finish([{ ok: false, stdout: "", stderr: "scan_cancelled", returncode: 130 }, null]); warm.mockRestore(); scan.mockRestore(); appModule._resetScanJobsForTest(); }
   });
 
+  test("history storage failures return a retryable error instead of an empty list", async () => {
+    const history = spyOn(historyModule, "listPrintHistory").mockImplementation(() => { throw new Error("fixture storage failure"); });
+    const logging = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await createClient(appModule.app).request("/api/history");
+      expect(res.status).toBe(503);
+      expect((await res.json()).error).toContain("temporarily unavailable");
+    } finally { history.mockRestore(); logging.mockRestore(); }
+  });
+
 });

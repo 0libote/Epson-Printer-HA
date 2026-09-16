@@ -338,9 +338,9 @@ export async function scannerStatus(printerIp: string): Promise<{ ok: boolean; s
     }
     const hasBridge = await tcpOpen("127.0.0.1", 6566, 200);
     if (hasBridge) {
-      return { ok: true, state: "ready", detail: "Epson compatibility bridge is online", backend: "Epson compatibility bridge", device: null, open_source: false };
+      return { ok: false, state: "not_detected", detail: "The compatibility bridge is online, but no scanner was detected. Check that the printer is awake and its address is correct.", backend: "Epson compatibility bridge", device: null, open_source: false };
     }
-    return { ok: false, state: "starting", detail: "The automatic scanner service is still starting.", backend: null, device: null, open_source: false };
+    return { ok: false, state: "not_detected", detail: "No scanner detected. Check the printer address and connection. If setup just finished, allow the scanner service a moment to start.", backend: null, device: null, open_source: false };
   });
 }
 

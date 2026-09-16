@@ -692,7 +692,7 @@ app.use("*", async(c,next)=>{
   try {
     const ms = Date.now() - start;
     if (ms > 2000) {
-      console.warn(`[web] slow ${c.req.method} ${c.req.path} ${ms}ms`);
+      console.warn(`[web] slow request ${ms}ms`);
     }
   } catch {}
 });
@@ -1208,8 +1208,8 @@ app.get("/api/scans", async(c)=>{
   try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
   if(Number.isNaN(limit)) limit=100;
   limit=Math.max(1, Math.min(limit, 500));
-  const scans=listScansDetailed(limit);
-  return c.json({ scans, total: listScansDetailed(Number.MAX_SAFE_INTEGER).length, limit, max: MAX_SCAN_FILES });
+  const allScans = listScansDetailed(Number.MAX_SAFE_INTEGER);
+  return c.json({ scans: allScans.slice(0, limit), total: allScans.length, limit, max: MAX_SCAN_FILES });
 });
 
 app.get("/api/scans/:filename/thumb", async(c)=>{
@@ -1580,9 +1580,12 @@ app.get("/api/history", async(c)=>{
   let limit=100;
   try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
   if(Number.isNaN(limit)) limit=100;
-  let history:any[]=[];
-  try{history=listPrintHistory(limit);}catch{history=[];}
-  return c.json({history});
+  try {
+    return c.json({ history: listPrintHistory(limit) });
+  } catch (error) {
+    console.error("[history] Could not read print history", error);
+    return c.json({ ok: false, error: "Print history is temporarily unavailable. Try again shortly." }, 503);
+  }
 });
 
 // Cache health probe 10s — Docker HEALTHCHECK + frontend both hit this

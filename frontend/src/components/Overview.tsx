@@ -70,9 +70,9 @@ const s = stylex.create({
   jobMeta: { fontFamily: vars.fontSans, fontSize: "12px", color: vars.textTertiary, marginTop: "2px" },
 });
 
-export function StatusStrip({ printerOk, printerState, printerDetail, scannerOk, scannerDetail, queueCount }: {
+export function StatusStrip({ printerOk, printerState, printerDetail, scannerOk, scannerState, scannerDetail, queueCount }: {
   printerOk: boolean; printerState: string; printerDetail: string;
-  scannerOk: boolean; scannerDetail: string; queueCount: number;
+  scannerOk: boolean; scannerState: string; scannerDetail: string; queueCount: number;
 }) {
   return (
     <div {...stylex.props(s.strip)} aria-label="Device status">
@@ -83,13 +83,13 @@ export function StatusStrip({ printerOk, printerState, printerDetail, scannerOk,
       </div>
       <div {...stylex.props(s.cell)}>
         <span {...stylex.props(s.label)}><StatusDot tone={scannerOk ? "good" : "warn"} /> Scanner</span>
-        <span {...stylex.props(s.value)}>{scannerOk ? "Ready" : "Starting"}</span>
+        <span {...stylex.props(s.value)}>{safeLabel(scannerState)}</span>
         <span {...stylex.props(s.detail)} title={scannerDetail}>{scannerDetail || "—"}</span>
       </div>
       <div {...stylex.props(s.cell)}>
         <span {...stylex.props(s.label)}><StatusDot tone={queueCount > 0 ? "warn" : "good"} /> Queue</span>
         <span {...stylex.props(s.value)}>{queueCount} {queueCount === 1 ? "job" : "jobs"}</span>
-        <span {...stylex.props(s.detail)}>{queueCount > 0 ? "Printing" : "Empty"}</span>
+        <span {...stylex.props(s.detail)}>{queueCount > 0 ? "Waiting or printing" : "Empty"}</span>
       </div>
     </div>
   );

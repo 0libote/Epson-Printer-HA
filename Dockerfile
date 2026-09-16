@@ -26,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Epson's drivers and Scan 2 bundle are x86-64 only — fail fast on arm with a
 # clear message instead of a cryptic "exec format error" three layers deep.
 RUN arch="$(dpkg --print-architecture)"; \
-    if [ "$arch" != "amd64" ]; then echo "epson-printer-ha requires linux/amd64 (Epson drivers are x86-64 only; detected $arch)" >&2; exit 1; fi
+    if [ "$arch" != "amd64" ]; then \
+      echo "epson-printer-ha requires linux/amd64 (Epson drivers are x86-64 only; detected $arch)" >&2; \
+      exit 1; \
+    fi
 
 # Install Bun 1.4.2 (Rust) - official install script
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip -o /tmp/bun.zip && \

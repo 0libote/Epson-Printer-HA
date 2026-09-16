@@ -16,3 +16,6 @@
   ::selection { background: #3b5bdb; color: #fff; }
   :focus-visible { outline: 2px solid #3b5bdb; outline-offset: 2px; border-radius: 4px; }
 }
+
+/* Native dialogs provide focus containment and Escape handling. */
+dialog::backdrop { background: rgb(0 0 0 / 45%); }

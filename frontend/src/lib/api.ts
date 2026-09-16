@@ -85,11 +85,15 @@ let csrfPending: Promise<string> | null = null;
 export function clearCachedCsrf() { cachedCsrf = null; }
 export async function ensureCsrf(): Promise<string> {
   const cookie = getCsrfToken();
-  if (cookie) return (cachedCsrf = cookie);
-  if (cachedCsrf) return cachedCsrf;
-  if (!csrfPending) {
-    csrfPending = fetchCsrf().then(token => (cachedCsrf = token)).finally(() => { csrfPending = null; });
+  if (cookie) {
+    cachedCsrf = cookie;
+    return cookie;
   }
+  if (cachedCsrf) return cachedCsrf;
+  csrfPending ??= fetchCsrf().then(token => {
+    cachedCsrf = token;
+    return token;
+  }).finally(() => { csrfPending = null; });
   return csrfPending;
 }
 

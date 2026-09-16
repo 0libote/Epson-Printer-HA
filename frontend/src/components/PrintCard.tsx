@@ -20,6 +20,8 @@ const s = stylex.create({
     borderColor: vars.lineStrong,
     backgroundColor: vars.bgSunken,
     cursor: "pointer",
+    width: "100%",
+    textAlign: "left",
     transition: "border-color .15s, background-color .15s",
   },
   dropActive: { borderColor: vars.accent, backgroundColor: vars.accentSoft },
@@ -137,17 +139,6 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
         sub="PDF, images or plain text"
       />
       <form onSubmit={submit}>
-        <label
-          {...stylex.props(s.drop, dragOver && s.dropActive)}
-          role="button"
-          tabIndex={busy ? -1 : 0}
-          aria-label="Choose a file to print"
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
-          onDragEnter={(e) => { e.preventDefault(); dragDepth.current++; setDragOver(true); }}
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); }}
-          onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pick(f); }}
-        >
           <input
             ref={fileRef}
             {...stylex.props(s.fileInput)}
@@ -157,13 +148,24 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
             onChange={(e) => pick(e.target.files?.[0] || null)}
             tabIndex={-1}
           />
+        <button
+          {...stylex.props(s.drop, dragOver && s.dropActive)}
+          type="button"
+          disabled={busy}
+          aria-label="Choose a file to print"
+          onClick={() => fileRef.current?.click()}
+          onDragEnter={(e) => { e.preventDefault(); dragDepth.current++; setDragOver(true); }}
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); }}
+          onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pick(f); }}
+        >
           <span {...stylex.props(s.dropIcon)}><Upload size={17} /></span>
           <span>
             <span {...stylex.props(s.dropText)}>{dragOver ? "Drop it" : "Choose a file or drag it here"}</span>
             <br />
             <span {...stylex.props(s.dropHint)}>PDF · PNG · JPG · TXT · up to {maxMbEffective} MB</span>
           </span>
-        </label>
+        </button>
 
         {file ? (
           <div {...stylex.props(s.chosen)}>
@@ -193,7 +195,7 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
           </label>
           <label {...stylex.props(s.check)}>
             <input type="checkbox" disabled={busy} checked={grayscale} onChange={(e) => setGrayscale(e.target.checked)} style={{ width: 16, height: 16, accentColor: vars.accent as string }} />
-            Black &amp; white
+            <span>Black &amp; white</span>
           </label>
         </div>
 

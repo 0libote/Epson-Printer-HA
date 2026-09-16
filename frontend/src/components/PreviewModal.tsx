@@ -37,31 +37,23 @@ const s = stylex.create({
 });
 
 export function PreviewModal({ scan, onClose }: { scan: ScanItem; onClose: () => void }) {
-  const modalRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
   useEffect(() => {
+    const dialog = modalRef.current;
     const previousFocus = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      if (e.key !== "Tab") return;
-      const nodes = modalRef.current?.querySelectorAll<HTMLElement>('a[href], button, iframe, [tabindex="0"]');
-      if (!nodes?.length) return;
-      const first = nodes[0], last = nodes[nodes.length - 1];
-      if (e.shiftKey && (document.activeElement === first || !modalRef.current?.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
+    dialog?.showModal();
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
+      dialog?.close();
+      document.body.style.overflow = previousOverflow;
       previousFocus?.focus();
     };
-  }, [onClose]);
+  }, []);
 
   return (
-    <div {...stylex.props(ui.scrim)} role="dialog" aria-modal="true" aria-label={scan.name} onClick={onClose}>
-      <div ref={modalRef} {...stylex.props(ui.modal)} onClick={(e) => e.stopPropagation()}>
+      <dialog ref={modalRef} {...stylex.props(ui.modal)} aria-label={scan.name}
+        onCancel={(event) => { event.preventDefault(); onClose(); }}>
         <div {...stylex.props(s.head)}>
           <span {...stylex.props(s.title)}>{scan.name}</span>
           <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(ui.buttonQuiet)} style={{ textDecoration: "none" }}>
@@ -91,7 +83,6 @@ export function PreviewModal({ scan, onClose }: { scan: ScanItem; onClose: () =>
             loading="lazy"
           />
         )}
-      </div>
-    </div>
+      </dialog>
   );
 }

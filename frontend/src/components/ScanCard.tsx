@@ -77,6 +77,14 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     let failures = 0;
+    const reportFinished = (job: Awaited<ReturnType<typeof pollScanJob>>) => {
+          if (job.state === "done") {
+            push({ kind: "success", title: "Scan complete", desc: job.resultName });
+            onScannedRef.current();
+          } else {
+            push({ kind: job.state === "cancelled" ? "info" : "error", title: job.state === "cancelled" ? "Scan cancelled" : "Scan failed", desc: job.error });
+          }
+    };
     const poll = async () => {
       try {
         const job = await pollScanJob(jobId);
@@ -89,15 +97,11 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
           setBusy(false);
           setCancelling(false);
           setJobId(null);
-          if (job.state === "done") {
-            push({ kind: "success", title: "Scan complete", desc: job.resultName });
-            onScannedRef.current();
-          } else {
-            push({ kind: job.state === "cancelled" ? "info" : "error", title: job.state === "cancelled" ? "Scan cancelled" : "Scan failed", desc: job.error });
-          }
+          reportFinished(job);
           return;
         }
-      } catch (err: any) {
+      } catch {
+        // Transient poll failures are retried without starting another scan.
         if (disposed) return;
         failures++;
         setProgress("Connection interrupted. Reconnecting to the scan…");
@@ -125,6 +129,7 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
     setStartedAt(Date.now());
     try {
       const { jobId: id } = await startScanJob({ dpi, mode, format: fmt });
+      if (!/^[a-f0-9]{12}$/.test(id)) throw new Error("The server returned an invalid scan job ID.");
       sessionStorage.setItem("scanJobId", id);
       setJobId(id);
       setBlocked(false);
@@ -186,7 +191,7 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
       <form onSubmit={submit} style={{ marginTop: scannerOk || busy ? 0 : 12 }}>
         <div {...stylex.props(s.grid)}>
           <label {...stylex.props(ui.fieldLabel)}>
-            Colour
+            <span>Colour</span>
             <select disabled={busy} {...stylex.props(ui.select)} value={mode} onChange={(e) => setMode(e.target.value)}>
               <option>Color</option>
               <option>Gray</option>
@@ -194,13 +199,13 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
             </select>
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
-            Quality
+            <span>Quality</span>
             <select disabled={busy} {...stylex.props(ui.select)} value={dpi} onChange={(e) => setDpi(e.target.value)}>
               {DPI_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
-            Format
+            <span>Format</span>
             <select disabled={busy} {...stylex.props(ui.select)} value={fmt} onChange={(e) => setFmt(e.target.value)}>
               <option value="pdf">PDF</option>
               <option value="png">PNG</option>

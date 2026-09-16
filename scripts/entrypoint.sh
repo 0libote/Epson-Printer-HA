@@ -6,7 +6,7 @@ mkdir -p /data/scans /data/uploads /run/dbus /run/avahi-daemon /run/epson /var/s
 # (host-owned UID). Every later boot /data is already epson-owned, so skip the
 # recursive walk — `chown -R` over hundreds of scans on a slow NAS disk was
 # adding seconds to every container restart.
-if [ "$(stat -c %U:%G /data 2>/dev/null || echo unknown)" != "epson:epson" ]; then
+if [[ "$(stat -c %U:%G /data 2>/dev/null || echo unknown)" != "epson:epson" ]]; then
   chown -R epson:epson /data
 else
   chown epson:epson /data /data/scans /data/uploads 2>/dev/null || true

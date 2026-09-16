@@ -229,6 +229,7 @@ export default function App() {
           printerState={printer.state}
           printerDetail={`${displayName} · ${printerIp}`}
           scannerOk={!!scanner.ok}
+          scannerState={scanner.state}
           scannerDetail={scanner.detail || (scanner.ok ? "Ready" : scanner.state.replaceAll("_", " "))}
           queueCount={queue.length}
         />
@@ -279,7 +280,9 @@ export default function App() {
 
         {tab === "history" ? (
           <div {...stylex.props(s.stack)}>
-            {historyQ.isError ? <p role="alert">Couldn’t load print history: {historyQ.error.message} <button onClick={() => historyQ.refetch()}>Retry</button></p> : historyQ.isLoading ? <p role="status">Loading print history…</p> : <History items={history} />}
+            {historyQ.isError ? <p role="alert">Couldn’t load print history: {historyQ.error.message} <button onClick={() => historyQ.refetch()}>Retry</button></p> : null}
+            {!historyQ.isError && historyQ.isLoading ? <output>Loading print history…</output> : null}
+            {!historyQ.isError && !historyQ.isLoading ? <History items={history} /> : null}
           </div>
         ) : null}
 
