@@ -22,10 +22,22 @@ export function commandResult(ok: boolean, stdout = "", stderr = "", returncode 
 // Bun.spawn based runCommand with timeout (no listener leaks, no zombie procs)
 // Hardened: global concurrency cap (spawn storms under multi-client polling),
 // output truncation (verbose CUPS/scanimage stderr can't OOM the hub).
-const RUN_CONCURRENCY_MAX = 12;
+const RUN_CONCURRENCY_MAX_DEFAULT = 12;
+const RUN_QUEUE_MAX_DEFAULT = 64;
+let RUN_CONCURRENCY_MAX = RUN_CONCURRENCY_MAX_DEFAULT;
 // Waiting callers also pile up memory (each holds its stream promises), so
 // fail fast instead of queueing without bound when the hub is saturated.
-const RUN_QUEUE_MAX = 64;
+let RUN_QUEUE_MAX = RUN_QUEUE_MAX_DEFAULT;
+
+/** Test hook: shrink limits to exercise saturation without spawning dozens of procs. */
+export function _setRunLimitsForTest(activeMax?: number, queueMax?: number) {
+  if (activeMax !== undefined) RUN_CONCURRENCY_MAX = Math.max(1, activeMax);
+  if (queueMax !== undefined) RUN_QUEUE_MAX = Math.max(0, queueMax);
+}
+export function _resetRunLimitsForTest() {
+  RUN_CONCURRENCY_MAX = RUN_CONCURRENCY_MAX_DEFAULT;
+  RUN_QUEUE_MAX = RUN_QUEUE_MAX_DEFAULT;
+}
 let _runActive = 0;
 const _runQueue: Array<() => void> = [];
 

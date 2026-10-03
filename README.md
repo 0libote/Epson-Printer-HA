@@ -30,7 +30,7 @@ Open `http://YOUR-SERVER-IP:8080`, enter the XP-2200 IPv4 address once, and the 
 
 If you open the dashboard through a reverse proxy or a hostname that client devices cannot resolve, set `CLIENT_HOST` in `.env` to the server's LAN IP or resolvable hostname. This is the address shown in the generated IPP instructions.
 
-Useful `.env` controls include `WEB_USERNAME`/`WEB_PASSWORD` for dashboard authentication, `SESSION_COOKIE_SECURE=true` when the dashboard is served exclusively through HTTPS, `HISTORY_RETENTION_DAYS` (default `90`), and `MAX_SCAN_FILES` (default `100`). History polling defaults to five seconds for active jobs and 60 seconds for completed-job reconciliation; tune `HISTORY_POLL_SECONDS` and `HISTORY_COMPLETED_POLL_SECONDS` only if needed. Setting history retention to `0` disables age-based deletion.
+Useful `.env` controls include `WEB_USERNAME`/`WEB_PASSWORD` for dashboard authentication, `SESSION_COOKIE_SECURE=true` when the dashboard is served exclusively through HTTPS, `HISTORY_RETENTION_DAYS` (default `90`), `MAX_SCAN_FILES` (default `100`), and `MAX_UPLOAD_MB` (default `128`). History polling defaults to five seconds for active jobs and 60 seconds for completed-job reconciliation; tune `HISTORY_POLL_SECONDS` and `HISTORY_COMPLETED_POLL_SECONDS` only if needed. Setting history retention to `0` disables age-based deletion. Ink levels are read over SNMP with community `public` by default; set `SNMP_COMMUNITY` if the printer uses a different community string.
 
 ## ZimaOS
 

@@ -58,9 +58,15 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
     if (saved && /^[a-f0-9]{12}$/.test(saved)) {
       pollScanJob(saved).then(job => {
         if (disposed) return;
-        setJobId(saved);
-        setStartedAt(job.startedAt || job.createdAt);
-        setBusy(true);
+        // Only re-attach to jobs that are still running: adopting a finished
+        // job would replay a stale "Scan complete" toast on every reload.
+        if (job.state === "queued" || job.state === "scanning" || job.state === "converting") {
+          setJobId(saved);
+          setStartedAt(job.startedAt || job.createdAt);
+          setBusy(true);
+        } else {
+          sessionStorage.removeItem("scanJobId");
+        }
       }).catch(() => { sessionStorage.removeItem("scanJobId"); });
     }
     return () => { disposed = true; };
@@ -230,7 +236,7 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
           </div>
         ) : null}
         <div style={{ marginTop: 14 }}>
-          <button {...stylex.props(ui.buttonPrimary, ui.buttonTeal, busy && ui.buttonPrimaryDisabled)} type="submit" disabled={busy || clearing}>
+          <button {...stylex.props(ui.buttonPrimary, ui.buttonTeal, (busy || !scannerOk) && ui.buttonPrimaryDisabled)} type="submit" disabled={busy || clearing || !scannerOk} title={!scannerOk && !busy ? "Waiting for the scanner to be detected" : undefined}>
             {busy ? <><Loader2 size={16} className="spin" /> Scanning{elapsed > 0 ? ` · ${elapsed}s` : "…"}</> : "Scan"}
           </button>
           {busy ? (

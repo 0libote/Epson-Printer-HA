@@ -1,5 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
+import { useState } from "react";
 import { Ban, Loader2 } from "lucide-react";
 import { useToast } from "./Toast";
 import { cancelPrintJob } from "../lib/api";
@@ -97,16 +98,21 @@ export function StatusStrip({ printerOk, printerState, printerDetail, scannerOk,
 
 export function Queue({ jobs, onChanged }: { jobs: QueueJob[]; onChanged: () => void }) {
   const { push } = useToast();
+  const [pending, setPending] = useState<Set<string>>(new Set());
 
   if (jobs.length === 0) return null;
 
   const cancel = async (id: string) => {
+    if (pending.has(id)) return;
+    setPending((p) => new Set(p).add(id));
     try {
       await cancelPrintJob(id);
       push({ kind: "success", title: "Job cancelled", desc: id });
       onChanged();
     } catch (err: any) {
       push({ kind: "error", title: "Couldn't cancel the job", desc: String(err.message || err).slice(0, 200) });
+    } finally {
+      setPending((p) => { const n = new Set(p); n.delete(id); return n; });
     }
   };
 
@@ -123,8 +129,8 @@ export function Queue({ jobs, onChanged }: { jobs: QueueJob[]; onChanged: () => 
               <div {...stylex.props(s.jobId)}>{j.id}</div>
               <div {...stylex.props(s.jobMeta)}>{j.owner} · {j.size}</div>
             </div>
-            <button {...stylex.props(ui.buttonQuiet, ui.buttonDanger)} onClick={() => cancel(j.id)}>
-              <Ban size={13} /> Cancel
+            <button {...stylex.props(ui.buttonQuiet, ui.buttonDanger)} onClick={() => cancel(j.id)} disabled={pending.has(j.id)} style={pending.has(j.id) ? { opacity: 0.5 } : undefined}>
+              <Ban size={13} /> {pending.has(j.id) ? "Cancelling…" : "Cancel"}
             </button>
           </div>
         ))}

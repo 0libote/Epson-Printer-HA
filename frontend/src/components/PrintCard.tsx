@@ -76,6 +76,13 @@ const s = stylex.create({
 
 const ACCEPT = [".pdf", ".png", ".jpg", ".jpeg", ".txt"];
 
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?: number }) {
   const { push } = useToast();
   const maxMbEffective = typeof maxMb === "number" && Number.isFinite(maxMb) && maxMb >= 1 ? Math.floor(maxMb) : FALLBACK_MAX_MB;
@@ -171,7 +178,7 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
           <div {...stylex.props(s.chosen)}>
             <FileText size={15} style={{ flexShrink: 0, color: vars.textTertiary as string }} />
             <span {...stylex.props(s.chosenName)}>{file.name}</span>
-            <span {...stylex.props(s.chosenMeta)}>{(file.size / 1024).toFixed(0)} KB</span>
+            <span {...stylex.props(s.chosenMeta)}>{formatFileSize(file.size)}</span>
             <button type="button" {...stylex.props(s.iconBtn)} disabled={busy} aria-label="Remove file" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}>
               <X size={14} />
             </button>
