@@ -106,7 +106,6 @@ async function collectDebs(bundle: string, work: string): Promise<Record<string,
     walk(work);
   } catch (e) {
     if (e instanceof PermanentSetupError) throw e;
-    // Fallback to Bun.Archive if tar failed
     throw e;
   }
 

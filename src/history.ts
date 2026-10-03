@@ -11,7 +11,9 @@ let initialisedDatabase: string | null = null;
 
 export function _setAppDir(dir: string) {
   APP_DIR = dir;
-  HISTORY_DB = join(dir, "history.sqlite3");
+  // Same filename as production so tests exercise the real path, including
+  // the legacy-table migration in initHistory().
+  HISTORY_DB = join(dir, "print_history.sqlite3");
 }
 export function _resetHistoryState() {
   _initialisedDatabases.clear();

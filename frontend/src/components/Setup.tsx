@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useState } from "react";
 import { ArrowRight, Loader2, Printer } from "lucide-react";
 import { useToast } from "./Toast";
-import { postSetup } from "../lib/api";
+import { postSetup, isPlausiblePrinterIpv4 } from "../lib/api";
 import { s as ui, ProgressBar } from "./ui";
 
 const s = stylex.create({
@@ -32,9 +32,10 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const v = ip.trim();
-    const parts = v.split(".");
-    if (parts.length !== 4 || parts.some((p) => !/^\d+$/.test(p) || Number(p) < 0 || Number(p) > 255)) {
-      push({ kind: "error", title: "That doesn't look like an IPv4 address", desc: "Example: 192.168.1.50" });
+    // Same rules as the server's validateIPv4: instant feedback here, and the
+    // server still re-validates (never trust the client).
+    if (!isPlausiblePrinterIpv4(v)) {
+      push({ kind: "error", title: "That doesn't look like a printer address", desc: "Use the printer's normal IPv4 address, e.g. 192.168.1.50 (not a network, broadcast, loopback or multicast address)." });
       return;
     }
     setBusy(true);

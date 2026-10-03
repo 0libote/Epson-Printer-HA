@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useState } from "react";
 import { Check, Copy, Loader2 } from "lucide-react";
 import { useToast } from "./Toast";
-import { postClientSettings, postSetup } from "../lib/api";
+import { postClientSettings, postSetup, isPlausiblePrinterIpv4 } from "../lib/api";
 import { s as ui, Card } from "./ui";
 
 const s = stylex.create({
@@ -187,6 +187,10 @@ export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: 
     e.preventDefault();
     const v = ip.trim();
     if (!v) return;
+    if (!isPlausiblePrinterIpv4(v)) {
+      push({ kind: "error", title: "That doesn't look like a printer address", desc: "Use the printer's normal IPv4 address, e.g. 192.168.1.50." });
+      return;
+    }
     setBusy(true);
     try {
       const fd = new FormData();

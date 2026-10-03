@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isPlausiblePrinterIpv4 } from "../../frontend/src/lib/api";
 
 // Regression tests for the code-review pass: validation statuses, JSON
 // mutation bodies, IP handling, download headers, and saturation behaviour.
@@ -185,6 +186,15 @@ describe("review fixes", () => {
       expect(done.ok).toBe(true);
     } finally {
       coreModule._resetRunLimitsForTest();
+    }
+  });
+
+  test("client IPv4 pre-check agrees with the server rules", () => {
+    for (const good of ["192.168.1.50", "10.0.0.5", "172.16.0.99"]) {
+      expect(isPlausiblePrinterIpv4(good)).toBe(true);
+    }
+    for (const bad of ["192.168.1.0", "192.168.1.255", "0.1.2.3", "127.0.0.1", "127.0.0.2", "255.255.255.255", "224.0.0.1", "not-an-ip", "192.168.1", "192.168.1.256", ""]) {
+      expect(isPlausiblePrinterIpv4(bad)).toBe(false);
     }
   });
 

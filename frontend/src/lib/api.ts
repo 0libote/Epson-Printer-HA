@@ -63,6 +63,18 @@ export type HistoryItem = {
 
 export type HistoryResponse = { history: HistoryItem[] };
 
+/** Mirrors the server's validateIPv4 so typos fail fast in the UI.
+ *  The server always re-validates — this is convenience, not security. */
+export function isPlausiblePrinterIpv4(value: string): boolean {
+  const octets = value.trim().split(".");
+  if (octets.length !== 4) return false;
+  const nums = octets.map((p) => (/^\d+$/.test(p) ? Number(p) : -1));
+  if (nums.some((n) => n < 0 || n > 255)) return false;
+  if (nums[0] === 0 || nums[0] === 127 || nums[0] === 255 || (nums[0] >= 224 && nums[0] <= 239)) return false;
+  if (nums[3] === 0 || nums[3] === 255) return false;
+  return true;
+}
+
 function getCookie(name: string): string | null {
   const m = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/([$?*|{}\]\\^])/g, "\\$1") + "=([^;]*)"));
   return m ? decodeURIComponent(m[1]) : null;

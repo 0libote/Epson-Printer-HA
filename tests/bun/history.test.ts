@@ -93,7 +93,7 @@ describe("history", () => {
   });
 
   test("history retention only removes old terminal jobs", async () => {
-    const dbPath = join(tmp, "history.sqlite3");
+    const dbPath = join(tmp, "print_history.sqlite3");
     history._setAppDir(tmp);
     history._resetHistoryState();
     history.initHistory();
@@ -108,7 +108,7 @@ describe("history", () => {
   });
 
   test("legacy history survives reused cups job id", async () => {
-    const dbPath = join(tmp, "history.sqlite3");
+    const dbPath = join(tmp, "print_history.sqlite3");
     history._setAppDir(tmp);
     history._resetHistoryState();
     const now = Math.floor(Date.now() / 1000);
