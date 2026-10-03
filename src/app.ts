@@ -1618,8 +1618,8 @@ app.get("/api/ink", async(c)=>{
   const force = c.req.query("refresh") === "1";
   try{
     if (force) {
-      const { _clearInkCacheForTest } = await import("./ink.ts");
-      _clearInkCacheForTest();
+      const { clearInkCache } = await import("./ink.ts");
+      clearInkCache();
     }
     return c.json(await getInkLevels(printerIp));
   }catch(e:any){

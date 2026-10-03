@@ -5,6 +5,7 @@ import {
   levelToPercent,
   parseEpsonInkHtml,
   parseIppAttributes,
+  parsePrinterSupplyEntry,
   decodeSnmpResponse,
   getInkLevels,
   getCachedInkLevels,
@@ -43,7 +44,7 @@ describe("ink - mapping and math", () => {
 });
 
 describe("ink - epson web scrape", () => {
-  test("bar heights normalise against tallest bar", () => {
+  test("bar heights scale against the 50px full bar", () => {
     const html = `
       <img src="Ink_K.PNG" height="40" />
       <img src="Ink_C.PNG" height="30" />
@@ -53,10 +54,38 @@ describe("ink - epson web scrape", () => {
     const carts = parseEpsonInkHtml(html)!;
     expect(carts.length).toBe(4);
     const byKey = Object.fromEntries(carts.map((c) => [c.key, c.level]));
+    expect(byKey.black).toBe(80);
+    expect(byKey.cyan).toBe(60);
+    expect(byKey.magenta).toBe(40);
+    expect(byKey.yellow).toBe(20);
+  });
+
+  test("real Epson status page shape (single quotes, relative IMAGE path, clrname)", () => {
+    const html = `
+      <ul class="inksection">
+        <li class='tank'><div class='tank'><img class='color' src='../../IMAGE/Ink_K.PNG' height='48' style=''></div><div class='clrname'>BK</div></li>
+        <li class='tank'><div class='tank'><img class='color' src='../../IMAGE/Ink_C.PNG' height='32' style=''></div><div class='clrname'>C</div></li>
+        <li class='tank'><div class='tank'><img class='color' src='../../IMAGE/Ink_M.PNG' height='44' style=''></div><div class='clrname'>M</div></li>
+        <li class='tank'><div class='tank'><img class='color' src='../../IMAGE/Ink_Y.PNG' height='38' style=''></div><div class='clrname'>Y</div></li>
+        <li class='tank'><div class='tank'><img class='color' src='../../IMAGE/Ink_Waste.PNG' height='44' style=''></div><div class='mbicn'><img src='../../IMAGE/Icn_Mb.PNG' height='18' width='18'></div></li>
+      </ul>
+    `;
+    const carts = parseEpsonInkHtml(html)!;
+    expect(carts.length).toBe(4);
+    const byKey = Object.fromEntries(carts.map((c) => [c.key, c.level]));
+    // 50px == 100%: 48->96, 32->64, 44->88, 38->76 (waste box ignored)
+    expect(byKey.black).toBe(96);
+    expect(byKey.cyan).toBe(64);
+    expect(byKey.magenta).toBe(88);
+    expect(byKey.yellow).toBe(76);
+  });
+
+  test("full bar reports 100, empty bar reports 0", () => {
+    const html = `<img src="Ink_K.PNG" height="50" /><img src="Ink_C.PNG" height="0" />`;
+    const carts = parseEpsonInkHtml(html)!;
+    const byKey = Object.fromEntries(carts.map((c) => [c.key, c.level]));
     expect(byKey.black).toBe(100);
-    expect(byKey.cyan).toBe(75);
-    expect(byKey.magenta).toBe(50);
-    expect(byKey.yellow).toBe(25);
+    expect(byKey.cyan).toBe(0);
   });
 
   test("text fallback finds percentages", () => {
@@ -94,6 +123,13 @@ describe("ink - ipp parsing", () => {
     const attrs = parseIppAttributes(ippResponse([80, 70], ["Black", "Cyan"]));
     expect(attrs.get("marker-names")?.map((e) => e.value)).toEqual(["Black", "Cyan"]);
     expect(attrs.get("marker-levels")?.map((e) => e.value)).toEqual([80, 70]);
+  });
+
+  test("printer-supply entries map colorant + level", () => {
+    expect(parsePrinterSupplyEntry("type=inkCartridge;colorant=K;level=81")).toEqual({ key: "black", level: 81 });
+    expect(parsePrinterSupplyEntry("type=inkCartridge;colorant=Cyan;level=60")).toEqual({ key: "cyan", level: 60 });
+    expect(parsePrinterSupplyEntry("type=inkCartridge;colorant=M;level=-2")).toEqual({ key: "magenta", level: null });
+    expect(parsePrinterSupplyEntry("type=wasteInkBox;level=44")).toEqual({ key: null, level: 44 });
   });
 });
 

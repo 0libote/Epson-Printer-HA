@@ -27,7 +27,15 @@ const OID_DESC = "1.3.6.1.2.1.43.11.1.1.6";
 const OID_MAX = "1.3.6.1.2.1.43.11.1.1.8";
 const OID_LEVEL = "1.3.6.1.2.1.43.11.1.1.9";
 const SNMP_PORT = 161;
-const SNMP_COMMUNITY = process.env.SNMP_COMMUNITY?.trim() || "public";
+// Read per-request (not import-time) so a SNMP_COMMUNITY change applies
+// without a process restart.
+function snmpCommunity(): string {
+  try {
+    return process.env.SNMP_COMMUNITY?.trim() || "public";
+  } catch {
+    return "public";
+  }
+}
 
 const COLOR_HEX: Record<InkKey, string> = {
   black: "#1f2937",
@@ -221,7 +229,7 @@ let _reqId = 1;
 async function snmpRequest(host: string, oid: string, getNext: boolean, timeoutMs = 2000): Promise<{ oid: string; value: Tlv | null }> {
   const { default: dgram } = await import("node:dgram");
   const reqId = (_reqId = (_reqId + 1) % 0x7fffffff) || 1;
-  const payload = buildSnmpGet(SNMP_COMMUNITY, oid, reqId, getNext);
+  const payload = buildSnmpGet(snmpCommunity(), oid, reqId, getNext);
   return new Promise((resolve, reject) => {
     const sock: any = dgram.createSocket("udp4");
     const timer = setTimeout(() => { try { sock.close(); } catch {} reject(new Error("snmp timeout")); }, timeoutMs);
@@ -256,12 +264,22 @@ function rowIndex(oid: string, base: string): string {
   return oid.slice(base.length + 1); // e.g. "1.4" for hrDevice-indexed tables
 }
 
+function hasKnownLevel(carts: InkCartridge[]): boolean {
+  return carts.some((c) => c.level != null);
+}
+
 async function trySnmp(host: string): Promise<InkStatus | null> {
-  const [descs, maxes, levels] = await Promise.all([
+  // Tolerate partial failures: a missing MAX column (or any single timed-out
+  // walk) must not discard usable DESC+LEVEL data. Default an absent max to
+  // the percent scale (levelToPercent handles max<=0).
+  const [descsR, maxesR, levelsR] = await Promise.allSettled([
     snmpWalk(host, OID_DESC),
     snmpWalk(host, OID_MAX),
     snmpWalk(host, OID_LEVEL),
   ]);
+  const descs = descsR.status === "fulfilled" ? descsR.value : [];
+  const maxes = maxesR.status === "fulfilled" ? maxesR.value : [];
+  const levels = levelsR.status === "fulfilled" ? levelsR.value : [];
   if (!descs.length || !levels.length) return null;
   const maxByIdx = new Map<string, number | null>();
   for (const r of maxes) maxByIdx.set(rowIndex(r.oid, OID_MAX), snmpValueToNumber(r.value));
@@ -288,9 +306,12 @@ async function trySnmp(host: string): Promise<InkStatus | null> {
   }
   if (!carts.length) return null;
   carts.sort((a, b) => orderKey(a.key) - orderKey(b.key));
-  // de-dupe (some printers expose each color twice)
+  // de-dupe (some printers expose each color twice); prefer a known level
   const seen = new Map<InkKey, InkCartridge>();
-  for (const c of carts) if (!seen.has(c.key)) seen.set(c.key, c);
+  for (const c of carts) {
+    const prev = seen.get(c.key);
+    if (!prev || (prev.level == null && c.level != null)) seen.set(c.key, c);
+  }
   const unique = [...seen.values()].sort((a, b) => orderKey(a.key) - orderKey(b.key));
   return {
     ok: unique.some((c) => c.level != null),
@@ -368,7 +389,28 @@ function ippVals(attrs: Map<string, any[]>, key: string): any[] {
   return (attrs.get(key) || []).map((e) => e.value);
 }
 
-async function tryIpp(host: string, timeoutMs = 4000): Promise<InkStatus | null> {
+export function parsePrinterSupplyEntry(entry: string): { key: InkKey | null; level: number | null } {
+  // printer-supply entries look like
+  // "type=inkCartridge;...;colorant=K;...;level=80;..." — extract the level and
+  // map the color from the colorant/name fields.
+  const levelM = entry.match(/level\s*=\s*(-?\d+)/i);
+  const raw = levelM ? Number.parseInt(levelM[1], 10) : NaN;
+  const level = !Number.isFinite(raw) ? null : raw === -3 ? 100 : raw < 0 ? null : Math.max(0, Math.min(100, Math.round(raw)));
+  const colorM = entry.match(/colorant\s*=\s*([^;,\s]+)/i) || entry.match(/color\s*=\s*([^;,\s]+)/i);
+  // Single-letter colorant codes (K/C/M/Y) never match keyFromDescription's
+  // whole-string rules, so map them directly first.
+  const code = (colorM?.[1] ?? "").trim().toLowerCase();
+  const direct: Record<string, InkKey> = {
+    k: "black", bk: "black", black: "black",
+    c: "cyan", cyan: "cyan",
+    m: "magenta", magenta: "magenta",
+    y: "yellow", yellow: "yellow",
+  };
+  const key = direct[code] ?? keyFromDescription(`${colorM?.[1] ?? ""} ${entry.slice(0, 80)}`);
+  return { key, level };
+}
+
+async function tryIpp(host: string, timeoutMs = 3000): Promise<InkStatus | null> {
   const paths = ["/ipp/print", "/ipp/print?version=1.1", "/Epson_IPP_Printer"];
   let lastErr = "";
   for (const path of paths) {
@@ -388,20 +430,34 @@ async function tryIpp(host: string, timeoutMs = 4000): Promise<InkStatus | null>
       const names = ippVals(attrs, "marker-names").map(String);
       const colors = ippVals(attrs, "marker-colors").map(String);
       const levels = ippVals(attrs, "marker-levels").map(Number);
-      if (!levels.length) { lastErr = "no marker-levels"; continue; }
       const carts: InkCartridge[] = [];
-      for (let i = 0; i < levels.length; i++) {
-        const name = names[i] ?? colors[i] ?? `Supply ${i + 1}`;
-        const key = keyFromDescription(`${name} ${colors[i] ?? ""}`);
-        if (!key) continue;
-        const raw = levels[i];
-        const pct = raw === -3 ? 100 : raw < 0 ? null : Math.max(0, Math.min(100, Math.round(raw)));
-        carts.push({ key, name: PRETTY[key], color: COLOR_HEX[key], level: pct, state: cartridgeState(pct), detail: `${name} (marker-levels=${raw})` });
+      if (levels.length) {
+        for (let i = 0; i < levels.length; i++) {
+          const name = names[i] ?? colors[i] ?? `Supply ${i + 1}`;
+          const key = keyFromDescription(`${name} ${colors[i] ?? ""}`);
+          if (!key) continue;
+          const raw = levels[i];
+          const pct = raw === -3 ? 100 : raw < 0 ? null : Math.max(0, Math.min(100, Math.round(raw)));
+          carts.push({ key, name: PRETTY[key], color: COLOR_HEX[key], level: pct, state: cartridgeState(pct), detail: `${name} (marker-levels=${raw})` });
+        }
+      } else {
+        // Fallback within the same IPP response: CUPS and some firmware expose
+        // supplies as printer-supply / printer-supply-description instead.
+        const supplies = [...ippVals(attrs, "printer-supply").map(String), ...ippVals(attrs, "printer-supply-description").map(String)];
+        if (!supplies.length) { lastErr = "no marker-levels"; continue; }
+        for (const entry of supplies) {
+          const { key, level } = parsePrinterSupplyEntry(entry);
+          if (!key) continue;
+          carts.push({ key, name: PRETTY[key], color: COLOR_HEX[key], level, state: cartridgeState(level), detail: entry.slice(0, 120) });
+        }
       }
       if (!carts.length) { lastErr = "no mappable markers"; continue; }
+      // An all-unknown marker set (e.g. marker-levels=-2) must not shadow the
+      // HTTP web-scrape fallback — keep probing the next path/source.
+      if (!hasKnownLevel(carts)) { lastErr = "marker levels all unknown"; continue; }
       carts.sort((a, b) => orderKey(a.key) - orderKey(b.key));
       return {
-        ok: carts.some((c) => c.level != null),
+        ok: true,
         source: "ipp",
         updated_at: new Date().toISOString(),
         cartridges: carts,
@@ -416,20 +472,92 @@ async function tryIpp(host: string, timeoutMs = 4000): Promise<InkStatus | null>
 }
 
 // ── Epson web UI scrape ──────────────────────────────────────────
-export function parseEpsonInkHtml(html: string): InkCartridge[] | null {
-  // EcoTank/cartridge status pages render bar images like Ink_K.PNG with a height="NN" attribute.
-  // Normalise each color height against the tallest bar on the page (full reference).
-  const heights = new Map<string, number>();
-  const re = /Ink_(K|C|M|Y)[^>]*?height\s*=\s*["']?(\d+)/gi;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(html)) !== null) {
-    const code = m[1].toUpperCase();
-    const h = Number.parseInt(m[2], 10);
-    if (Number.isFinite(h)) {
-      const prev = heights.get(code) ?? 0;
-      heights.set(code, Math.max(prev, h));
+// Full-scale bar height on Epson Web Config status pages. Real pages render
+// e.g. <img ... src='.../Ink_K.PNG' height='48'> next to <div class='clrname'>BK</div>
+// and the community standard (Home Assistant command_line sensors, ioBroker,
+// ha-epson-workforce which computes px*2) is 50px == 100%.
+export const EPSON_WEB_FULL_BAR_PX = 50;
+
+const TANK_LABEL_TO_KEY: Record<string, InkKey> = {
+  BK: "black", K: "black", BLACK: "black", PB: "black",
+  C: "cyan", CYAN: "cyan",
+  M: "magenta", MAGENTA: "magenta",
+  Y: "yellow", YELLOW: "yellow",
+};
+
+function tankChunkLevel(chunk: string): number | null {
+  // Prefer the level from linear-gradient (second percentage stop).
+  const gradIdx = chunk.toLowerCase().indexOf("linear-gradient");
+  if (gradIdx >= 0) {
+    const nums = [...chunk.slice(gradIdx, gradIdx + 400).matchAll(/(\d{1,3}(?:\.\d+)?)\s*%/g)]
+      .map((x) => Number.parseFloat(x[1]))
+      .filter((n) => Number.isFinite(n));
+    if (nums.length >= 2) return Math.max(0, Math.min(100, Math.round(nums[1])));
+  }
+  // Inline-style height in px (50px == full).
+  const styleH = chunk.match(/style\s*=\s*["'][^"']*?height\s*:\s*(\d+)/i);
+  if (styleH) return Math.max(0, Math.min(100, Number.parseInt(styleH[1], 10) * 2));
+  // Classic bar image height attribute.
+  const imgH = chunk.match(/<img[^>]*?height\s*=\s*["']?(\d+)/i);
+  if (imgH) return Math.max(0, Math.min(100, Number.parseInt(imgH[1], 10) * 2));
+  return null;
+}
+
+function parseEpsonTankListItems(html: string): InkCartridge[] | null {
+  const perKey = new Map<InkKey, { level: number; detail: string }>();
+  const segments = html.split(/<li[\s>]/i);
+  // segments[0] is the page head before the first <li>; still scan it in case
+  // the page has no <li> at all — the caller treats empty as "try fallback",
+  // so only accept li-shaped segments here.
+  let foundLi = false;
+  for (let i = 1; i < segments.length; i++) {
+    const chunk = segments[i].slice(0, segments[i].search(/<\/li\s*>/i) >= 0 ? segments[i].search(/<\/li\s*>/i) : segments[i].length);
+    if (!/class\s*=\s*["'][^"']*\btank\b/i.test(chunk)) continue;
+    foundLi = true;
+    // Maintenance/waste-box row — never an ink cartridge.
+    if (/mbicn/i.test(chunk) || /Ink_Waste/i.test(chunk)) continue;
+    const labelM = chunk.match(/clrname[^>]*>\s*([A-Za-z]+)\s*</i);
+    let key: InkKey | undefined;
+    if (labelM) key = TANK_LABEL_TO_KEY[labelM[1].toUpperCase()];
+    if (!key) {
+      const inkM = chunk.match(/Ink_(K|C|M|Y)/i);
+      if (inkM) key = TANK_LABEL_TO_KEY[inkM[1].toUpperCase()];
+    }
+    if (!key) continue;
+    const level = tankChunkLevel(chunk);
+    if (level == null) continue;
+    const prev = perKey.get(key);
+    if (!prev || level > prev.level) {
+      perKey.set(key, { level, detail: `Web status tank ${key} ${level}%` });
     }
   }
+  if (!foundLi) return null; // no li.tank structure — caller tries page-wide fallback
+  if (!perKey.size) return null;
+  return [...perKey.entries()]
+    .map(([key, v]) => ({ key, name: PRETTY[key], color: COLOR_HEX[key], level: v.level, state: cartridgeState(v.level), detail: v.detail }))
+    .sort((a, b) => orderKey(a.key) - orderKey(b.key));
+}
+
+export function parseEpsonInkHtml(html: string): InkCartridge[] | null {
+  // Primary: per-cartridge <li class="tank"> blocks, mirroring the structure of
+  // real Epson Web Config pages (see ha-epson-workforce fixtures):
+  //   <li class='tank'><div class='tank'><img .../Ink_K.PNG height='48'></div>
+  //   <div class='clrname'>BK</div></li>
+  // The maintenance-box row (Ink_Waste.PNG / mbicn) is skipped. Levels come
+  // from linear-gradient percentages, inline-style heights, or img heights.
+  const liLevels = parseEpsonTankListItems(html);
+  if (liLevels) return liLevels;
+  // Fallback for pages without the li.tank structure: page-wide img heights.
+  // Ink_Waste.PNG (maintenance box) intentionally does not match K|C|M|Y.
+  const heights = new Map<string, number>();
+  const take = (code: string, h: number) => {
+    if (!Number.isFinite(h) || h < 0) return;
+    const prev = heights.get(code) ?? 0;
+    heights.set(code, Math.max(prev, h));
+  };
+  const imgRe = /Ink_(K|C|M|Y)[^>]*?height\s*=\s*["']?(\d+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(html)) !== null) take(m[1].toUpperCase(), Number.parseInt(m[2], 10));
   if (!heights.size) {
     // fallback: textual percentages near color names
     const text = html.replace(/<[^>]*>/g, " ");
@@ -444,8 +572,12 @@ export function parseEpsonInkHtml(html: string): InkCartridge[] | null {
     }
     return out.length ? out.sort((a, b) => orderKey(a.key) - orderKey(b.key)) : null;
   }
-  const full = Math.max(...heights.values());
-  if (!full) return null;
+  // Scale against the known 50px full-scale bar. If a skin ever uses taller
+  // bars, scale against the observed max instead so levels never clip at 100
+  // for every cartridge.
+  const observed = Math.max(...heights.values());
+  if (!observed) return null;
+  const full = observed > EPSON_WEB_FULL_BAR_PX ? observed : EPSON_WEB_FULL_BAR_PX;
   const codeToKey: Record<string, InkKey> = { K: "black", C: "cyan", M: "magenta", Y: "yellow" };
   const carts: InkCartridge[] = [];
   for (const [code, h] of heights) {
@@ -456,17 +588,25 @@ export function parseEpsonInkHtml(html: string): InkCartridge[] | null {
   return carts.sort((a, b) => orderKey(a.key) - orderKey(b.key));
 }
 
-async function tryHttp(host: string, timeoutMs = 5000): Promise<InkStatus | null> {
-  const urls = [
-    `http://${host}/PRESENTATION/ADVANCED/INFO_PRTINFO/TOP`,
-    `http://${host}/PRESENTATION/HTML/TOP/PRTINFO.HTML`,
+async function tryHttp(host: string, timeoutMs = 4000): Promise<InkStatus | null> {
+  // /PRESENTATION/HTML/TOP/PRTINFO.HTML first: this is the page the Home
+  // Assistant / ioBroker community integrations scrape successfully.
+  const paths = [
+    "/PRESENTATION/HTML/TOP/PRTINFO.HTML",
+    "/PRESENTATION/ADVANCED/INFO_PRTINFO/TOP",
+    "/PRESENTATION/ADVANCED/HTML/PRTINFO.HTML",
   ];
+  const urls: string[] = [];
+  for (const scheme of ["http", "https"]) for (const p of paths) urls.push(`${scheme}://${host}${p}`);
   for (const url of urls) {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: "text/html" } }).finally(() => clearTimeout(timer));
       if (!res.ok) continue;
+      const ct = res.headers.get("content-type") || "";
+      // Some printers answer unknown paths with 200 + non-HTML; skip those.
+      if (ct && !ct.includes("html") && !ct.includes("text")) continue;
       const html = await res.text();
       // one defensive session-language POST is done by some integrations; skip — parse is locale-independent
       const carts = parseEpsonInkHtml(html);
@@ -486,7 +626,9 @@ let _fetchImpl: ((host: string) => Promise<InkStatus>) | null = null;
 export function _setFetchImplForTest(fn: ((host: string) => Promise<InkStatus>) | null) {
   _fetchImpl = fn;
 }
-export function _clearInkCacheForTest() { cache.clear(); inflight.clear(); }
+/** Drop cached levels and in-flight polls (used by ?refresh=1 and tests). */
+export function clearInkCache() { cache.clear(); inflight.clear(); }
+export function _clearInkCacheForTest() { clearInkCache(); }
 
 function unknownStatus(host: string, message: string): InkStatus {
   const cartridges: InkCartridge[] = (["black", "cyan", "magenta", "yellow"] as InkKey[]).map((key) => ({
@@ -503,14 +645,18 @@ export async function fetchInkLevels(host: string): Promise<InkStatus> {
   // client/HA timeouts — race the whole chain against a single deadline.
   const INK_OVERALL_TIMEOUT_MS = 20_000;
   const chain = (async (): Promise<InkStatus> => {
-    // SNMP first (fast LAN UDP), then IPP, then HTTP scrape
+    // SNMP first (fast LAN UDP), then IPP, then HTTP scrape. A source only
+    // wins if it reports at least one known level: consumer Epsons often
+    // answer SNMP/IPP with all-unknown sentinels (-1/-2) while the web status
+    // page still shows real bars. Accepting an all-unknown result here used
+    // to shadow the working fallback behind it.
     try {
       const snmp = await trySnmp(host);
-      if (snmp && snmp.cartridges.length) return snmp;
+      if (snmp && snmp.cartridges.length && hasKnownLevel(snmp.cartridges)) return snmp;
     } catch {}
     try {
       const ipp = await tryIpp(host);
-      if (ipp && ipp.cartridges.length) return ipp;
+      if (ipp && ipp.cartridges.length && hasKnownLevel(ipp.cartridges)) return ipp;
     } catch {}
     try {
       const http = await tryHttp(host);
