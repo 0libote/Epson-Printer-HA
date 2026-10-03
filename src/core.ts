@@ -23,6 +23,9 @@ export function commandResult(ok: boolean, stdout = "", stderr = "", returncode 
 // Hardened: global concurrency cap (spawn storms under multi-client polling),
 // output truncation (verbose CUPS/scanimage stderr can't OOM the hub).
 const RUN_CONCURRENCY_MAX = 12;
+// Waiting callers also pile up memory (each holds its stream promises), so
+// fail fast instead of queueing without bound when the hub is saturated.
+const RUN_QUEUE_MAX = 64;
 let _runActive = 0;
 const _runQueue: Array<() => void> = [];
 
@@ -30,6 +33,9 @@ function _runAcquire(): Promise<void> {
   if (_runActive < RUN_CONCURRENCY_MAX) {
     _runActive++;
     return Promise.resolve();
+  }
+  if (_runQueue.length >= RUN_QUEUE_MAX) {
+    return Promise.reject(new Error("server busy: too many subprocesses queued"));
   }
   return new Promise<void>((resolve) => {
     _runQueue.push(() => {
@@ -56,7 +62,13 @@ export function _runStatsForTest() {
 }
 
 export async function runCommand(args: string[], timeout = 30_000, cwd?: string): Promise<CommandResult> {
-  await _runAcquire();
+  try {
+    await _runAcquire();
+  } catch (exc: any) {
+    // Saturated (see RUN_QUEUE_MAX): report instead of throwing so status
+    // polls degrade to "unknown" rather than 500ing every dashboard client.
+    return commandResult(false, "", String(exc?.message ?? exc).slice(0, 500), 1);
+  }
   let proc: any;
   let timer: any = null;
   try {

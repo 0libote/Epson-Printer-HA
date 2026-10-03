@@ -284,12 +284,16 @@ export function __setFetchJobs(fn: typeof _fetchJobs) {
   _fetchJobs = fn;
 }
 
-// Single-flight: overlapping 5s ticks share one sync instead of hammering SQLite
-let _syncInflight: Promise<number> | null = null;
+// Single-flight per queue: overlapping 5s ticks share one sync instead of
+// hammering SQLite. Keyed by printer+mode — a global slot would return one
+// queue's snapshot to another after a rename.
+const _syncInflight = new Map<string, Promise<number>>();
 export async function syncPrintHistory(printerName: string, opts: { includeCompleted?: boolean } = {}): Promise<number> {
   const includeCompleted = opts.includeCompleted ?? true;
   if (!printerName) return 0;
-  if (_syncInflight) return _syncInflight;
+  const flightKey = `${printerName}:${includeCompleted ? "full" : "active"}`;
+  const ongoing = _syncInflight.get(flightKey);
+  if (ongoing) return ongoing;
   const task = (async () => {
   // Check if cups available by trying fetch; if python missing, _fetchJobs will return {}
   initHistory();
@@ -381,11 +385,11 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
     db.close();
   }
   })();
-  _syncInflight = task;
+  _syncInflight.set(flightKey, task);
   try {
     return await task;
   } finally {
-    if (_syncInflight === task) _syncInflight = null;
+    if (_syncInflight.get(flightKey) === task) _syncInflight.delete(flightKey);
   }
 }
 

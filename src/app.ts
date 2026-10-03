@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { join, basename, extname } from "node:path";
-import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync, unlinkSync, rmSync, linkSync, renameSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
   cachedCupsPrinterStatus,
@@ -33,10 +33,31 @@ export let DEFAULT_DISPLAY_NAME = (process.env.PRINTER_DISPLAY_NAME || "Home Eps
 export let DEFAULT_SHARE_PRINTER = !["0", "false", "no", "off"].includes((process.env.SHARE_PRINTER || "true").trim().toLowerCase());
 export let MAX_UPLOAD_MB = Math.max(1, parsePositiveInt(process.env.MAX_UPLOAD_MB, 128));
 export let MAX_SCAN_FILES = Math.max(1, parsePositiveInt(process.env.MAX_SCAN_FILES, 100));
-export let CLIENT_HOST = (process.env.CLIENT_HOST || "").trim();
+export let CLIENT_HOST_RAW = (process.env.CLIENT_HOST || "").trim();
+// CLIENT_HOST is shown to phones/computers in the generated IPP instructions,
+// so it must be a bare host — never "host:port" (which would render as
+// ipp://host:port:631/...). Normalise defensively: users paste browser bars.
+function normalizeClientHost(raw: string): string {
+  let v = raw.trim();
+  if (!v) return "";
+  v = v.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+  v = v.split("/")[0].split("?")[0].split("#")[0].trim();
+  if (!v) return "";
+  if (v.startsWith("[")) {
+    const end = v.indexOf("]");
+    return end > 0 ? v.slice(0, end + 1) : v;
+  }
+  // Unbracketed IPv6 holds several colons — a port suffix would be ambiguous,
+  // so keep it untouched rather than corrupt the address.
+  if ((v.match(/:/g) || []).length > 1) return v;
+  const m = v.match(/^(.*):(\d{1,5})$/);
+  return m ? m[1] : v;
+}
+export let CLIENT_HOST = normalizeClientHost(CLIENT_HOST_RAW);
 export let WEB_USERNAME = process.env.WEB_USERNAME || "";
 export let WEB_PASSWORD = process.env.WEB_PASSWORD || "";
-export let SECRET_KEY = process.env.SECRET_KEY || randomBytes(32).toString("hex");
+// NOTE: there is no session secret in this app — dashboard auth is HTTP Basic
+// sent with every request, so no signed cookies/sessions exist to protect.
 export let SESSION_COOKIE_SECURE = ["1", "true", "yes", "on"].includes((process.env.SESSION_COOKIE_SECURE || "false").trim().toLowerCase());
 
 export function _setAppDirForTest(dir: string) {
@@ -52,7 +73,7 @@ export function _setAuthForTest(user: string, pass: string) {
   WEB_USERNAME = user;
   WEB_PASSWORD = pass;
 }
-export function _setClientHostForTest(host: string) { CLIENT_HOST = host; }
+export function _setClientHostForTest(host: string) { CLIENT_HOST_RAW = host; CLIENT_HOST = normalizeClientHost(host); }
 export function _setMaxUploadForTest(mb: number) { MAX_UPLOAD_MB = mb; }
 
 if (Boolean(WEB_USERNAME) !== Boolean(WEB_PASSWORD)) {
@@ -74,7 +95,7 @@ for (const lockName of ["cups-config", "scanner"]) {
   try {
     const st = statSync(lockPath);
     if (lockName === "scanner" || Date.now() - st.mtimeMs > 5 * 60 * 1000) {
-      try { require("node:fs").rmSync(lockPath, { recursive: true, force: true }); } catch {}
+      try { rmSync(lockPath, { recursive: true, force: true }); } catch {}
     }
   } catch {}
 }
@@ -93,7 +114,7 @@ try {
     try {
       const st = statSync(p);
       if (st.mtimeMs < cutoff) {
-        require("node:fs").rmSync(p, { recursive: true, force: true });
+        rmSync(p, { recursive: true, force: true });
       }
     } catch {}
   }
@@ -124,8 +145,10 @@ function validateIPv4(value: string): string {
   }
   const ip = parts.join(".");
   const first = Number.parseInt(parts[0], 10);
-  if (ip === "0.0.0.0" || ip === "127.0.0.1" || (first >= 224 && first <= 239)) throw new Error("Use the printer's normal IPv4 address");
-  if (first === 127) throw new Error("Use the printer's normal IPv4 address");
+  const last = Number.parseInt(parts[3], 10);
+  if (ip === "0.0.0.0" || ip === "127.0.0.1" || ip === "255.255.255.255") throw new Error("Use the printer's normal IPv4 address");
+  if (first === 0 || first === 127 || first === 255 || (first >= 224 && first <= 239)) throw new Error("Use the printer's normal IPv4 address");
+  if (last === 0 || last === 255) throw new Error("Use the printer's normal IPv4 address");
   return ip;
 }
 
@@ -147,7 +170,6 @@ function validateDisplayName(value: string): string {
 }
 
 // Cache settings in memory (1s TTL + mtime check) — avoids 4x readFileSync+JSON.parse per request
-import { readFileSync as _readFileSync, writeFileSync as _writeFileSync, renameSync as _renameSync, unlinkSync as _unlinkSyncFs, rmSync as _rmSync } from "node:fs";
 let _settingsCache: { mtimeMs: number; at: number; data: Record<string, any> } | null = null;
 function savedSettingsSync(): Record<string, any> {
   try {
@@ -156,7 +178,7 @@ function savedSettingsSync(): Record<string, any> {
     if (_settingsCache && _settingsCache.mtimeMs === st.mtimeMs && now - _settingsCache.at < 2000) {
       return _settingsCache.data;
     }
-    const txt = _readFileSync(SETTINGS_FILE, "utf-8");
+    const txt = readFileSync(SETTINGS_FILE, "utf-8");
     const data = JSON.parse(txt);
     const obj = typeof data === "object" && data !== null ? data : {};
     _settingsCache = { mtimeMs: st.mtimeMs, at: now, data: obj };
@@ -171,8 +193,8 @@ function _invalidateSettingsCache() { _settingsCache = null; }
 
 function saveSettingsSync(data: Record<string, any>) {
   const tmp = join(APP_DIR, `.settings.${randomBytes(6).toString("hex")}`);
-  _writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
-  try { _renameSync(tmp, SETTINGS_FILE); } catch (e) { try { _unlinkSyncFs(tmp); } catch {} throw e; }
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
+  try { renameSync(tmp, SETTINGS_FILE); } catch (e) { try { unlinkSync(tmp); } catch {} throw e; }
   _invalidateSettingsCache();
 }
 
@@ -190,7 +212,7 @@ function removeOperationLockFs(lockPath: string): void {
   // rmSync with recursive+force removes both legacy file locks (Python fcntl
   // era) and directory locks (Bun mkdir era). rmdirSync/unlinkSync alone only
   // handle one form and leave the other behind forever.
-  try { require("node:fs").rmSync(lockPath, { recursive: true, force: true }); } catch {}
+  try { rmSync(lockPath, { recursive: true, force: true }); } catch {}
 }
 async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise<{ acquired: boolean; result?: T }> {
   const lockPath = join(APP_DIR, `.${name}.lock`);
@@ -601,6 +623,19 @@ function isCsrfValid(c:any, body:any):boolean{
   const expected=getCookie(c,"csrf_token")||"";
   return !!expected && token===expected;
 }
+// Mutation endpoints accept dashboard FormData as well as JSON clients.
+// parseBody() throws on a JSON content-type and req.json() throws on an empty
+// form post, so pick by header and never let a body quirk become a 500.
+async function readMutationBody(c:any):Promise<any>{
+  const ct=c.req.header("content-type")||"";
+  if(ct.includes("application/json")){
+    try{
+      const j=await c.req.json();
+      return (j && typeof j === "object" && !Array.isArray(j)) ? j : {};
+    }catch{ return {}; }
+  }
+  try{ return await c.req.parseBody(); }catch{ return {}; }
+}
 // Cache SPA shell by mtime — avoids re-reading index.html on every GET /
 let _spaCache: { path: string; mtimeMs: number; html: string } | null = null;
 async function tryServeSpa(c:any):Promise<Response|null>{
@@ -661,9 +696,20 @@ function authValid(c:any):boolean{
     return user===WEB_USERNAME && pass===WEB_PASSWORD;
   }catch{return false;}
 }
+// Header stamped by server.ts from the TCP socket (Bun server.requestIP).
+// The wrapper overwrites any client-sent value, so unlike X-Forwarded-For
+// this cannot be spoofed to dodge (or trigger) auth throttling.
+export const SERVER_CLIENT_IP_HEADER = "x-epson-client-ip";
+function clientIp(c:any):string{
+  const direct=String(c.req.header(SERVER_CLIENT_IP_HEADER)||"").trim();
+  if(direct) return direct.split(",")[0].trim() || "unknown";
+  // Fallback for reverse-proxy deployments and direct app.fetch callers
+  // (tests): first entry only, so a spoofed chain can't smuggle extra keys.
+  const fwd=c.req.header("x-forwarded-for")||c.req.header("x-real-ip")||"unknown";
+  return String(fwd).split(",")[0].trim()||"unknown";
+}
 function authFailureState(c:any, recordFailure=false):boolean{
-  const client=c.req.header("x-forwarded-for")||c.req.header("x-real-ip")||"unknown";
-  const ip=String(client).split(",")[0].trim()||"unknown";
+  const ip=clientIp(c);
   const now=Date.now()/1000;
   const cutoff=now - AUTH_FAILURE_WINDOW_SECONDS;
   let recent=( _authFailures.get(ip)||[] ).filter(t=>t>=cutoff);
@@ -686,13 +732,14 @@ app.use("*", async(c,next)=>{
     try{ (c as any).set("csrf_token_tmp", t); }catch{}
   }
   if (c.req.path.startsWith("/api/") || c.req.path === "/") c.header("Cache-Control", "no-store");
+  c.header("X-Content-Type-Options", "nosniff");
   await next();
   // Slow-request log: the hub should stay <1s for cached polls; anything
   // slower usually means CUPS/scanimage is wedged — surface it in docker logs.
   try {
     const ms = Date.now() - start;
     if (ms > 2000) {
-      console.warn(`[web] slow request ${ms}ms`);
+      console.warn(`[web] slow request ${c.req.method} ${c.req.path} ${ms}ms`);
     }
   } catch {}
 });
@@ -701,7 +748,7 @@ function requireAuth(c:any):Response|null{
   if(!authRequired()) return null;
   if(authFailureState(c)) return new Response("Too many authentication attempts",{status:429, headers:{"Retry-After":String(AUTH_FAILURE_WINDOW_SECONDS)}});
   if(!authValid(c)){ authFailureState(c,true); return new Response("Authentication required",{status:401, headers:{"WWW-Authenticate":'Basic realm="Epson Hub"'}});}
-  _authFailures.delete(String(c.req.header("x-forwarded-for")||c.req.header("x-real-ip")||"unknown").split(",")[0].trim());
+  _authFailures.delete(clientIp(c));
   return null;
 }
 function escapeHtml(s:string):string{ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;");}
@@ -1100,12 +1147,13 @@ app.post("/print", async(c)=>{
   const workDir=join(uploadDir,`print-${randomBytes(6).toString("hex")}`);
   mkdirSync(workDir,{recursive:true});
   const target=join(workDir,name);
-  let printOk=false; let printMsg="";
+  let printOk=false; let printMsg=""; let validationFailed=false;
   try{
     // single buffered read: validate magic bytes before touching disk (halves memory/disk IO)
     const buf=await file.arrayBuffer();
     const err=validateUploadBuffer(buf, file.size, suffix);
     if(err){
+      validationFailed=true;
       if(wantsJson(c)) { printOk=false; printMsg=err; }
       else { setFlash(c,"error",err); return c.redirect("/",302); }
     } else {
@@ -1128,9 +1176,9 @@ app.post("/print", async(c)=>{
         if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
       }
     }
-  } finally { try{ _rmSync(workDir, { recursive: true, force: true }); }catch{} }
+  } finally { try{ rmSync(workDir, { recursive: true, force: true }); }catch{} }
   if(wantsJson(c)){
-    if(printMsg && printMsg.includes("does not appear")) return c.json({ ok:false, error: printMsg }, 400);
+    if(!printOk && validationFailed) return c.json({ ok:false, error: printMsg }, 400);
     return c.json({ ok: printOk, message: printMsg, error: printOk?undefined:printMsg }, printOk?200:500);
   }
   return c.redirect("/",302);
@@ -1196,7 +1244,12 @@ app.get("/scans/:filename", async(c)=>{
   const mimeMap:Record<string,string>={".pdf":"application/pdf", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg"};
   const contentType=mimeMap[ext] || (file as any).type || "application/octet-stream";
   const inline=c.req.query("preview")==="1" || c.req.query("inline")==="1";
-  const disp=inline?`inline; filename="${safe}"`:`attachment; filename="${safe}"`;
+  // Never interpolate a raw filename into Content-Disposition: strip quotes,
+  // backslashes and control characters (header injection) and offer an
+  // RFC 5987 encoded fallback for non-ASCII names.
+  const cleanName=basename(safe).replace(/[\x00-\x1F\x7F"\\]/g, "_").slice(0, 150) || "scan";
+  const encodedName=encodeURIComponent(safe).replace(/'/g, "%27");
+  const disp=`${inline?"inline":"attachment"}; filename="${cleanName}"; filename*=UTF-8''${encodedName}`;
   return new Response(file.stream(), {headers:{"Content-Disposition":disp, "Content-Type": contentType, "Cache-Control":"private, max-age=60"}});
 });
 
@@ -1307,10 +1360,10 @@ app.post("/api/scans/:filename/rename", async(c)=>{
   if(newSafe===safe) return c.json({ok:true, name:newSafe, message:"Name unchanged"});
   const newPath=join(SCAN_DIR, newSafe);
   try{
-    require("node:fs").linkSync(oldPath, newPath);
-    require("node:fs").unlinkSync(oldPath);
+    linkSync(oldPath, newPath);
+    unlinkSync(oldPath);
     // move thumb if exists
-    try{ require("node:fs").renameSync(join(SCAN_DIR, `.thumb-${safe}.webp`), join(SCAN_DIR, `.thumb-${newSafe}.webp`)); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
+    try{ renameSync(join(SCAN_DIR, `.thumb-${safe}.webp`), join(SCAN_DIR, `.thumb-${newSafe}.webp`)); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
   }catch(e:any){
     if(e?.code === "EEXIST") return c.json({ok:false, error:"A file with that name already exists"},409);
     if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
@@ -1362,11 +1415,11 @@ app.post("/scans/:filename/rename", async(c)=>{
   try{ newSafe=sanitizeRename(newNameRaw, origExt);}catch(e:any){ if(wantsJson(c)) return c.json({ok:false, error:(e as any).message},400); setFlash(c,"error",(e as any).message); return c.redirect("/",302); }
   const newPath=join(SCAN_DIR, newSafe);
   try{
-    require("node:fs").linkSync(join(SCAN_DIR,safe), newPath);
-    require("node:fs").unlinkSync(join(SCAN_DIR,safe));
+    linkSync(join(SCAN_DIR,safe), newPath);
+    unlinkSync(join(SCAN_DIR,safe));
     const oldThumb=join(SCAN_DIR, `.thumb-${safe}.webp`);
     const newThumb=join(SCAN_DIR, `.thumb-${newSafe}.webp`);
-    try{ require("node:fs").renameSync(oldThumb, newThumb); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
+    try{ renameSync(oldThumb, newThumb); }catch(e:any){ if(e?.code !== "ENOENT") throw e; }
   }catch(e:any){
     const msg=String(e);
     if(e?.code === "EEXIST"){
@@ -1455,7 +1508,7 @@ app.get("/api/scan/jobs/:id", async(c)=>{
 app.post("/api/scan/jobs/:id/cancel", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
-  const body=await c.req.parseBody();
+  const body=await readMutationBody(c);
   if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   const job=scanJobs.get(c.req.param("id"));
   if(!job) return c.json({ok:false,error:"Job not found"},404);
@@ -1484,7 +1537,7 @@ app.get("/api/scan/jobs", async(c)=>{
 app.post("/api/scan/cancel-all", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
-  const body=await c.req.parseBody().catch(()=>({} as any));
+  const body=await readMutationBody(c);
   if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   reapStaleScanJobs();
   let cancelled = 0;
@@ -1636,7 +1689,7 @@ app.get("/static/*", async(c)=>{
     return c.text("Not found",404);
   }
   const mimeMap:Record<string,string>={".js":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8", ".svg":"image/svg+xml", ".html":"text/html; charset=utf-8"};
-  for(const cand of [join(process.cwd(),"public",safe), join(process.cwd(),"src/frontend",safe), join(process.cwd(),"app/static",safe)]){
+  for(const cand of [join(process.cwd(),"public",safe)]){
     const f=Bun.file(cand);
     if(await f.exists()){
       const ext=safe.slice(safe.lastIndexOf(".")).toLowerCase();

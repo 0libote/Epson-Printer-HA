@@ -19,7 +19,21 @@ if (import.meta.main) {
     hostname: "0.0.0.0",
     idleTimeout: 255,
     maxRequestBodySize: (MAX_UPLOAD_MB + 1) * 1024 * 1024,
-    fetch: app.fetch,
+    fetch(req, server) {
+      // Stamp the real peer IP for auth throttling (see SERVER_CLIENT_IP_HEADER).
+      // Overwrites any client-sent value so X-Forwarded-For spoofing can't
+      // bypass or poison the brute-force bucket.
+      let r = req;
+      try {
+        const addr = server.requestIP(req)?.address;
+        if (addr) {
+          const headers = new Headers(req.headers);
+          headers.set("x-epson-client-ip", addr);
+          r = new Request(req, { headers });
+        }
+      } catch {}
+      return app.fetch(r);
+    },
     development: false,
   });
   console.log(`[server] Listening on http://0.0.0.0:${port}`);

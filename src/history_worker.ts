@@ -28,8 +28,13 @@ export async function currentPrinterName(): Promise<string> {
 }
 
 export async function main(): Promise<void> {
-  initHistory();
   console.log("[history] Persistent print history collector started.");
+  // initHistory() used to run once before the loop: any failure there (full
+  // disk, locked/corrupt DB on first boot) killed the process, and after a
+  // few rapid restarts supervisord marked the worker FATAL — silently losing
+  // all history collection. Initialise lazily inside the loop instead so a
+  // transient failure backs off and retries like any other sync error.
+  let initialised = false;
   let lastCompletedPoll = -COMPLETED_POLL_SECONDS;
   let running = false;
   let consecutiveFailures = 0;
@@ -40,6 +45,10 @@ export async function main(): Promise<void> {
       if (!running) {
         running = true;
         try {
+          if (!initialised) {
+            initHistory();
+            initialised = true;
+          }
           const now = Date.now() / 1000;
           const includeCompleted = now - lastCompletedPoll >= COMPLETED_POLL_SECONDS;
           const name = await currentPrinterName();
