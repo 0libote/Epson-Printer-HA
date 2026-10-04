@@ -9,9 +9,14 @@ import os
 from pathlib import Path
 
 # The WebUI (settings.json) owns the printer address; env is only a first-boot
-# seed and never overrides a saved dashboard value.
+# seed and never overrides a saved dashboard value. Each source is read
+# defensively: a missing/unreadable settings file must still fall through to
+# env (CI and fresh boots have no settings file at all).
 try:
-    value = str(json.loads(Path('/data/settings.json').read_text()).get('printer_ip', '')).strip()
+    try:
+        value = str(json.loads(Path('/data/settings.json').read_text()).get('printer_ip', '')).strip()
+    except Exception:
+        value = ''
     if not value:
         value = os.environ.get('PRINTER_IP', '').strip()
     ip = ipaddress.ip_address(value)
