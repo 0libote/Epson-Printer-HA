@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useState } from "react";
 import { Check, Copy, Loader2, Radar } from "lucide-react";
 import { useToast } from "./Toast";
-import { postClientSettings, postSetup, isPlausiblePrinterIpv4, fetchDiscovered, type DiscoveredPrinter } from "../lib/api";
+import { fetchDiagnostics, rediscoverScanner, postClientSettings, postSetup, isPlausiblePrinterIpv4, fetchDiscovered, type DiscoveredPrinter } from "../lib/api";
 import { s as ui, Card, StatusDot } from "./ui";
 
 const s = stylex.create({
@@ -279,4 +279,39 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
       ) : null}
     </Card>
   );
+}
+
+export function BackendDiagnostics({ onChanged }: { onChanged: () => void }) {
+  const [data, setData] = useState<import("../lib/api").DiagnosticsResponse | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const refresh = async (rediscover = false) => {
+    setBusy(true); setError("");
+    try {
+      if (rediscover) await rediscoverScanner();
+      setData(await fetchDiagnostics());
+      if (rediscover) onChanged();
+    } catch { setError("Diagnostics unavailable. Try again when the scanner service is ready."); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { void refresh(); }, []);
+  return <Card>
+    <h2 {...stylex.props(ui.sectionTitle)}>Backend diagnostics</h2>
+    {error ? <p role="alert">{error}</p> : null}
+    {data ? <>
+      <dl>
+        <dt>Application</dt><dd>{data.version} · {data.architecture}</dd>
+        <dt>Printing</dt><dd>CUPS {data.printing.cups || "version unavailable"} · ESC/P-R {data.printing.escpr || "version unavailable"}</dd>
+        <dt>Scanning</dt><dd>{data.scanner.backends.find(b => b.id === data.scanner.selected)?.name || "No backend detected"}</dd>
+        <dt>Available scanner backends</dt><dd>{data.scanner.backends.map(b => b.name).join(", ") || "None detected"}</dd>
+        <dt>Scanner capabilities</dt><dd>{data.scanner.capabilities?.verified ? `${data.scanner.capabilities.resolutions.join(", ")} DPI · ${data.scanner.capabilities.modes.join(", ")}` : "Unverified; legacy settings remain available"}</dd>
+        <dt>Epson Scan 2</dt><dd>{data.epsonScan2.version || "Direct service unavailable"}{data.epsonScan2.available && !data.epsonScan2.profilesValidated ? " · No validated profiles" : ""}</dd>
+        <dt>Printer status</dt><dd>{data.printer.backend} · SNMP → IPP → HTTP fallback</dd>
+        <dt>Epson Printer Utility</dt><dd>{data.epsonUtility.available ? data.epsonUtility.version : data.epsonUtility.reason}</dd>
+      </dl>
+      {data.scanner.backends.filter(b => b.lastError).map(b => <p key={b.id}>{b.name}: {b.lastError}</p>)}
+      {data.epsonScan2.lastError && data.epsonScan2.available ? <p>{data.epsonScan2.lastError}</p> : null}
+    </> : !error ? <p>Loading diagnostics…</p> : null}
+    <button {...stylex.props(ui.buttonQuiet)} disabled={busy} onClick={() => refresh(true)}>{busy ? "Discovering…" : "Rediscover scanner"}</button>
+  </Card>;
 }

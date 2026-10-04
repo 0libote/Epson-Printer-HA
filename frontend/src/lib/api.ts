@@ -1,3 +1,7 @@
+export type ScannerCapabilities = { resolutions: number[]; modes: string[]; sources: string[]; formats: string[]; verified: boolean; combinations?: Array<{ dpi: number; mode: string }> };
+export type PrinterCapabilities = { inkLevels: boolean; pageCount: boolean; nozzleCheck: boolean; headCleaning: boolean };
+export type CapabilitiesResponse = { printing: { backend: string; name: string }; scanner: { selected: string | null; capabilities: ScannerCapabilities | null; backends: Array<{ id: string; name: string; capabilities: ScannerCapabilities; lastError: string | null }> }; printer: { backend: string; capabilities: PrinterCapabilities; maintenance: { state: string; action: string | null } } };
+export type DiagnosticsResponse = { version: string; architecture: string; printerAddress: string; printing: { backend: string; cups: string | null; escpr: string | null }; scanner: CapabilitiesResponse["scanner"]; printer: CapabilitiesResponse["printer"]; epsonScan2: { available: boolean; version: string | null; profilesValidated: boolean; lastError: string | null }; epsonUtility: { installed: boolean; version: string | null; available: boolean; reason: string } };
 export type ScanItem = {
   name: string;
   path?: string;
@@ -37,8 +41,9 @@ export type StatusResponse = {
   display_name: string;
   network_sharing: boolean;
   reachable: boolean;
+  device?: { state: string; backend: string; rawState: string; warnings: string[] };
   printer: { ok: boolean; state: string; detail: string };
-  scanner: { ok: boolean; state: string; detail: string; backend: string | null; device: string | null; open_source?: boolean };
+  scanner: { ok: boolean; state: string; detail: string; backend: string | null; device: string | null; open_source?: boolean; backend_id?: string | null; capabilities?: ScannerCapabilities | null };
   queue: Array<{ id: string; owner: string; size: string; raw: string }>;
   recent_prints: HistoryItem[];
   scans: string[];
@@ -321,4 +326,15 @@ export async function cancelAllScans(): Promise<{ cancelled: number }> {
   const data = ct.includes("application/json") ? await res.json().catch(() => ({})) : {};
   if (!res.ok) throw new Error((data as any).error || `Request failed ${res.status}`);
   return data as { cancelled: number };
+}
+
+export async function fetchCapabilities() { return readJson<CapabilitiesResponse>(await fetch("/api/capabilities", { credentials: "same-origin" })); }
+export async function fetchDiagnostics() { return readJson<DiagnosticsResponse>(await fetch("/api/diagnostics", { credentials: "same-origin" })); }
+export async function rediscoverScanner() {
+ const csrf = await ensureCsrf();
+ return readJson(await csrfAwareFetch("/api/scanner/rediscover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
+}
+export async function runMaintenance(action: "nozzle-check" | "head-clean") {
+ const csrf = await ensureCsrf();
+ return readJson(await csrfAwareFetch(`/api/printer/maintenance/${action}`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
 }

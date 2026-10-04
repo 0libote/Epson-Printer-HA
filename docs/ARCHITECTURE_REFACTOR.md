@@ -132,7 +132,7 @@ labels, detailed diagnostics in Settings. Tests: API compatibility/auth/CSRF,
 capability selections, frontend typecheck/build.
 
 - [x] Capabilities and diagnostics endpoints
-- [ ] UI derives scan settings from capabilities
+- [x] UI derives scan settings from capabilities
 
 ### 8 — Installer and validation
 
@@ -144,8 +144,8 @@ Tests: generated malicious archives + mocked HTTP/dpkg, both Compose configs,
 main/scanner container smoke, all unit tests/typechecks/build.
 
 - [x] Duplicate installer removed and adversarial tests added
-- [ ] Automated verification completed with results recorded
-- [ ] Docs match final implementation and remaining hardware gates
+- [x] Automated verification completed with results recorded
+- [x] Docs match final implementation and remaining hardware gates
 
 ## Continuation rules
 
@@ -184,3 +184,48 @@ metadata while background probes refresh, avoiding a fresh 20-second CLI probe
 on every dashboard/HA poll. Acquisition errors never trigger cross-backend retry
 in the same request. Container smoke caught a .deb-suffixed archive directory;
 selective extraction now skips directories before checking package filenames.
+
+## Final local validation — 2026-10-04
+
+Implementation is committed in separate plan, extraction, direct scanner,
+process/installer hardening, device/API, scanner regression and frontend phases.
+Current compatibility facades: core.ts 40 lines, ink.ts 7 lines; app.ts 1321 lines
+from 1722. App still owns asynchronous scan job lifecycle and existing upload/
+auth/settings routes; further route extraction can be incremental.
+
+- 118 Bun tests pass (390 assertions), including the Python suite invocation.
+- 17 Python tests pass: installer/archive/profile contracts, Unix HTTP API,
+  status/errors/output/cancellation and real subprocess deadlines, including
+  a finished parent whose child retains the output pipe.
+- Backend and frontend TypeScript checks, Vite production build, shell syntax,
+  both Compose configurations and git diff whitespace checks pass.
+- Both final Docker images build. Main container smoke boots CUPS and sends a
+  PDF through the installed XP-2200 ESC/P-R filter to a local TCP capture.
+- Both sidecar modes provision the actual checksum-pinned Epson packages at
+  runtime. Legacy loopback SANE connection succeeds. Direct health reports
+  version 6.7.80.0-1 and no capabilities without validated profiles; no saned
+  runs. Main-image Bun fetch successfully reaches the shared Unix socket.
+- Collaborative browser checks with a simulated scanner confirm capability-
+  driven controls, including a grayscale-only 150-DPI scanner, backend
+  diagnostics in Settings and no unsupported maintenance buttons.
+
+GitHub Actions has been updated, but hosted CI has not been run by this local
+session. No proprietary package or source implementation has entered the repo.
+Disposable Epson investigation downloads remain outside the repository.
+
+### Outstanding hardware/integration gates
+
+No physical XP-2205 was available. Do not claim a successful real direct scan,
+SF2 profile validation, sleeping/offline device recovery, physical print or LAN
+client/mDNS acceptance from these tests. Validate native profiles for each
+required mode/resolution/address against the pinned installed version using
+EPSON_SCAN2_PROFILES.md, then test scan/cancel/output and AirScan preference.
+Only after those tests should legacy default/processes/dependencies be removed.
+
+Epson Printer Utility has no established supported headless integration in the
+inspected packages. The adapter reports unavailable and standard SNMP → IPP →
+HTTP remains active. Maintenance routes honestly return unsupported; no guessed
+protocol or GUI automation is shipped. Any future utility integration requires
+licence/interface validation and exclusion of conflicting external CUPS jobs
+before enabling capability flags. These are acceptance gates, not hidden
+unfinished cleanup.

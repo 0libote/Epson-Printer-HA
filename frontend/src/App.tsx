@@ -1,3 +1,4 @@
+import { Maintenance } from "./components/Maintenance";
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "./styles/tokens.stylex";
 import { useEffect, useState, type ReactNode } from "react";
@@ -13,7 +14,7 @@ import { StatusStrip, Queue, PrinterUnreachableBanner } from "./components/Overv
 import { InkLevels } from "./components/InkLevels";
 import { Library } from "./components/Library";
 import { History } from "./components/History";
-import { SharingSettings, PrinterAddressSettings } from "./components/Settings";
+import { SharingSettings, PrinterAddressSettings, BackendDiagnostics } from "./components/Settings";
 import { PreviewModal } from "./components/PreviewModal";
 import type { ScanItem } from "./lib/api";
 
@@ -226,7 +227,7 @@ export default function App() {
       <main {...stylex.props(s.main)}>
         <StatusStrip
           printerOk={!!printer.ok}
-          printerState={printer.state}
+          printerState={data?.device?.state || printer.state}
           printerDetail={`${displayName} · ${printerIp}`}
           scannerOk={!!scanner.ok}
           scannerState={scanner.state}
@@ -256,7 +257,7 @@ export default function App() {
             ) : null}
             <div {...stylex.props(s.actionGrid)}>
               <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} />
-              <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} onScanned={() => refreshAll(qc)} />
+              <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} capabilities={data?.scanner.capabilities} onScanned={() => refreshAll(qc)} />
             </div>
             {queue.length > 0 ? (
               <div {...stylex.props(s.stack)}>
@@ -265,6 +266,7 @@ export default function App() {
             ) : null}
             <div {...stylex.props(s.stack)}>
               <InkLevels initial={initialInk} />
+              <Maintenance onChanged={() => refreshAll(qc)} />
             </div>
         </section>
 
@@ -301,6 +303,7 @@ export default function App() {
               onSaved={() => refreshAll(qc)}
             />
             <PrinterAddressSettings printerIp={printerIp} onSaved={() => refreshAll(qc)} />
+            <BackendDiagnostics onChanged={() => refreshAll(qc)} />
           </div>
         ) : null}
 

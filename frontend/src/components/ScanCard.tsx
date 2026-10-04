@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useRef, useState } from "react";
 import { Loader2, ScanLine, X } from "lucide-react";
 import { useToast } from "./Toast";
-import { startScanJob, pollScanJob, cancelScanJob, cancelAllScans } from "../lib/api";
+import { type ScannerCapabilities, startScanJob, pollScanJob, cancelScanJob, cancelAllScans } from "../lib/api";
 import { s as ui, Card, CardHeader, ProgressBar } from "./ui";
 
 const s = stylex.create({
@@ -35,7 +35,7 @@ const DPI_OPTIONS = [
   { value: "600", label: "Max · 600" },
 ];
 
-export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: boolean; scannerDetail?: string; onScanned: () => void }) {
+export function ScanCard({ scannerOk, scannerDetail, capabilities, onScanned }: { scannerOk: boolean; scannerDetail?: string; capabilities?: ScannerCapabilities | null; onScanned: () => void }) {
   const { push } = useToast();
   const [mode, setMode] = useState("Color");
   const [dpi, setDpi] = useState("300");
@@ -51,6 +51,19 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
   const [cancelling, setCancelling] = useState(false);
   const onScannedRef = useRef(onScanned);
   onScannedRef.current = onScanned;
+
+  const supported = capabilities?.verified ? capabilities : null;
+  const modes = supported?.modes ?? ["Color", "Gray", "Lineart"];
+  const resolutions = supported?.resolutions ?? [150, 200, 300, 600];
+  const formats = supported?.formats ?? ["pdf", "png", "jpg"];
+  const modeResolutions = supported?.combinations
+    ? resolutions.filter(value => supported.combinations!.some(p => p.dpi === value && p.mode === mode)) : resolutions;
+  useEffect(() => {
+    if (busy) return;
+    if (!modes.includes(mode) && modes.length) setMode(modes[0]);
+    if (!modeResolutions.includes(Number(dpi)) && modeResolutions.length) setDpi(String(modeResolutions[0]));
+    if (!formats.includes(fmt) && formats.length) setFmt(formats[0]);
+  }, [supported, mode, dpi, fmt, busy]);
 
   useEffect(() => {
     let disposed = false;
@@ -199,23 +212,19 @@ export function ScanCard({ scannerOk, scannerDetail, onScanned }: { scannerOk: b
           <label {...stylex.props(ui.fieldLabel)}>
             <span>Colour</span>
             <select disabled={busy} {...stylex.props(ui.select)} value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option>Color</option>
-              <option>Gray</option>
-              <option>Lineart</option>
+              {modes.map(value => <option key={value} value={value}>{value === "Color" ? "Colour" : value === "Gray" ? "Grayscale" : "Black & white"}</option>)}
             </select>
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
             <span>Quality</span>
             <select disabled={busy} {...stylex.props(ui.select)} value={dpi} onChange={(e) => setDpi(e.target.value)}>
-              {DPI_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {modeResolutions.map(value => <option key={value} value={value}>{DPI_OPTIONS.find(o => Number(o.value) === value)?.label ?? `${value} DPI`}</option>)}
             </select>
           </label>
           <label {...stylex.props(ui.fieldLabel)}>
             <span>Format</span>
             <select disabled={busy} {...stylex.props(ui.select)} value={fmt} onChange={(e) => setFmt(e.target.value)}>
-              <option value="pdf">PDF</option>
-              <option value="png">PNG</option>
-              <option value="jpg">JPG</option>
+              {formats.map(value => <option key={value} value={value}>{value.toUpperCase()}</option>)}
             </select>
           </label>
         </div>

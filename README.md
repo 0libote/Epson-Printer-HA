@@ -69,23 +69,59 @@ Pending jobs use the `cups-spool` and `cups-cache` named volumes in the standard
 
 ## Scanning
 
-The scan path is intentionally layered:
+Scanning runs through separate AirScan, Epson Scan 2 and generic SANE adapters.
+Selection checks reported capabilities and recent failures, with cached discovery
+and explicit rediscovery in Settings. A failed acquisition is never automatically
+repeated on another backend.
 
-1. `sane-airscan` checks for eSCL/AirScan and WSD/WS-Scan.
-2. SANE's open-source `epsonds` backend is also enabled for XP-2200 firmware that exposes ESC/I-2.
-3. If either open-source backend finds the configured printer IP, the sidecar is irrelevant.
-4. Otherwise, the main container checks `127.0.0.1:6566` through SANE's standard `net` backend.
-5. The compatibility sidecar downloads Epson Scan 2 directly from Epson at first start, verifies its checksum, installs it in the disposable container and serves it on localhost.
+- AirScan/eSCL/WSD is preferred when it supports the requested settings.
+- Direct Epson Scan 2 is available through an optional internal Unix-socket API.
+- Generic SANE/epsonds and the existing Epson SANE bridge remain available.
+
+`EPSON_SCANNER_MODE=legacy` remains the default while the replacement awaits real
+XP-2205 profile validation. In `direct` mode the sidecar uses Epson's headless CLI
+and starts no saned, TRACE filter or ten-second settings updater. It needs native
+SF2 profiles validated for the exact printer address/version/settings. It acquires
+PNG; the application supplies PNG, JPEG and PDF output. There are no fabricated
+known-good profiles. See [profile setup and rollback](docs/EPSON_SCAN2_PROFILES.md).
+The main image does not need Epson configuration directories or package internals.
 
 The XP-2200 is a flatbed, so the dashboard currently exposes an A4 flatbed workflow.
 
 ### Epson compatibility sidecar
 
-Epson Scan 2 is distributed free of charge, but its network plug-in is proprietary. This repository and its container images **do not redistribute or modify it**. The sidecar downloads Epson's unchanged x64 Debian bundle from Epson at runtime, checks its pinned SHA-256 digest, accepts only the two expected Debian package names, and keeps the installed copy inside the disposable container filesystem.
+Epson Scan 2 is distributed free of charge, but its network plug-in is proprietary. This repository and its container images **do not redistribute or modify it**. The sidecar downloads Epson's unchanged x64 Debian bundle from Epson at runtime, checks its pinned SHA-256 digest, accepts only the two expected Debian filenames, names, versions and architectures, and keeps the installed copy inside the disposable container filesystem.
 
 The ZimaOS stack enables this automatically. Other Docker installs must set `EPSON_EULA_ACCEPTED=true` after reading [Epson's licence agreement](https://download.ebz.epson.net/dsc/du/02/eula/global/LINUX_EN.html). No separate download, bind mount or host installation is required.
 
-If Epson's server is temporarily unavailable, the sidecar retries with capped exponential backoff. Licence, CPU-architecture, checksum, package-name and archive-safety failures are treated as permanent: the container exits with an actionable message rather than executing unverified code or looping internally. Compose caps these failed restarts at five, so correct the configuration and recreate the service. The published compatibility image supports `linux/amd64` because Epson's bundle is x86-64 only.
+If Epson's server is temporarily unavailable, the sidecar retries at most six times with exponential backoff. Licence, CPU-architecture, checksum, package-name and archive-safety failures are treated as permanent: the container exits with an actionable message rather than executing unverified code or looping internally. Compose caps these failed restarts at five, so correct the configuration and recreate the service. The published compatibility image supports `linux/amd64` because Epson's bundle is x86-64 only.
+
+## Backend capabilities and diagnostics
+
+Settings shows active scanner backends, reported scan options and runtime versions.
+The UI limits scan choices when capabilities are verified; legacy choices remain
+available when a SANE backend cannot report them. These additional endpoints use
+the same dashboard authentication:
+
+- `GET /api/capabilities`
+- `GET /api/printer/status` (normalized state with backend/raw state/warnings)
+- `GET /api/scanner/status`
+- `GET /api/diagnostics` (versions, capabilities and bounded errors; no secrets)
+- `POST /api/scanner/rediscover` (CSRF protected)
+
+`POST /api/printer/maintenance/nozzle-check` and `head-clean` are capability gated
+and currently return **501 unsupported**. Epson Utility's daemon/static library
+were investigated, but no safe verified headless maintenance interface was
+established. No Qt automation is used. See
+[the investigation and activation gates](docs/EPSON_PRINTER_UTILITY.md).
+
+The existing `/api/status`, `/api/history` and `/api/ink` fields remain available.
+`/api/status` adds a structured `device` alongside the legacy CUPS `printer`
+object. CUPS idle and physical printer reachability are distinct: the device can
+be offline while the queue remains ready to accept jobs.
+
+The [phased refactor record](docs/ARCHITECTURE_REFACTOR.md) lists architecture,
+migration choices, validation and remaining hardware acceptance gates.
 
 ## Home Assistant
 
@@ -119,7 +155,7 @@ CI runs the Bun tests and typechecks, validates both Compose files, builds both 
 
 ## Security
 
-This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or SANE to the internet. Basic authentication protects access but not transport confidentiality; use an HTTPS reverse proxy outside a fully trusted LAN. The scanner compatibility service binds `saned` to `127.0.0.1:6566`, not the LAN.
+This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or SANE to the internet. Basic authentication protects access but not transport confidentiality; use an HTTPS reverse proxy outside a fully trusted LAN. Legacy scanner mode binds `saned` to `127.0.0.1:6566`; direct mode exposes only a Unix socket in the private shared IPC volume.
 
 ## Status
 
