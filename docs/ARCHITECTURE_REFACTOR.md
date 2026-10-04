@@ -70,9 +70,9 @@ Migration: existing exported functions/test hooks remain usable. Keep caches and
 scan cancellation/atomic publication. Risks: mock binding, cache invalidation,
 lock ownership, imports. Tests: baseline suite, queue scripts, subprocess limits.
 
-- [ ] CUPS backend extracted including configuration
-- [ ] System helpers and SANE acquisition extracted
-- [ ] App responsibilities reduced without breaking forms
+- [x] CUPS backend extracted including configuration
+- [x] System helpers and SANE acquisition extracted
+- [x] App responsibilities reduced without breaking forms
 
 ### 2 — Direct Epson CLI and internal API
 
@@ -153,3 +153,7 @@ Use logical commits by phase. No unrelated repository changes. Never mark a
 hardware gate complete using a mock. Preserve printer settings and persistent
 volumes. Default remains proven scanning until direct profiles and device tests
 justify switching. Keep this checklist and evidence up to date after each phase.
+
+Phase 1 validation: 95 tests pass; backend typecheck passes. core.ts is now a
+23-line compatibility facade; app.ts reduced to 1408 lines by moving legacy
+rendering, operation locks and queue configuration. Hardware behaviour unchanged.
