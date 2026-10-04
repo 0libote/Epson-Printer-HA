@@ -300,7 +300,7 @@ export default function App() {
               host={host}
               onSaved={() => refreshAll(qc)}
             />
-            <PrinterAddressSettings printerIp={printerIp} managed={data?.printer_ip_managed} onSaved={() => refreshAll(qc)} />
+            <PrinterAddressSettings printerIp={printerIp} onSaved={() => refreshAll(qc)} />
           </div>
         ) : null}
 

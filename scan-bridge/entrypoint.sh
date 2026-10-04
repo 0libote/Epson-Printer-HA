@@ -8,10 +8,12 @@ import json
 import os
 from pathlib import Path
 
+# The WebUI (settings.json) owns the printer address; env is only a first-boot
+# seed and never overrides a saved dashboard value.
 try:
-    value = os.environ.get('PRINTER_IP', '').strip()
+    value = str(json.loads(Path('/data/settings.json').read_text()).get('printer_ip', '')).strip()
     if not value:
-        value = str(json.loads(Path('/data/settings.json').read_text()).get('printer_ip', '')).strip()
+        value = os.environ.get('PRINTER_IP', '').strip()
     ip = ipaddress.ip_address(value)
     if ip.version == 4 and not ip.is_loopback and not ip.is_multicast and not ip.is_unspecified:
         print(ip)

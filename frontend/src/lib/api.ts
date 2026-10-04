@@ -32,7 +32,6 @@ export type InkStatus = {
 
 export type StatusResponse = {
   printer_ip: string;
-  printer_ip_managed?: boolean;
   client_setup?: { host: string; ipp_uri: string; http_uri: string; queue_path: string };
   printer_name: string;
   display_name: string;

@@ -3,7 +3,9 @@ import { initHistory, syncPrintHistory } from "./history.ts";
 
 const APP_DIR = process.env.APP_DATA || "/data";
 const SETTINGS_FILE = join(APP_DIR, "settings.json");
-const DEFAULT_PRINTER_NAME = (process.env.PRINTER_NAME || "Home_Epson_XP2200").trim() || "Home_Epson_XP2200";
+// Queue name default mirrors the WebUI default; the saved settings file is the
+// only runtime source (env is intentionally not consulted).
+const DEFAULT_PRINTER_NAME = "Home_Epson_XP2200";
 
 function positiveEnvInt(name: string, def: number): number {
   const raw = process.env[name];

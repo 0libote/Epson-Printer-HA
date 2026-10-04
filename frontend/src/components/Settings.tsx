@@ -176,7 +176,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
   );
 }
 
-export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: { printerIp: string; managed?: boolean; onSaved: () => void }) {
+export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: string; onSaved: () => void }) {
   const { push } = useToast();
   const [ip, setIp] = useState(printerIp);
   const [busy, setBusy] = useState(false);
@@ -232,26 +232,23 @@ export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: 
         <h2 {...stylex.props(ui.sectionTitle)}>Printer address</h2>
       </div>
       <form {...stylex.props(s.stack)} onSubmit={submit}>
-        {managed ? <p {...stylex.props(s.p)}>This address is managed by the server configuration. Update PRINTER_IP there to change it.</p> : null}
         <label {...stylex.props(ui.fieldLabel)}>
           <span>Printer IP address</span>
-          <input {...stylex.props(ui.input, ui.mono)} disabled={managed || busy} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
+          <input {...stylex.props(ui.input, ui.mono)} disabled={busy} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
         </label>
         <div {...stylex.props(s.uriRow)}>
-          <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy || managed} style={busy ? { opacity: 0.5 } : undefined}>
+          <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy} style={busy ? { opacity: 0.5 } : undefined}>
             {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save address
           </button>
-          {!managed ? (
-            <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={scanning ? { opacity: 0.5 } : undefined}>
-              {scanning ? <Loader2 size={14} className="spin" /> : <Radar size={14} />} {scanning ? "Searching network…" : "Search network"}
-            </button>
-          ) : null}
+          <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={scanning ? { opacity: 0.5 } : undefined}>
+            {scanning ? <Loader2 size={14} className="spin" /> : <Radar size={14} />} {scanning ? "Searching network…" : "Search network"}
+          </button>
         </div>
       </form>
-      {!managed && scanning ? (
+      {scanning ? (
         <p {...stylex.props(s.p)}>Scanning the local network for printers — this can take up to ~25 seconds.</p>
       ) : null}
-      {!managed && !scanning && results ? (
+      {!scanning && results ? (
         <div style={{ marginTop: 14 }}>
           <h3 {...stylex.props(s.h3)} style={{ marginTop: 0 }}>
             {results.length ? `Found ${results.length} ${results.length === 1 ? "device" : "devices"}` : "No printers found"}

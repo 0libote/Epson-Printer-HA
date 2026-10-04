@@ -29,10 +29,13 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 export let APP_DIR = process.env.APP_DATA || "/data";
 export let SCAN_DIR = join(APP_DIR, "scans");
 export let SETTINGS_FILE = join(APP_DIR, "settings.json");
-export let PRINTER_IP_ENV_RAW = (process.env.PRINTER_IP || "").trim();
-export let DEFAULT_PRINTER_NAME = (process.env.PRINTER_NAME || "Home_Epson_XP2200").trim() || "Home_Epson_XP2200";
-export let DEFAULT_DISPLAY_NAME = (process.env.PRINTER_DISPLAY_NAME || "Home Epson XP-2200").trim() || "Home Epson XP-2200";
-export let DEFAULT_SHARE_PRINTER = !["0", "false", "no", "off"].includes((process.env.SHARE_PRINTER || "true").trim().toLowerCase());
+// Printer details are owned 100% by the WebUI (settings.json under APP_DATA).
+// Environment variables are intentionally NOT consulted here: env overrides
+// used to silently win over dashboard changes, which made edits appear to be
+// ignored. Fresh defaults below apply until the user saves real values.
+export let DEFAULT_PRINTER_NAME = "Home_Epson_XP2200";
+export let DEFAULT_DISPLAY_NAME = "Home Epson XP-2200";
+export let DEFAULT_SHARE_PRINTER = true;
 export let MAX_UPLOAD_MB = Math.max(1, parsePositiveInt(process.env.MAX_UPLOAD_MB, 128));
 export let MAX_SCAN_FILES = Math.max(1, parsePositiveInt(process.env.MAX_SCAN_FILES, 100));
 export let CLIENT_HOST_RAW = (process.env.CLIENT_HOST || "").trim();
@@ -152,11 +155,6 @@ function validateIPv4(value: string): string {
   if (first === 0 || first === 127 || first === 255 || (first >= 224 && first <= 239)) throw new Error("Use the printer's normal IPv4 address");
   if (last === 0 || last === 255) throw new Error("Use the printer's normal IPv4 address");
   return ip;
-}
-
-let PRINTER_IP_ENV = "";
-if (PRINTER_IP_ENV_RAW) {
-  try { PRINTER_IP_ENV = validateIPv4(PRINTER_IP_ENV_RAW); } catch { PRINTER_IP_ENV = ""; }
 }
 
 function validateQueueName(value: string): string {
@@ -305,7 +303,6 @@ function startsWith(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 export function currentPrinterIp(): string {
-  if (PRINTER_IP_ENV) return PRINTER_IP_ENV;
   const v = String(savedSettingsSync().printer_ip ?? "").trim();
   if (!v) return "";
   try { return validateIPv4(v); } catch { return ""; }
@@ -969,13 +966,11 @@ async function renderIndex(c:any):Promise<string>{
       <details class="panel fold">
         <summary><span><strong>Printer settings</strong><small>Change the printer address</small></span></summary>
         <div class="fold-content narrow-content">
-          ${PRINTER_IP_ENV?`<p class="empty-copy">The printer address is managed by the ZimaOS app settings.</p>`:`
-            <form method="post" action="/setup" class="settings-form" data-busy-form data-busy-stages="Checking the printer address|Updating the print service|Waiting for the printer to respond">
-              <input type="hidden" name="_csrf_token" value="${escapeHtml(csrf)}">
-              <label for="change-printer-ip">Printer IP address<input id="change-printer-ip" class="input" type="text" inputmode="decimal" name="printer_ip" value="${escapeHtml(printerIp)}" required></label>
-              <button type="submit" data-busy-text="Checking printer…">Save address</button>
-            </form>
-          `}
+          <form method="post" action="/setup" class="settings-form" data-busy-form data-busy-stages="Checking the printer address|Updating the print service|Waiting for the printer to respond">
+            <input type="hidden" name="_csrf_token" value="${escapeHtml(csrf)}">
+            <label for="change-printer-ip">Printer IP address<input id="change-printer-ip" class="input" type="text" inputmode="decimal" name="printer_ip" value="${escapeHtml(printerIp)}" required></label>
+            <button type="submit" data-busy-text="Checking printer…">Save address</button>
+          </form>
         </div>
       </details>
     `;
@@ -1031,11 +1026,6 @@ app.get("/", async(c)=>{
 app.post("/setup", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
-  if(PRINTER_IP_ENV){
-    const msg="PRINTER_IP is set by Docker, so the dashboard cannot change it.";
-    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
   const body=await c.req.parseBody();
   if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   const rawIp=String((body as any)["printer_ip"]||"");
@@ -1587,7 +1577,7 @@ app.get("/api/status", async(c)=>{
       : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
     return {
       printer_ip:printerIp,
-      printer_ip_managed: Boolean(PRINTER_IP_ENV),
+      printer_ip_managed: false,
       client_setup: client,
       printer_name:printerName,
       display_name:currentDisplayName(),

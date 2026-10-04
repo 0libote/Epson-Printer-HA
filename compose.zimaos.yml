@@ -14,8 +14,7 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      PRINTER_IP: ""
-      PRINTER_NAME: "Home_Epson_XP2200"
+      # Printer details are owned 100% by the WebUI (/data/settings.json).
       PRINT_PROTOCOL: "auto"
       WEB_PORT: "8098"
       CLIENT_HOST: ""
@@ -44,7 +43,6 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      PRINTER_IP: ""
       EPSON_EULA_ACCEPTED: "true"
     volumes:
       - /DATA/AppData/epson-printer-ha/data:/data:ro

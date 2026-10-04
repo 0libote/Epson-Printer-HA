@@ -17,8 +17,8 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      PRINTER_IP: "${PRINTER_IP:-}"
-      PRINTER_NAME: "${PRINTER_NAME:-Home_Epson_XP2200}"
+      # Printer details (address, names, sharing) are owned 100% by the WebUI
+      # and stored in /data/settings.json — no env vars needed here.
       PRINT_PROTOCOL: "${PRINT_PROTOCOL:-auto}"
       WEB_PORT: "${WEB_PORT:-8080}"
       CLIENT_HOST: "${CLIENT_HOST:-}"
@@ -51,7 +51,6 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
-      PRINTER_IP: "${PRINTER_IP:-}"
       EPSON_EULA_ACCEPTED: "${EPSON_EULA_ACCEPTED:-false}"
     volumes:
       - ./data:/data:ro

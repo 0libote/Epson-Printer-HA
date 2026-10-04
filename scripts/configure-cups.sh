@@ -43,6 +43,11 @@ case "$PREFER_ENV_SETTINGS" in
   *) PREFER_ENV_SETTINGS="false" ;;
 esac
 
+# Printer details live in /data/settings.json (owned by the WebUI) — the saved
+# file always wins so dashboard edits can never be overridden by stale
+# container env. Env vars only fill gaps when the settings file has no value
+# (e.g. first boot before setup), except for an explicit dashboard reconfigure
+# (PREFER_ENV_SETTINGS=true) whose caller values are authoritative.
 # Single python spawn for all settings (was 2 spawns before) — faster boot
 if [[ -f /data/settings.json ]]; then
   readarray -t SAVED_SETTINGS < <(python3 - <<'PY'
@@ -69,8 +74,8 @@ except Exception:
     print('')
 PY
 )
-  [[ -z "$PRINTER_IP" && -n "${SAVED_SETTINGS[0]:-}" ]] && PRINTER_IP="${SAVED_SETTINGS[0]}"
   if [[ "$PREFER_ENV_SETTINGS" != "true" ]]; then
+    [[ -n "${SAVED_SETTINGS[0]:-}" ]] && PRINTER_IP="${SAVED_SETTINGS[0]}"
     [[ -n "${SAVED_SETTINGS[1]:-}" ]] && PRINTER_NAME="${SAVED_SETTINGS[1]}"
     [[ -n "${SAVED_SETTINGS[2]:-}" ]] && PRINTER_DISPLAY_NAME="${SAVED_SETTINGS[2]}"
     [[ -n "${SAVED_SETTINGS[3]:-}" ]] && SHARE_PRINTER="${SAVED_SETTINGS[3]}"

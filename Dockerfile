@@ -63,7 +63,6 @@ RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh \
 
 ENV WEB_PORT=8080 \
     APP_DATA=/data \
-    PRINTER_NAME=Home_Epson_XP2200 \
     PRINT_PROTOCOL=auto \
     SANE_NET_TIMEOUT=1 \
     BUN_VERSION=1.4.2
