@@ -39,5 +39,9 @@ ENV QT_QPA_PLATFORM=offscreen \
     SANE_DEBUG_DLL=0 \
     SANE_DEBUG_NET=0 \
     BUN_VERSION=1.4.2
-HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD bun -e "Bun.connect({hostname:'127.0.0.1', port:6566}).then(s=>s.end()).catch(()=>process.exit(1))" || exit 1
+# Bun.connect requires a SocketOptions.socket argument and cannot do a plain TCP
+# probe (it failed 1000+ times while saned served fine). python3 is guaranteed
+# present, so use it. Generous start-period: a legitimate first boot downloads
+# ~26MB and installs two .deb packages before saned exists.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 CMD python3 -c "import socket; socket.create_connection(('127.0.0.1', 6566), 5).close()" || exit 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
