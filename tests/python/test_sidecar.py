@@ -4,6 +4,8 @@ import io
 import json
 import os
 import subprocess
+import socket
+import threading
 import tarfile
 import tempfile
 import time
@@ -140,6 +142,36 @@ class ScannerTests(unittest.TestCase):
         service.lock.acquire()
         self.assertEqual(service.status('192.0.2.10')['state'],'busy')
         service.lock.release()
+    def test_inherited_output_pipe_respects_deadline(self):
+        service = scanner.Service([])
+        started = time.monotonic()
+        with self.assertRaises(scanner.CliFailure):
+            service.command(['python3', '-c', 'import subprocess; subprocess.Popen(["sleep", "20"])'], timeout=0.1)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIsNone(service.current_process)
+
+    def test_unix_api_health_validation_and_origin(self):
+        path = self.path / 'api.sock'
+        with scanner.Server(str(path), scanner.Handler) as server:
+            server.service = scanner.Service([])
+            worker = threading.Thread(target=server.serve_forever, daemon=True)
+            worker.start()
+            def request(raw):
+                with socket.socket(socket.AF_UNIX) as client:
+                    client.settimeout(2)
+                    client.connect(str(path))
+                    client.sendall(raw)
+                    return client.makefile('rb').read()
+            self.assertIn(b'200 OK', request(b'GET /health HTTP/1.0\r\n\r\n'))
+            body = b'{"ip":"127.0.0.1","dpi":300,"mode":"Color"}'
+            header = b'POST /scan HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: ' + str(len(body)).encode() + b'\r\n\r\n'
+            self.assertIn(b'400 Bad Request', request(header + body))
+            self.assertIn(b'403 Forbidden', request(b'POST /scan HTTP/1.0\r\nOrigin: https://example.com\r\n\r\n'))
+            self.assertIn(b'400 Bad Request', request(b'POST /scan HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: 999999\r\n\r\n'))
+            self.assertIn(b'404 Not Found', request(b'GET /jobs/../../etc/passwd HTTP/1.0\r\n\r\n'))
+            server.shutdown()
+            worker.join(timeout=2)
+
     def test_scan_output_and_lock_lifetime(self):
         profile={'ip':'192.0.2.10','dpi':300,'mode':'Color','settings':self.settings()}
         service=scanner.Service([profile])

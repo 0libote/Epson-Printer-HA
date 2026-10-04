@@ -40,7 +40,7 @@ async function detectSaneDevice(printerIp = ""): Promise<[string | null, string 
   // A dozing printer can take ~16s to answer SANE probes; cutting off at 12s
   // made detection (and therefore every scan) impossible while it naps.
   const result = await runCommand(["scanimage", "-L"], 30_000);
-  if (!result.ok) return [null, null];
+  if (!result.ok) { candidatesByIp.set(printerIp, []); return [null, null]; }
 
   const found = parseSaneDevices(result.stdout, printerIp);
   candidatesByIp.set(printerIp, found);

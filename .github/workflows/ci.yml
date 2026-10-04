@@ -29,7 +29,7 @@ jobs:
           ls -lh public/
       - name: Check shell scripts
         run: |
-          bash -n scripts/*.sh
+          for script in scripts/*.sh; do bash -n "$script"; done
           bash -n scan-bridge/entrypoint.sh
       - name: Validate Compose
         run: |

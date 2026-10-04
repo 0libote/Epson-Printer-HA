@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import signal
+import selectors
 import socketserver
 import subprocess
 import tempfile
@@ -122,27 +123,46 @@ class Service:
             if job["cancelled"]:
                 os.killpg(proc.pid, signal.SIGTERM)
         output = bytearray()
-        saw_error = False
-        def drain():
-            nonlocal saw_error
-            tail = b""
-            while chunk := proc.stdout.read(8192):
-                combined = tail + chunk
-                if re.search(rb"\bERROR\s*:", combined, re.I):
-                    saw_error = True
-                tail = combined[-128:]
-                if len(output) < 8192:
-                    output.extend(chunk[:8192-len(output)])
-        reader = threading.Thread(target=drain, daemon=True)
-        reader.start()
+        saw_error, tail = False, b""
+        deadline = time.monotonic() + timeout
+        exited_at = None
+        selector = selectors.DefaultSelector()
+        selector.register(proc.stdout, selectors.EVENT_READ)
         try:
-            code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-            raise CliFailure("Epson command timed out; check the printer is awake")
+            while selector.get_map():
+                now = time.monotonic()
+                if now >= deadline:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                    raise CliFailure("Epson command timed out; check the printer is awake")
+                if proc.poll() is not None:
+                    exited_at = exited_at or now
+                    if now - exited_at > 2:
+                        # A helper inheriting stdout must not keep a finished CLI alive.
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        break
+                for key, _ in selector.select(min(0.05, max(0, deadline - now))):
+                    chunk = os.read(key.fd, 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    combined = tail + chunk
+                    saw_error |= bool(re.search(rb"\bERROR\s*:", combined, re.I))
+                    tail = combined[-128:]
+                    if len(output) < 8192:
+                        output.extend(chunk[:8192-len(output)])
+            remaining = deadline - time.monotonic()
+            try:
+                code = proc.wait(timeout=max(0.001, remaining))
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+                raise CliFailure("Epson command timed out; check the printer is awake")
         finally:
-            reader.join(timeout=2)
+            selector.close()
             proc.stdout.close()
             self.current_process = None
             if job is not None:

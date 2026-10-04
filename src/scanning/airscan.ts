@@ -3,8 +3,8 @@ import { runCommand as defaultRunner } from "../system/commands.ts";
 import type { createSaneService } from "./sane.ts";
 
 export function parseSaneCapabilities(text: string): ScannerCapabilities {
- const modeLine = text.match(/--mode\s+([^\r\n]+)/)?.[1] || "";
- const resolution = text.match(/--resolution\s+([^\r\n]+)/)?.[1] || "";
+ const modeLine = text.match(/--mode\s+([^\r\n]+)/)?.[1]?.split("[")[0] || "";
+ const resolution = text.match(/--resolution\s+([^\r\n]+)/)?.[1]?.split("[")[0] || "";
  const step = Number(resolution.match(/in steps of ([\d.]+)/)?.[1] ?? 1);
  const modes = ["Color", "Gray", "Lineart"].filter(mode => new RegExp(`\\b${mode}\\b`).test(modeLine));
  const range = resolution.match(/(\d+)\.\.(\d+)/);

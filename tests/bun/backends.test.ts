@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createScannerManager, supportsOptions } from "../../src/scanning/manager.ts";
 import { EpsonScan2Backend } from "../../src/scanning/epson-scan2.ts";
 import { parseSaneCapabilities } from "../../src/scanning/airscan.ts";
-import { parseSaneDevices } from "../../src/scanning/sane.ts";
+import { createSaneService, parseSaneDevices } from "../../src/scanning/sane.ts";
 import { createCupsBackend } from "../../src/printing/cups.ts";
 import { createPrinterDeviceService } from "../../src/printer/manager.ts";
 import { normalizePrinterState } from "../../src/printer/types.ts";
@@ -171,4 +171,19 @@ test("command timeouts and bounded drain survive noisy subprocesses", async () =
  const timeout=await runCommand(['python3','-c','import time;time.sleep(30)'],20);expect(timeout.stderr).toBe('timeout');
  const stream=new ReadableStream<Uint8Array>({start(c){c.enqueue(new TextEncoder().encode('abc'.repeat(100)));c.close();}});
  expect(await readCommandStream(stream,5)).toBe('abcab\n…[truncated]');
+});
+
+test("failed discovery clears previously enumerated candidates", async () => {
+ let online = true;
+ const service = createSaneService(async () => online ? commandResult(true, "device 'epsonds:net:192.0.2.10' is a scanner") : commandResult(false));
+ expect(await service.listCandidates("192.0.2.10", true)).toHaveLength(1);
+ online = false;
+ expect(await service.listCandidates("192.0.2.10", true)).toEqual([]);
+});
+test("capability summary selects a backend even when its default options are unsupported", async () => {
+ const manager = createScannerManager(fakeSane([{ rank:0, device:"airscan:test", backend:"AirScan/WSD" }]), async () => commandResult(true,help.replace("Color|Gray|Lineart", "Gray").replace("75..600", "150..150")), disabledEpson());
+ const summary = await manager.capabilities("192.0.2.10");
+ expect(summary.selected).toBe("airscan");
+ expect(summary.capabilities?.modes).toEqual(["Gray"]);
+ expect(summary.capabilities?.resolutions).toEqual([150]);
 });

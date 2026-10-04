@@ -82,7 +82,12 @@ export function createScannerManager(sane: ReturnType<typeof createSaneService>,
    try { return { id: b.id, name: b.name, capabilities: await b.getCapabilities(ip), lastError: rejected.get(`${ip}:${b.id}`)?.error ?? null }; }
    catch { return { id: b.id, name: b.name, capabilities: { resolutions: [], modes: [], sources: [], formats: [], verified: false }, lastError: "Backend capability probe failed" }; }
   }));
-  const selected = active.get(ip) ?? (await select(ip, {}))?.id ?? null;
+  const eligible = summary.filter(b => (rejected.get(`${ip}:${b.id}`)?.until ?? 0) <= Date.now());
+  const previous = active.get(ip);
+  const selected = (previous && summary.some(b => b.id === previous) ? previous : null)
+    ?? eligible.find(b => b.capabilities.verified && supportsOptions(b.capabilities, {}))?.id
+    ?? eligible.find(b => b.capabilities.verified && b.capabilities.sources.includes("flatbed"))?.id
+    ?? eligible.find(b => !b.capabilities.verified && b.id !== "epsonscan2")?.id ?? null;
   return { selected, backends: summary, capabilities: summary.find(b => b.id === selected)?.capabilities ?? null };
  }
  async function capabilities(ip: string, refresh = false): Promise<ScannerSummary> {
