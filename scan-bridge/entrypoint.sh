@@ -28,28 +28,24 @@ PY
 }
 
 retry_delay=15
-while true; do
-  # Bun 1.4 native installer (uses fetch, Bun.Archive, Bun.hash) - fallback to python
-  if command -v bun >/dev/null 2>&1; then
-    bun /usr/local/bin/install-epson-bundle
-  else
-    /usr/local/bin/install-epson-bundle-py
-  fi
+for attempt in {1..6}; do
+  python3 /usr/local/bin/install-epson-bundle
   rc=$?
-  if [[ $rc -eq 0 ]]; then
-    break
-  fi
-  if [[ $rc -eq 3 ]]; then
-    echo "[scan-bridge] Permanent setup failure; fix the message above and recreate the container."
+  if [[ $rc -eq 0 ]]; then break; fi
+  if [[ $rc -eq 3 || $attempt -eq 6 ]]; then
+    echo "[scan-bridge] Installation stopped (exit $rc); fix configuration or network access and recreate the container."
     exit "$rc"
   fi
-  echo "[scan-bridge] Transient installation failure (exit $rc); retrying in ${retry_delay} seconds."
+  echo "[scan-bridge] Transient installation failure; retry $attempt/6 in ${retry_delay}s."
   sleep "$retry_delay"
-  if (( retry_delay < 300 )); then
-    retry_delay=$((retry_delay * 2))
-    (( retry_delay > 300 )) && retry_delay=300
-  fi
+  retry_delay=$((retry_delay * 2))
 done
+
+case "${EPSON_SCANNER_MODE:-legacy}" in
+  direct) exec python3 /opt/scan-bridge/scanner_service.py ;;
+  legacy) ;;
+  *) echo "[scan-bridge] EPSON_SCANNER_MODE must be direct or legacy."; exit 3 ;;
+esac
 
 mkdir -p /root/.epsonscan2/Network
 

@@ -31,6 +31,7 @@ services:
       MAX_SCAN_FILES: "${MAX_SCAN_FILES:-100}"
       MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-128}"
     volumes:
+      - scanner-ipc:/run/epson-scanner
       - ./data:/data
       - cups-spool:/var/spool/cups
       - cups-cache:/var/cache/cups
@@ -51,10 +52,13 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
+      EPSON_SCANNER_MODE: "${EPSON_SCANNER_MODE:-legacy}"
       EPSON_EULA_ACCEPTED: "${EPSON_EULA_ACCEPTED:-false}"
     volumes:
+      - scanner-ipc:/run/epson-scanner
       - ./data:/data:ro
 
 volumes:
+  scanner-ipc:
   cups-spool:
   cups-cache:

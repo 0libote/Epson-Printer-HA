@@ -9,11 +9,15 @@ import subprocess
 import tarfile
 import tempfile
 import urllib.request
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 ALLOWED_PACKAGES = ("epsonscan2", "epsonscan2-non-free-plugin")
 BUNDLE_URL = "https://download3.ebz.epson.net/dsc/f/03/00/17/08/12/9f3fec0ae80aa5c36f5170377ebcc38c93251e23/epsonscan2-bundle-6.7.80.0.x86_64.deb.tar.gz"
 BUNDLE_SHA256 = "e403d8338f4705b28244b8eef6833ae8a29a932f234b15b429798c78b5d70f01"
+EXPECTED = {
+    "epsonscan2": ("epsonscan2_6.7.80.0-1_amd64.deb", "6.7.80.0-1"),
+    "epsonscan2-non-free-plugin": ("epsonscan2-non-free-plugin_1.0.0.6-1_amd64.deb", "1.0.0.6-1"),
+}
 MAX_BUNDLE_BYTES = 64 * 1024 * 1024
 MAX_DEB_BYTES = 48 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 128
@@ -25,29 +29,29 @@ class PermanentSetupError(RuntimeError):
 
 
 def run(args: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=check)
+    return subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=check, timeout=180)
 
 
 def installed(package: str) -> bool:
     result = subprocess.run(
-        ["dpkg-query", "-W", "-f=${Status}", package],
+        ["dpkg-query", "-W", "-f=${Status}\t${Version}\t${Architecture}", package],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        check=False,
+        check=False, timeout=10,
     )
-    return result.returncode == 0 and "install ok installed" in result.stdout
+    return result.returncode == 0 and result.stdout.strip() == f"install ok installed\t{EXPECTED[package][1]}\tamd64"
 
 
-def package_name(path: Path) -> str | None:
+def package_metadata(path: Path) -> tuple[str, str, str] | None:
     result = subprocess.run(
-        ["dpkg-deb", "-f", str(path), "Package"],
+        ["dpkg-deb", "--show", "--showformat=${Package}\t${Version}\t${Architecture}", str(path)],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
-        check=False,
+        check=False, timeout=10,
     )
-    return result.stdout.strip() if result.returncode == 0 else None
+    return tuple(result.stdout.strip().split("\t")) if result.returncode == 0 else None
 
 
 def download_bundle(target: Path) -> None:
@@ -82,9 +86,18 @@ def collect_debs(bundle: Path, work: Path) -> dict[str, Path]:
         if len(members) > MAX_ARCHIVE_MEMBERS:
             raise PermanentSetupError("Epson scanner archive contains too many entries")
         extracted_bytes = 0
+        filenames = set()
         for member in members:
-            if not member.isfile() or not member.name.endswith(".deb"):
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts or "\\" in member.name or not (member.isdir() or member.isfile()):
+                raise PermanentSetupError("Epson scanner archive contains unsafe member")
+            if not member.name.endswith(".deb"):
                 continue
+            if not member.isfile() or path.name not in {entry[0] for entry in EXPECTED.values()}:
+                raise PermanentSetupError("Unexpected Epson scanner package filename")
+            if path.name in filenames:
+                raise PermanentSetupError("Duplicate Epson scanner package")
+            filenames.add(path.name)
             if member.size > MAX_DEB_BYTES:
                 raise PermanentSetupError("Epson scanner package is unexpectedly large")
             extracted_bytes += member.size
@@ -100,9 +113,13 @@ def collect_debs(bundle: Path, work: Path) -> dict[str, Path]:
 
     approved: dict[str, Path] = {}
     for candidate in candidates:
-        name = package_name(candidate)
-        if name in ALLOWED_PACKAGES and name not in approved:
-            approved[name] = candidate
+        metadata = package_metadata(candidate)
+        if not metadata or len(metadata) != 3:
+            raise PermanentSetupError("Invalid Epson package metadata")
+        name, version, arch = metadata
+        if name not in EXPECTED or EXPECTED[name] != (candidate.name, version) or arch != "amd64" or name in approved:
+            raise PermanentSetupError("Unexpected Epson package name, version or architecture")
+        approved[name] = candidate
     return approved
 
 
@@ -129,7 +146,7 @@ def main() -> int:
         except PermanentSetupError as exc:
             print(f"[scan-bridge] {exc}")
             return 3
-        except (OSError, RuntimeError, tarfile.TarError) as exc:
+        except (OSError, RuntimeError, tarfile.TarError, subprocess.SubprocessError) as exc:
             print(f"[scan-bridge] {exc}")
             return 2
 
@@ -139,11 +156,19 @@ def main() -> int:
             return 3
 
         print("[scan-bridge] Installing the verified Epson compatibility packages.")
-        run(["apt-get", "update"])
+        try:
+            run(["apt-get", "update"])
+        except subprocess.SubprocessError:
+            print("[scan-bridge] Package index update failed; retry when network access is restored.")
+            return 2
         for package in ALLOWED_PACKAGES:
             if installed(package):
                 continue
-            result = run(["apt-get", "install", "-y", "--no-install-recommends", str(packages[package])], check=False)
+            try:
+                result = run(["apt-get", "install", "-y", "--no-install-recommends", str(packages[package])], check=False)
+            except subprocess.SubprocessError:
+                print("[scan-bridge] Package installation timed out.")
+                return 2
             print(result.stdout, end="")
             if result.returncode != 0:
                 return result.returncode

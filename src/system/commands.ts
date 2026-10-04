@@ -63,6 +63,26 @@ export function _runStatsForTest() {
   return { active: _runActive, queued: _runQueue.length, max: RUN_CONCURRENCY_MAX };
 }
 
+/** Drain output while retaining bounded text, so noisy drivers cannot exhaust memory. */
+export async function readCommandStream(stream: ReadableStream<Uint8Array>, maxBytes = RUN_OUTPUT_MAX): Promise<string> {
+ const reader = stream.getReader();
+ const chunks: Uint8Array[] = [];
+ let size = 0, truncated = false;
+ try {
+  while (true) {
+   const { done, value } = await reader.read();
+   if (done) break;
+   const retain = Math.min(value.length, maxBytes - size);
+   if (retain > 0) { chunks.push(value.slice(0, retain)); size += retain; }
+   if (retain < value.length) truncated = true;
+  }
+ } finally { reader.releaseLock(); }
+ const bytes = new Uint8Array(size);
+ let offset = 0;
+ for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+ return new TextDecoder().decode(bytes) + (truncated ? "\n…[truncated]" : "");
+}
+
 export async function runCommand(args: string[], timeout = 30_000, cwd?: string): Promise<CommandResult> {
   try {
     await _runAcquire();
@@ -79,8 +99,8 @@ export async function runCommand(args: string[], timeout = 30_000, cwd?: string)
       stderr: "pipe",
       cwd,
     });
-    const stdoutPromise = new Response(proc.stdout).text();
-    const stderrPromise = new Response(proc.stderr).text();
+    const stdoutPromise = readCommandStream(proc.stdout);
+    const stderrPromise = readCommandStream(proc.stderr);
     const exitPromise = proc.exited;
 
     let timedOut = false;

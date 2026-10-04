@@ -27,6 +27,7 @@ services:
       MAX_SCAN_FILES: "100"
       MAX_UPLOAD_MB: "128"
     volumes:
+      - scanner-ipc:/run/epson-scanner
       - /DATA/AppData/epson-printer-ha/data:/data
       - /DATA/AppData/epson-printer-ha/cups-spool:/var/spool/cups
       - /DATA/AppData/epson-printer-ha/cups-cache:/var/cache/cups
@@ -43,9 +44,14 @@ services:
         max-size: "10m"
         max-file: "3"
     environment:
+      EPSON_SCANNER_MODE: "${EPSON_SCANNER_MODE:-legacy}"
       EPSON_EULA_ACCEPTED: "true"
     volumes:
+      - scanner-ipc:/run/epson-scanner
       - /DATA/AppData/epson-printer-ha/data:/data:ro
+
+volumes:
+  scanner-ipc:
 
 x-casaos:
   id: epson-printer-ha

@@ -132,4 +132,18 @@ jobs:
           docker exec scanner-smoke sh -c '! ldd /usr/bin/epsonscan2 | grep "not found"'
           docker exec scanner-smoke sh -c '! ldd /usr/lib/x86_64-linux-gnu/epsonscan2/detectalert | grep "not found"'
           docker exec scanner-smoke epsonscan2 --help
-          docker exec scanner-smoke bun -e "await Bun.connect({hostname:'127.0.0.1', port:6566}).then(s=>s.end())" || docker exec scanner-smoke python3 -c "import socket; socket.create_connection(('127.0.0.1', 6566), 2).close()"
+          docker exec scanner-smoke python3 -c "import socket; socket.create_connection(('127.0.0.1', 6566), 2).close()"
+
+      - name: Verify direct scanner IPC without hardware
+        run: |
+          docker run -d --name scanner-direct-smoke --network host \
+            -e EPSON_EULA_ACCEPTED=true -e EPSON_SCANNER_MODE=direct \
+            epson-printer-ha-scan-bridge:smoke
+          trap 'docker logs scanner-direct-smoke; docker rm -f scanner-direct-smoke' EXIT
+          for attempt in {1..150}; do
+            if docker logs scanner-direct-smoke 2>&1 | grep -q 'Internal API ready'; then break; fi
+            sleep 2
+          done
+          docker logs scanner-direct-smoke 2>&1 | grep -q 'Internal API ready'
+          docker exec scanner-direct-smoke python3 -c "import socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect('/run/epson-scanner/api.sock'); s.sendall(b'GET /health HTTP/1.0\r\n\r\n'); f=s.makefile('rb'); data=f.read(); body=json.loads(data.split(b'\r\n\r\n',1)[1]); assert body['ok']; assert body['version']=='6.7.80.0-1'; assert body['capabilities']['resolutions']==[]"
+          docker exec scanner-direct-smoke python3 -c "from pathlib import Path; assert not any(b'saned -l' in p.read_bytes() for p in Path('/proc').glob('[0-9]*/cmdline') if p.exists())"

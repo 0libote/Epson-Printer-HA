@@ -85,8 +85,8 @@ Tests: syntax, profile integrity/version, malicious inputs, timeouts, crash,
 busy/cancel, missing/invalid output. Never automatically repeat hardware acquisition
 on another backend after timeout/cancel/ambiguous failure.
 
-- [ ] Internal CLI service and main adapter
-- [ ] Profile validation and supported combinations documented
+- [x] Internal CLI service and main adapter
+- [x] Profile validation and supported combinations documented
 - [ ] Fallback selection and cancellation tests
 
 ### 3 — Remove bridge only after proof
@@ -96,7 +96,7 @@ legacy mode as deployable rollback until XP-2205 scans at 150/300/600, colour/gr
 lineart and A4 + PDF/JPEG/PNG pass; verify cancellation and asleep/offline recovery.
 Files: entrypoint, Dockerfile, config/net.conf, Compose, README, scanner smoke.
 
-- [ ] Direct mode eliminates obsolete processes
+- [x] Direct mode eliminates obsolete processes
 - [ ] Physical acceptance (required before changing default/removing legacy)
 
 ### 4/5 — Device utility and maintenance
@@ -143,7 +143,7 @@ Files: installer, Docker/entrypoint, tests, CI, README/SECURITY.
 Tests: generated malicious archives + mocked HTTP/dpkg, both Compose configs,
 main/scanner container smoke, all unit tests/typechecks/build.
 
-- [ ] Duplicate installer removed and adversarial tests added
+- [x] Duplicate installer removed and adversarial tests added
 - [ ] Automated verification completed with results recorded
 - [ ] Docs match final implementation and remaining hardware gates
 
@@ -157,3 +157,13 @@ justify switching. Keep this checklist and evidence up to date after each phase.
 Phase 1 validation: 95 tests pass; backend typecheck passes. core.ts is now a
 23-line compatibility facade; app.ts reduced to 1408 lines by moving legacy
 rendering, operation locks and queue configuration. Hardware behaviour unchanged.
+
+Phase 2 implementation: Unix-socket API is optional direct mode; legacy remains
+available and default. Profiles require package-version/checksum and exact native
+acquisition fields. See EPSON_SCAN2_PROFILES.md. Source format research used
+Epson 6.7.65.0 (latest source endpoint returned 403); no hardware-validated SF2
+is fabricated. Service output is bounded and process groups are terminated on
+timeout/cancel. Python is the sole installer, with version/architecture/filename
+checks, selective regular-file extraction and six bounded attempts. Sidecar no
+longer installs Bun. Unit validation: existing tests pass plus Python contracts;
+full scanner selection/API/container checks still pending.
