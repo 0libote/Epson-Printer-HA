@@ -1,10 +1,10 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
 import { useState } from "react";
-import { Ban, Loader2 } from "lucide-react";
+import { Ban, Loader2, WifiOff } from "lucide-react";
 import { useToast } from "./Toast";
 import { cancelPrintJob } from "../lib/api";
-import { s as ui, Card, StatusDot, safeLabel } from "./ui";
+import { s as ui, Card, CardHeader, StatusDot, safeLabel } from "./ui";
 
 export type QueueJob = { id: string; owner: string; size: string; raw: string };
 
@@ -93,6 +93,46 @@ export function StatusStrip({ printerOk, printerState, printerDetail, scannerOk,
         <span {...stylex.props(s.detail)}>{queueCount > 0 ? "Waiting or printing" : "Empty"}</span>
       </div>
     </div>
+  );
+}
+
+export type PrinterNetwork = {
+  serverIps: string[];
+  sameSubnet: boolean | null;
+  hint: string;
+} | null;
+
+export function PrinterUnreachableBanner({ network, queuedJobs }: { network: PrinterNetwork; queuedJobs: number }) {
+  const wrongNetwork = network?.sameSubnet === false;
+  const hint = network?.hint ?? "The printer is not responding on the network. Check it is powered on with solid Wi-Fi, then verify its address in Settings.";
+  return (
+    <Card>
+      <div role="alert" aria-live="assertive">
+        <CardHeader
+          icon={<WifiOff size={18} />}
+          title={wrongNetwork ? "Printer looks like it's on the wrong network" : "Printer isn't responding"}
+          sub={hint}
+          tileBg={vars.warnSoft as string}
+          tileColor={vars.warn as string}
+        />
+        <div {...stylex.props(ui.statusRow)}>
+          <StatusDot tone="bad" />
+          <span>
+            {queuedJobs > 0
+              ? `${queuedJobs} ${queuedJobs === 1 ? "job is" : "jobs are"} waiting in the queue and will print once the printer is back.`
+              : "New jobs will wait in the queue until the printer is back."}{" "}
+            <a
+              href="#settings"
+              onClick={() => { window.location.hash = "settings"; }}
+              style={{ color: vars.accent as string, fontWeight: 600 }}
+            >
+              Check the printer address in Settings
+            </a>
+            .
+          </span>
+        </div>
+      </div>
+    </Card>
   );
 }
 

@@ -44,6 +44,11 @@ export type StatusResponse = {
   recent_prints: HistoryItem[];
   scans: string[];
   ink?: InkStatus | null;
+  printer_network?: {
+    serverIps: string[];
+    sameSubnet: boolean | null;
+    hint: string;
+  } | null;
   max_upload_mb?: number;
   max_scan_files?: number;
 };
@@ -144,6 +149,26 @@ export async function fetchHealth(): Promise<{ ok: boolean }> {
 export async function fetchInk(refresh = false): Promise<InkStatus> {
   const url = refresh ? "/api/ink?refresh=1" : "/api/ink";
   return readJson<InkStatus>(await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+}
+
+export type DiscoveredPrinter = {
+  ip: string;
+  model: string | null;
+  ports: number[];
+  likelyEpson: boolean;
+  detail: string;
+};
+
+export type DiscoverResponse = {
+  ok: boolean;
+  printers: DiscoveredPrinter[];
+  subnets: string[];
+  scanned_at: string;
+  message?: string;
+};
+
+export async function fetchDiscovered(): Promise<DiscoverResponse> {
+  return readJson<DiscoverResponse>(await fetch("/api/discover", { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
 async function parseFormResponse(res: Response): Promise<{ ok: boolean; message?: string; redirect?: string }> {

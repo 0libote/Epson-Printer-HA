@@ -1,4 +1,5 @@
 import { createConnection } from "node:net";
+import { networkInterfaces } from "node:os";
 import { PDFDocument } from "pdf-lib";
 
 export interface CommandResult {
@@ -204,6 +205,60 @@ const reachableCache = new Map<string, { exp: number; value: boolean }>();
 const reachableInflight = new Map<string, Promise<boolean>>();
 export async function cachedPrinterReachable(host: string): Promise<boolean> {
   return ttlCached(reachableCache, reachableInflight, host, 10_000, () => printerReachable(host));
+}
+
+export interface PrinterNetworkHint {
+  /** Hub's own LAN IPv4 addresses (non-internal), so the UI can show them. */
+  serverIps: string[];
+  /**
+   * Whether the configured printer IP looks like it's on the same /24 as one
+   * of the hub's addresses. Null when it can't be determined (no printer IP,
+   * unparseable IP, or the hub has no LAN address to compare against).
+   * Home LANs are near-universally /24, which is all this heuristic assumes.
+   */
+  sameSubnet: boolean | null;
+  /** Actionable one-liner for the dashboard when the printer is unreachable. */
+  hint: string;
+}
+
+/** Non-internal IPv4 addresses of this hub (host networking: the LAN address). */
+export function localIPv4s(): string[] {
+  const out: string[] = [];
+  try {
+    for (const addrs of Object.values(networkInterfaces())) {
+      for (const a of addrs ?? []) {
+        if (a.family === "IPv4" && !a.internal) out.push(a.address);
+      }
+    }
+  } catch { /* no network info — caller treats as undetermined */ }
+  return [...new Set(out)];
+}
+
+function slash24(ip: string): string | null {
+  const parts = ip.trim().split(".");
+  if (parts.length !== 4 || parts.some((p) => !/^\d+$/.test(p))) return null;
+  const nums = parts.map(Number);
+  if (nums.some((n) => n < 0 || n > 255)) return null;
+  return nums.slice(0, 3).join(".");
+}
+
+export function printerNetworkHint(printerIp: string, serverIps: string[], reachable: boolean): PrinterNetworkHint {
+  const sameSubnet = (() => {
+    const printerNet = slash24(printerIp);
+    if (!printerNet || !serverIps.length) return null;
+    return serverIps.some((s) => slash24(s) === printerNet);
+  })();
+  let hint: string;
+  if (reachable) {
+    hint = `Printer ${printerIp || "unknown"} is responding on the network.`;
+  } else if (!printerIp) {
+    hint = "No printer address is configured yet.";
+  } else if (sameSubnet === false) {
+    hint = `Printer ${printerIp} is not responding and is on a different network than this hub (${serverIps.join(", ")}). Put the printer on the same Wi-Fi/network as the hub, or update its address in Settings.`;
+  } else {
+    hint = `Printer ${printerIp} is not responding. Check it is powered on with solid Wi-Fi${serverIps.length ? ` on the same network as this hub (${serverIps.join(", ")})` : ""}; if its address changed (DHCP), update it in Settings and consider a router address reservation.`;
+  }
+  return { serverIps, sameSubnet, hint };
 }
 
 export async function cupsPrinterStatus(printerName: string): Promise<{ ok: boolean; state: string; detail: string }> {

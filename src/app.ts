@@ -10,6 +10,8 @@ import {
   cancelJob,
   clearStatusCaches,
   cupsPrinterStatus,
+  localIPv4s,
+  printerNetworkHint,
   runCommand,
   scanDocument,
   scannerStatus,
@@ -1597,6 +1599,7 @@ app.get("/api/status", async(c)=>{
       recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
       scans,
       ink: printerIp ? getCachedInkLevels(printerIp) : null,
+      printer_network: printerIp ? printerNetworkHint(printerIp, localIPv4s(), reachable) : null,
       max_upload_mb: MAX_UPLOAD_MB,
       max_scan_files: MAX_SCAN_FILES,
     };
@@ -1624,6 +1627,17 @@ app.get("/api/ink", async(c)=>{
     return c.json(await getInkLevels(printerIp));
   }catch(e:any){
     return c.json({ ok:false, source:"none", cartridges:[], message:String(e?.message||e) }, 502);
+  }
+});
+
+app.get("/api/discover", async(c)=>{
+  const auth=requireAuth(c);
+  if(auth) return auth;
+  try{
+    const { discoverPrinters } = await import("./discover.ts");
+    return c.json(await discoverPrinters());
+  }catch(e:any){
+    return c.json({ ok:false, printers:[], subnets:[], scanned_at:new Date().toISOString(), message:String(e?.message||e) }, 502);
   }
 });
 

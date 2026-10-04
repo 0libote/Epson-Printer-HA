@@ -121,4 +121,35 @@ describe("core", () => {
     expect(status.state).toBe("not_detected");
     mockTcp.mockRestore();
   });
+
+  test("printer network hint flags a wrong-network printer", () => {
+    const h = core.printerNetworkHint("192.168.2.33", ["192.168.1.158"], false);
+    expect(h.sameSubnet).toBe(false);
+    expect(h.hint).toContain("192.168.2.33");
+    expect(h.hint).toContain("different network");
+    expect(h.hint).toContain("192.168.1.158");
+  });
+
+  test("printer network hint covers same-subnet outage", () => {
+    const h = core.printerNetworkHint("192.168.1.33", ["192.168.1.158"], false);
+    expect(h.sameSubnet).toBe(true);
+    expect(h.hint).toContain("192.168.1.33");
+    expect(h.hint).not.toContain("different network");
+  });
+
+  test("printer network hint is undetermined without hub addresses", () => {
+    const h = core.printerNetworkHint("192.168.1.33", [], false);
+    expect(h.sameSubnet).toBe(null);
+  });
+
+  test("printer network hint is quiet when reachable", () => {
+    const h = core.printerNetworkHint("192.168.1.33", ["192.168.1.158"], true);
+    expect(h.hint).toContain("responding");
+  });
+
+  test("local IPv4 helper returns string addresses", () => {
+    const ips = core.localIPv4s();
+    expect(Array.isArray(ips)).toBe(true);
+    for (const ip of ips) expect(ip).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+  });
 });

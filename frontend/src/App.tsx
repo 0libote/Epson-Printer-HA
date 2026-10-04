@@ -9,7 +9,7 @@ import { Header } from "./components/Header";
 import { Setup } from "./components/Setup";
 import { PrintCard } from "./components/PrintCard";
 import { ScanCard } from "./components/ScanCard";
-import { StatusStrip, Queue } from "./components/Overview";
+import { StatusStrip, Queue, PrinterUnreachableBanner } from "./components/Overview";
 import { InkLevels } from "./components/InkLevels";
 import { Library } from "./components/Library";
 import { History } from "./components/History";
@@ -249,6 +249,11 @@ export default function App() {
         </nav>
 
         <section hidden={tab !== "overview"} aria-label="Print and scan">
+            {printerIp && !reachable ? (
+              <div {...stylex.props(s.stack)}>
+                <PrinterUnreachableBanner network={data?.printer_network ?? null} queuedJobs={queue.length} />
+              </div>
+            ) : null}
             <div {...stylex.props(s.actionGrid)}>
               <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} />
               <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} onScanned={() => refreshAll(qc)} />

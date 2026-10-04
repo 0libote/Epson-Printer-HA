@@ -1,10 +1,10 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
 import { useEffect, useState } from "react";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { Check, Copy, Loader2, Radar } from "lucide-react";
 import { useToast } from "./Toast";
-import { postClientSettings, postSetup, isPlausiblePrinterIpv4 } from "../lib/api";
-import { s as ui, Card } from "./ui";
+import { postClientSettings, postSetup, isPlausiblePrinterIpv4, fetchDiscovered, type DiscoveredPrinter } from "../lib/api";
+import { s as ui, Card, StatusDot } from "./ui";
 
 const s = stylex.create({
   stack: { display: "grid", gap: "14px" },
@@ -180,8 +180,29 @@ export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: 
   const { push } = useToast();
   const [ip, setIp] = useState(printerIp);
   const [busy, setBusy] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [results, setResults] = useState<DiscoveredPrinter[] | null>(null);
+  const [scannedAt, setScannedAt] = useState<string | null>(null);
 
   useEffect(() => setIp(printerIp), [printerIp]);
+
+  const search = async () => {
+    setScanning(true);
+    try {
+      const res = await fetchDiscovered();
+      setResults(res.printers);
+      setScannedAt(res.scanned_at);
+      if (!res.ok) {
+        push({ kind: "error", title: "Network search failed", desc: (res.message || "Try again.").slice(0, 200) });
+      } else if (!res.printers.length) {
+        push({ kind: "info", title: "No printers found", desc: "Check the printer is powered on with solid Wi-Fi on this network, then try again." });
+      }
+    } catch (err: any) {
+      push({ kind: "error", title: "Network search failed", desc: String(err.message || err).slice(0, 200) });
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,12 +237,48 @@ export function PrinterAddressSettings({ printerIp, managed = false, onSaved }: 
           <span>Printer IP address</span>
           <input {...stylex.props(ui.input, ui.mono)} disabled={managed || busy} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
         </label>
-        <div>
+        <div {...stylex.props(s.uriRow)}>
           <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy || managed} style={busy ? { opacity: 0.5 } : undefined}>
             {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save address
           </button>
+          {!managed ? (
+            <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={scanning ? { opacity: 0.5 } : undefined}>
+              {scanning ? <Loader2 size={14} className="spin" /> : <Radar size={14} />} {scanning ? "Searching network…" : "Search network"}
+            </button>
+          ) : null}
         </div>
       </form>
+      {!managed && scanning ? (
+        <p {...stylex.props(s.p)}>Scanning the local network for printers — this can take up to ~25 seconds.</p>
+      ) : null}
+      {!managed && !scanning && results ? (
+        <div style={{ marginTop: 14 }}>
+          <h3 {...stylex.props(s.h3)} style={{ marginTop: 0 }}>
+            {results.length ? `Found ${results.length} ${results.length === 1 ? "device" : "devices"}` : "No printers found"}
+          </h3>
+          {results.length ? (
+            <div>
+              {results.map((r) => (
+                <div key={r.ip} {...stylex.props(ui.statusRow)}>
+                  <StatusDot tone={r.likelyEpson ? "good" : "idle"} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span {...stylex.props(ui.mono)}>{r.ip}</span>
+                    <span {...stylex.props(s.toggleSub)}>{r.model ? `${r.model} · ` : ""}{r.detail}</span>
+                  </span>
+                  <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={() => setIp(r.ip)}>
+                    Use this address
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p {...stylex.props(s.p)}>
+              Nothing with printer ports answered{scannedAt ? ` (searched ${new Date(scannedAt).toLocaleTimeString()})` : ""}.
+              Make sure the printer is powered on with solid Wi-Fi on the same network as this hub.
+            </p>
+          )}
+        </div>
+      ) : null}
     </Card>
   );
 }
