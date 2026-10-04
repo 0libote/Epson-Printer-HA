@@ -129,7 +129,7 @@ async function scannerStatus(printerIp: string): Promise<{ ok: boolean; state: s
 async function scanDocument(
   printerIp: string,
   outputDir: string,
-  opts: { dpi?: number; mode?: string; fmt?: string; control?: ScanControl; device?: string } = {}
+  opts: { dpi?: number; mode?: string; fmt?: string; control?: ScanControl; device?: string; source?: string } = {}
 ): Promise<[CommandResult, string | null]> {
   let dpi = opts.dpi ?? 300;
   if (![150, 200, 300, 600].includes(dpi)) dpi = 300;
@@ -157,6 +157,8 @@ async function scanDocument(
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, -5) + `_${String(Date.now()).slice(-6)}`;
   const pngPath = `${outputDir}/.scan_${stamp}.png`;
   const args = ["scanimage", "--device-name", device, "--mode", mode, "--resolution", String(dpi), "-x", "210", "-y", "297", "--format=png"];
+
+  if (opts.source) args.push("--source", opts.source);
 
   // DPI-aware timeout (higher DPI = larger + slower)
   const timeoutMsMap: Record<number, number> = { 150: 55_000, 200: 75_000, 300: 110_000, 600: 180_000 };
@@ -242,6 +244,12 @@ async function scanDocument(
       }
       return [commandResult(false, "", String(exc), 1), null];
     } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (proc && proc.exitCode === null) {
+        try { proc.kill(); } catch {}
+        await Promise.race([proc.exited, Bun.sleep(1500)]);
+        if (proc.exitCode === null) { try { proc.kill(9); } catch {} await proc.exited; }
+      }
       opts.control?.clearProcess();
     }
   }

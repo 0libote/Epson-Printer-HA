@@ -41,7 +41,7 @@ class InstallerTests(unittest.TestCase):
         with patch.object(installer.platform, 'machine', return_value='aarch64'):
             self.assertEqual(installer.main(), 3)
     def test_allowed_packages_flatten_only_regular_files(self):
-        entries = [(f'root/core/{name}', tarfile.REGTYPE, b'deb') for name, _ in installer.EXPECTED.values()]
+        entries = [('root.deb', tarfile.DIRTYPE, b'')] + [(f'root/core/{name}', tarfile.REGTYPE, b'deb') for name, _ in installer.EXPECTED.values()]
         def metadata(path):
             package = next(k for k,v in installer.EXPECTED.items() if v[0] == path.name)
             return (package, installer.EXPECTED[package][1], 'amd64')
@@ -99,7 +99,7 @@ class ScannerTests(unittest.TestCase):
                 raw=json.dumps({'Preset':{'0':self.settings(dpi,mode)}}).encode()
                 (self.path/name).write_bytes(raw)
                 entries.append({'dpi':dpi,'mode':mode,'file':name,'sha256':hashlib.sha256(raw).hexdigest(),'validated':True})
-        (self.path/'manifest.json').write_text(json.dumps({'version':scanner.VERSION,'profiles':entries}))
+        (self.path/'manifest.json').write_text(json.dumps({'version':scanner.VERSION,'printerAddress':'192.0.2.10','profiles':entries}))
         return entries
     def test_profile_combinations_and_private_output(self):
         self.profiles()
@@ -131,6 +131,7 @@ class ScannerTests(unittest.TestCase):
         service=scanner.Service([])
         with self.assertRaises(scanner.CliFailure): service.command(['python3','-c','import time; time.sleep(20)'],timeout=0.05)
         with self.assertRaises(scanner.CliFailure): service.command(['python3','-c','print("ERROR : Device is not found...")'])
+        with self.assertRaises(scanner.CliFailure): service.command(['python3','-c','print("x"*100000);print("ERROR : Offline")'])
         self.assertLessEqual(len(service.command(['python3','-c','print("x"*1000000)'])),8192)
     def test_status_offline_and_busy(self):
         service=scanner.Service([])
@@ -140,7 +141,7 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(service.status('192.0.2.10')['state'],'busy')
         service.lock.release()
     def test_scan_output_and_lock_lifetime(self):
-        profile={'dpi':300,'mode':'Color','settings':self.settings()}
+        profile={'ip':'192.0.2.10','dpi':300,'mode':'Color','settings':self.settings()}
         service=scanner.Service([profile])
         def command(args, **kwargs):
             if '--scan' in args:

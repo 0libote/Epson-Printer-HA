@@ -55,6 +55,10 @@ multi-page/automatic-feeding options. It requires these values in `Preset.0`:
 | PagesTobeScanned | 1 |
 | Folder, UserDefinePath, FileNamePrefix | Must be present; rewritten by service |
 
+The manifest is bound to the validated printer address; after an address change,
+update that field and revalidate/restart the sidecar. Profiles from another
+configured printer are not advertised by the main adapter.
+
 Profiles missing these values are rejected rather than silently using Epson
 defaults. A Windows SF2, different-version profile, unchecked generated profile,
 symlink, traversal name or checksum mismatch is rejected. Profile files belong
@@ -65,6 +69,7 @@ Example manifest (replace the example checksum with `sha256sum colour-300.SF2`):
 ```json
 {
   "version": "6.7.80.0-1",
+  "printerAddress": "192.168.1.50",
   "profiles": [
     {
       "file": "colour-300.SF2",

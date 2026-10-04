@@ -91,7 +91,7 @@ def collect_debs(bundle: Path, work: Path) -> dict[str, Path]:
             path = PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts or "\\" in member.name or not (member.isdir() or member.isfile()):
                 raise PermanentSetupError("Epson scanner archive contains unsafe member")
-            if not member.name.endswith(".deb"):
+            if member.isdir() or not member.name.endswith(".deb"):
                 continue
             if not member.isfile() or path.name not in {entry[0] for entry in EXPECTED.values()}:
                 raise PermanentSetupError("Unexpected Epson scanner package filename")

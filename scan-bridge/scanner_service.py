@@ -39,8 +39,11 @@ def load_profiles(directory: Path, version: str):
     if manifest.stat().st_size > 64 * 1024:
         raise ValueError("Profile manifest too large")
     data = json.loads(manifest.read_text())
+    if not isinstance(data, dict):
+        raise ValueError("Invalid profile manifest")
     if data.get("version") != version or version != VERSION:
         raise ValueError("Profile package version mismatch")
+    target_ip = printer_ip(data.get("printerAddress"))
     entries = data.get("profiles")
     if not isinstance(entries, list) or len(entries) > 12:
         raise ValueError("Invalid profile list")
@@ -63,7 +66,11 @@ def load_profiles(directory: Path, version: str):
         if hashlib.sha256(raw).hexdigest() != item.get("sha256"):
             raise ValueError("Profile checksum mismatch")
         profile = json.loads(raw)
+        if not isinstance(profile, dict) or not isinstance(profile.get("Preset"), dict):
+            raise ValueError("Invalid native profile")
         settings = profile.get("Preset", {}).get("0", {})
+        if not isinstance(settings, dict):
+            raise ValueError("Invalid native profile settings")
         # Values are documented in upstream capitem.h/lastusedsettings.cpp.
         # Require exact acquisition settings; no silently defaulted fields.
         required = {"Resolution": dpi, "ColorType": MODES[mode], "FunctionalUnit": 0,
@@ -72,7 +79,7 @@ def load_profiles(directory: Path, version: str):
             raise ValueError("Profile must match flatbed A4 PNG acquisition settings")
         if not all(k in settings for k in ("Folder", "UserDefinePath", "FileNamePrefix")):
             raise ValueError("Profile lacks explicit output settings")
-        result.append({"dpi": dpi, "mode": mode, "settings": settings})
+        result.append({"ip": target_ip, "dpi": dpi, "mode": mode, "settings": settings})
     return result
 
 
@@ -102,19 +109,28 @@ class Service:
         self.status_cache = {}
         self.target = None
         self.last_error = None
+        self.current_process = None
 
     def command(self, args, timeout=20, job=None, cwd=None):
         # Drain both streams continuously; retain 8 KiB, regardless of TRACE volume.
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 start_new_session=True, cwd=cwd,
                                 env={**os.environ, "QT_QPA_PLATFORM": "offscreen"})
+        self.current_process = proc
         if job is not None:
             job["process"] = proc
             if job["cancelled"]:
                 os.killpg(proc.pid, signal.SIGTERM)
         output = bytearray()
+        saw_error = False
         def drain():
+            nonlocal saw_error
+            tail = b""
             while chunk := proc.stdout.read(8192):
+                combined = tail + chunk
+                if re.search(rb"\bERROR\s*:", combined, re.I):
+                    saw_error = True
+                tail = combined[-128:]
                 if len(output) < 8192:
                     output.extend(chunk[:8192-len(output)])
         reader = threading.Thread(target=drain, daemon=True)
@@ -128,11 +144,12 @@ class Service:
         finally:
             reader.join(timeout=2)
             proc.stdout.close()
+            self.current_process = None
             if job is not None:
                 job.pop("process", None)
         text = output.decode(errors="replace")
         # Epson CLI can print ERROR while returning zero. Never trust exit code alone.
-        if code != 0 or re.search(r"\bERROR\s*:", text, re.I):
+        if code != 0 or saw_error:
             raise CliFailure("Epson command failed; check the printer connection and profile")
         return text
 
@@ -141,8 +158,15 @@ class Service:
             self.command(["epsonscan2", "--set-ip", ip])
             self.target = ip
 
+    def reap(self):
+        for key, job in list(self.jobs.items()):
+            if job["state"] not in ("queued", "scanning") and time.monotonic() - job["created"] > 600:
+                shutil.rmtree(job["directory"], ignore_errors=True)
+                self.jobs.pop(key, None)
+
     def health(self):
-        return {"ok": True, "backend": "epsonscan2", "version": self.version,
+        self.reap()
+        return {"ok": True, "backend": "epsonscan2", "version": self.version, "printerAddress": self.profiles[0].get("ip") if self.profiles else None,
                 "capabilities": {"resolutions": sorted({p["dpi"] for p in self.profiles}),
                     "modes": sorted({p["mode"] for p in self.profiles}),
                     "sources": ["flatbed"] if self.profiles else [],
@@ -175,7 +199,7 @@ class Service:
         ip = printer_ip(body.get("ip"))
         if type(body.get("dpi")) is not int or body.get("mode") not in MODES or body.get("format", "png") != "png":
             raise ValueError("Invalid scan options")
-        profile = next((p for p in self.profiles if p["dpi"] == body["dpi"] and p["mode"] == body["mode"]), None)
+        profile = next((p for p in self.profiles if p.get("ip") == ip and p["dpi"] == body["dpi"] and p["mode"] == body["mode"]), None)
         if profile is None:
             raise ValueError("No validated profile for these settings")
         if not self.lock.acquire(blocking=False):
@@ -222,6 +246,17 @@ class Service:
                 shutil.rmtree(job["directory"], ignore_errors=True)
             self.status_cache.clear()
             self.lock.release()
+
+    def shutdown(self):
+        proc = self.current_process
+        if proc and proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait(timeout=3)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                pass
+        for job in list(self.jobs.values()):
+            shutil.rmtree(job["directory"], ignore_errors=True)
 
     def cancel(self, job):
         if job["state"] in ("queued", "scanning"):
@@ -316,6 +351,12 @@ def main():
         server.service = Service(profiles, version)
         # Access is controlled by mounting the private IPC volume into the two containers.
         os.chmod(path, 0o666)
+        def stop(_sig, _frame):
+            server.service.shutdown()
+            path.unlink(missing_ok=True)
+            raise SystemExit(0)
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
         print(f"[scanner:epsonscan2] Internal API ready; {len(profiles)} validated profiles", flush=True)
         server.serve_forever()
 

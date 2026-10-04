@@ -146,4 +146,4 @@ jobs:
           done
           docker logs scanner-direct-smoke 2>&1 | grep -q 'Internal API ready'
           docker exec scanner-direct-smoke python3 -c "import socket,json; s=socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect('/run/epson-scanner/api.sock'); s.sendall(b'GET /health HTTP/1.0\r\n\r\n'); f=s.makefile('rb'); data=f.read(); body=json.loads(data.split(b'\r\n\r\n',1)[1]); assert body['ok']; assert body['version']=='6.7.80.0-1'; assert body['capabilities']['resolutions']==[]"
-          docker exec scanner-direct-smoke python3 -c "from pathlib import Path; assert not any(b'saned -l' in p.read_bytes() for p in Path('/proc').glob('[0-9]*/cmdline') if p.exists())"
+          docker exec scanner-direct-smoke python3 -c "from pathlib import Path; assert not any(p.read_bytes().split(b'\0')[0].endswith(b'/saned') for p in Path('/proc').glob('[0-9]*/cmdline') if p.exists())"

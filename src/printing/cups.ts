@@ -5,7 +5,7 @@ export function createCupsBackend(runCommand: typeof defaultRunner = defaultRunn
 async function cupsPrinterStatus(printerName: string): Promise<{ ok: boolean; state: string; detail: string }> {
   try { validateQueue(printerName); } catch { return { ok: false, state: "unconfigured", detail: "Invalid queue name" }; }
   const result = await runCommand(["lpstat", "-p", printerName, "-l"], 5000);
-  const text = (result.stdout || result.stderr).trim();
+  const text = (result.stdout || result.stderr).trim().slice(0, 800);
   if (result.ok) {
     const lower = text.toLowerCase();
     let state = "ready";

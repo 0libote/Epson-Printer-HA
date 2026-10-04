@@ -5,9 +5,10 @@ import type { createSaneService } from "./sane.ts";
 export function parseSaneCapabilities(text: string): ScannerCapabilities {
  const modeLine = text.match(/--mode\s+([^\r\n]+)/)?.[1] || "";
  const resolution = text.match(/--resolution\s+([^\r\n]+)/)?.[1] || "";
+ const step = Number(resolution.match(/in steps of ([\d.]+)/)?.[1] ?? 1);
  const modes = ["Color", "Gray", "Lineart"].filter(mode => new RegExp(`\\b${mode}\\b`).test(modeLine));
  const range = resolution.match(/(\d+)\.\.(\d+)/);
- const resolutions = range ? [150, 200, 300, 600].filter(dpi => dpi >= Number(range[1]) && dpi <= Number(range[2]))
+ const resolutions = range ? [150, 200, 300, 600].filter(dpi => dpi >= Number(range[1]) && dpi <= Number(range[2]) && (dpi - Number(range[1])) % step === 0)
    : [...resolution.matchAll(/\b\d+\b/g)].map(m => Number(m[0])).filter(dpi => [150,200,300,600].includes(dpi));
  const flatbed = /--source[^\r\n]*\bflatbed\b/i.test(text);
  const width = text.match(/-x\s+([\d.]+)\.\.([\d.]+)/);
@@ -27,7 +28,7 @@ export class SaneBackend implements ScannerBackend {
     .then(result => parseSaneCapabilities(result.ok ? result.stdout : ""));
   return this.capabilityPromise;
  }
- scan(ip: string, outputDir: string, options: ScanOptions) { return this.service.scanDocument(ip, outputDir, { ...options, device: this.device }); }
+ async scan(ip: string, outputDir: string, options: ScanOptions) { const caps = await this.getCapabilities(ip); return this.service.scanDocument(ip, outputDir, { ...options, device: this.device, source: caps.verified ? "Flatbed" : undefined }); }
 }
 export class AirScanBackend extends SaneBackend {
  constructor(device: string, service: ReturnType<typeof createSaneService>, runner = defaultRunner) { super("airscan", "AirScan/WSD", device, service, runner); }

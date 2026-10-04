@@ -3,8 +3,9 @@ import { validatePrinterAddress } from "../system/validation.ts";
 import { AirScanBackend, SaneBackend } from "./airscan.ts";
 import { EpsonScan2Backend } from "./epson-scan2.ts";
 import type { createSaneService } from "./sane.ts";
-import type { ScannerBackend, ScanOptions, ScanResult } from "./types.ts";
+import type { ScannerBackend, ScannerCapabilities, ScanOptions, ScanResult } from "./types.ts";
 
+type ScannerSummary = { selected: string | null; backends: Array<{ id: string; name: string; capabilities: ScannerCapabilities; lastError: string | null }>; capabilities: ScannerCapabilities | null };
 export function supportsOptions(caps: Awaited<ReturnType<ScannerBackend["getCapabilities"]>>, options: ScanOptions) {
  const fmt = options.fmt === "jpeg" ? "jpg" : options.fmt ?? "pdf";
  const combinations = (caps as { combinations?: Array<{ dpi: number; mode: string }> }).combinations;
@@ -17,8 +18,10 @@ export function createScannerManager(sane: ReturnType<typeof createSaneService>,
  const cache = new Map<string, { until: number; value: ScannerBackend[] }>();
  const inflight = new Map<string, Promise<ScannerBackend[]>>();
  const rejected = new Map<string, { until: number; error: string }>();
+ const summaries = new Map<string, { until: number; value: ScannerSummary }>();
+ const summaryInflight = new Map<string, Promise<ScannerSummary>>();
  const active = new Map<string, string>();
- function invalidate(ip?: string) { if (ip) { cache.delete(ip); active.delete(ip); } else { cache.clear(); active.clear(); } sane.clearDeviceCache(); epson.invalidate(); }
+ function invalidate(ip?: string) { if (ip) { cache.delete(ip); summaries.delete(ip); active.delete(ip); } else { cache.clear(); summaries.clear(); active.clear(); } sane.clearDeviceCache(); epson.invalidate(); }
  async function backends(ip: string, refresh = false): Promise<ScannerBackend[]> {
   if (!ip) return [];
   validatePrinterAddress(ip);
@@ -67,17 +70,40 @@ export function createScannerManager(sane: ReturnType<typeof createSaneService>,
    rejected.set(`${ip}:${backend.id}`, { until: Date.now() + 60_000, error });
    if (rejected.size > 64) rejected.delete(rejected.keys().next().value!);
    console.warn(`[scanner:${backend.id}] ${error}`);
-   cache.delete(ip); sane.clearDeviceCache();
+   cache.delete(ip); active.delete(ip); sane.clearDeviceCache();
   }
+  summaries.delete(ip);
   // Never automatically repeat an acquisition on another backend.
   return result;
  }
- async function capabilities(ip: string, refresh = false) {
+ async function loadSummary(ip: string, refresh = false): Promise<ScannerSummary> {
   const available = await backends(ip, refresh);
-  const summary = await Promise.all(available.map(async b => ({ id: b.id, name: b.name,
-   capabilities: await b.getCapabilities(ip), lastError: rejected.get(`${ip}:${b.id}`)?.error ?? null })));
+  const summary = await Promise.all(available.map(async b => {
+   try { return { id: b.id, name: b.name, capabilities: await b.getCapabilities(ip), lastError: rejected.get(`${ip}:${b.id}`)?.error ?? null }; }
+   catch { return { id: b.id, name: b.name, capabilities: { resolutions: [], modes: [], sources: [], formats: [], verified: false }, lastError: "Backend capability probe failed" }; }
+  }));
   const selected = active.get(ip) ?? (await select(ip, {}))?.id ?? null;
   return { selected, backends: summary, capabilities: summary.find(b => b.id === selected)?.capabilities ?? null };
  }
- return { backends, select, scan, capabilities, invalidate, epson };
+ async function capabilities(ip: string, refresh = false): Promise<ScannerSummary> {
+  if (refresh) invalidate(ip);
+  const hit = summaries.get(ip);
+  if (!refresh && hit && hit.until > Date.now()) return hit.value;
+  const ongoing = summaryInflight.get(ip);
+  if (ongoing) return ongoing;
+  const pending = loadSummary(ip, refresh);
+  summaryInflight.set(ip, pending);
+  try {
+   const value = await pending;
+   if (summaries.size >= 32) summaries.delete(summaries.keys().next().value!);
+   summaries.set(ip, { until: Date.now() + 60_000, value });
+   return value;
+  } finally { if (summaryInflight.get(ip) === pending) summaryInflight.delete(ip); }
+ }
+ function peekCapabilities(ip: string): ScannerSummary | null {
+  const hit = summaries.get(ip);
+  if (!hit || hit.until < Date.now()) void capabilities(ip).catch(() => {});
+  return hit?.value ?? null;
+ }
+ return { backends, select, scan, capabilities, peekCapabilities, invalidate, epson };
 }

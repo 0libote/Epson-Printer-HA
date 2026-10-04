@@ -22,16 +22,18 @@ export function warmDeviceCache(...args: Parameters<typeof saneService.warmDevic
 export async function scannerStatus(ip: string) {
  const legacy = await saneService.scannerStatus(ip);
  if (!ip) return legacy;
- const summary = await scannerManager.capabilities(ip);
+ const summary = scannerManager.peekCapabilities(ip);
+ if (!summary) return legacy;
  if (summary.selected === "epsonscan2") {
   try {
-   const status = await scannerManager.epson.status(ip);
+   const status = scannerManager.epson.peekStatus(ip) ?? { ok: false, state: "unknown" };
    return { ...legacy, ok: status.ok, state: status.state, backend: "Epson Scan 2", device: null,
-    open_source: false, detail: status.ok ? "Ready via Epson Scan 2" : "Scanner not responding; it may be asleep or offline",
+    open_source: false, detail: status.ok ? "Ready via Epson Scan 2" : "Checking Epson scanner status; the printer may be asleep or offline",
     backend_id: summary.selected, capabilities: summary.capabilities };
   } catch { return { ...legacy, ok: false, state: "unknown", backend: "Epson Scan 2", detail: "Scanner sidecar unavailable" }; }
  }
- return { ...legacy, backend_id: summary.selected, capabilities: summary.capabilities };
+ const chosen = summary.backends.find(b => b.id === summary.selected);
+ return { ...legacy, backend: chosen?.name ?? legacy.backend, backend_id: summary.selected, capabilities: summary.capabilities };
 }
 export const scannerManager = createScannerManager(saneService, (...args) => runCommand(...args));
 export function scanDocument(...args: Parameters<typeof scannerManager.scan>) { return scannerManager.scan(...args); }
