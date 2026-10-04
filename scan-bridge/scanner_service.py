@@ -186,7 +186,11 @@ class Service:
 
     def health(self):
         self.reap()
-        return {"ok": True, "backend": "epsonscan2", "version": self.version, "printerAddress": self.profiles[0].get("ip") if self.profiles else None,
+        try:
+            build = json.loads(Path(__file__).with_name("build-info.json").read_text())
+        except (OSError, ValueError):
+            build = None
+        return {"build": build, "ok": True, "backend": "epsonscan2", "version": self.version, "printerAddress": self.profiles[0].get("ip") if self.profiles else None,
                 "capabilities": {"resolutions": sorted({p["dpi"] for p in self.profiles}),
                     "modes": sorted({p["mode"] for p in self.profiles}),
                     "sources": ["flatbed"] if self.profiles else [],

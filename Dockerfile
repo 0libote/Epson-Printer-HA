@@ -70,4 +70,6 @@ ENV WEB_PORT=8080 \
 EXPOSE 8080 631
 VOLUME ["/data", "/var/cache/cups", "/var/spool/cups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD curl -fsS "http://127.0.0.1:${WEB_PORT:-8080}/api/health" >/dev/null || exit 1
+ARG BUILD_NUMBER=132
+LABEL org.opencontainers.image.version="build-${BUILD_NUMBER}"
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

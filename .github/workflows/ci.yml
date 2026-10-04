@@ -14,6 +14,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Generate shared build identity
+        env:
+          BUILD_RUN: ${{ github.run_number }}
+          BUILD_REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/build-info.py --ci-run "$BUILD_RUN" --revision "$BUILD_REVISION"
+          echo "BUILD_NUMBER=$((131 + BUILD_RUN))" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
           bun-version: 1.4.2
@@ -56,6 +63,13 @@ jobs:
             file: ./scan-bridge/Dockerfile
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Generate shared build identity
+        env:
+          BUILD_RUN: ${{ github.run_number }}
+          BUILD_REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/build-info.py --ci-run "$BUILD_RUN" --revision "$BUILD_REVISION"
+          echo "BUILD_NUMBER=$((131 + BUILD_RUN))" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -67,6 +81,7 @@ jobs:
       - name: Build container
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
+          build-args: BUILD_NUMBER=${{ env.BUILD_NUMBER }}
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -74,6 +89,7 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:build-${{ env.BUILD_NUMBER }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
@@ -83,10 +99,18 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Generate shared build identity
+        env:
+          BUILD_RUN: ${{ github.run_number }}
+          BUILD_REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/build-info.py --ci-run "$BUILD_RUN" --revision "$BUILD_REVISION"
+          echo "BUILD_NUMBER=$((131 + BUILD_RUN))" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
       - name: Build main image for runtime smoke test
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
+          build-args: BUILD_NUMBER=${{ env.BUILD_NUMBER }}
           context: .
           load: true
           tags: epson-printer-ha:smoke
@@ -101,10 +125,18 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Generate shared build identity
+        env:
+          BUILD_RUN: ${{ github.run_number }}
+          BUILD_REVISION: ${{ github.sha }}
+        run: |
+          python3 scripts/build-info.py --ci-run "$BUILD_RUN" --revision "$BUILD_REVISION"
+          echo "BUILD_NUMBER=$((131 + BUILD_RUN))" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
       - name: Build scanner sidecar for runtime smoke test
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
+          build-args: BUILD_NUMBER=${{ env.BUILD_NUMBER }}
           context: ./scan-bridge
           load: true
           tags: epson-printer-ha-scan-bridge:smoke
