@@ -87,7 +87,7 @@ on another backend after timeout/cancel/ambiguous failure.
 
 - [x] Internal CLI service and main adapter
 - [x] Profile validation and supported combinations documented
-- [ ] Fallback selection and cancellation tests
+- [x] Fallback selection and cancellation tests
 
 ### 3 — Remove bridge only after proof
 
@@ -108,9 +108,9 @@ send guessed commands. If supported later, single device lock must cover scans,
 maintenance, queue submission and check existing CUPS jobs including network
 clients. Tests: normalized states, fallback order, unsupported actions, locking.
 
-- [ ] Utility evidence and integration decision recorded
-- [ ] Honest capabilities and structured printer status
-- [ ] Supported maintenance only (may remain unsupported)
+- [x] Utility evidence and integration decision recorded
+- [x] Honest capabilities and structured printer status
+- [x] Supported maintenance only (standard backend explicitly unsupported)
 
 ### 6 — Encapsulate standard status
 
@@ -119,7 +119,7 @@ Keep tested protocol functions and all existing ink fields, caches/deadlines.
 Do not substitute a dependency solely for aesthetics. Tests: existing ink fixtures
 and fallback semantics including all-unknown values.
 
-- [ ] Ink responsibilities split with unchanged fallback
+- [x] Ink responsibilities split with unchanged fallback
 
 ### 7 — API/frontend/diagnostics
 
@@ -131,7 +131,7 @@ credentials/community/environment dumps. Capability-driven choices and backend
 labels, detailed diagnostics in Settings. Tests: API compatibility/auth/CSRF,
 capability selections, frontend typecheck/build.
 
-- [ ] Capabilities and diagnostics endpoints
+- [x] Capabilities and diagnostics endpoints
 - [ ] UI derives scan settings from capabilities
 
 ### 8 — Installer and validation
@@ -167,3 +167,20 @@ timeout/cancel. Python is the sole installer, with version/architecture/filename
 checks, selective regular-file extraction and six bounded attempts. Sidecar no
 longer installs Bun. Unit validation: existing tests pass plus Python contracts;
 full scanner selection/API/container checks still pending.
+
+Implementation progress: Epson utility 1.2.2 ecbd help was executed and package
+binaries/components inspected. No verified headless API established; see
+EPSON_PRINTER_UTILITY.md. Maintenance remains capability-disabled and returns 501.
+The service/lock/API contracts are tested with a simulated verified adapter;
+external CUPS-client exclusion is an additional activation gate, not claimed as
+solved by a JavaScript mutex. Standard ink reader split into SNMP, IPP, HTTP and
+cached orchestrator; ink.ts is a seven-line compatibility facade. Status API
+routing is separate; app.ts now has about 1320 lines (original 1722).
+
+Scanner follow-up: native profiles are also bound to the validated printer IP;
+source version alone is insufficient evidence for another model. Capability and
+Epson status probes are cached/deduplicated; ordinary /api/status serves cached
+metadata while background probes refresh, avoiding a fresh 20-second CLI probe
+on every dashboard/HA poll. Acquisition errors never trigger cross-backend retry
+in the same request. Container smoke caught a .deb-suffixed archive directory;
+selective extraction now skips directories before checking package filenames.

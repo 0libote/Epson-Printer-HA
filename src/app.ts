@@ -1,3 +1,6 @@
+import { registerStatusApi } from "./api/status.ts";
+import { registerDeviceApi } from "./api/device.ts";
+import { createPrinterDeviceService } from "./printer/manager.ts";
 import { createOperationLocks } from "./system/process-lock.ts";
 import { renderIndex as renderLegacyIndex } from "./api/legacy-view.ts";
 import { Hono } from "hono";
@@ -7,6 +10,7 @@ import { mkdirSync, readdirSync, statSync, unlinkSync, rmSync, linkSync, renameS
 import { randomBytes } from "node:crypto";
 import {
   cupsBackend,
+  scannerManager,
   cachedCupsPrinterStatus,
   cachedListJobs,
   cachedPrinterReachable,
@@ -201,7 +205,11 @@ function saveSettingsSync(data: Record<string, any>) {
   _invalidateSettingsCache();
 }
 
-const { operationLocks, clearForTest: _clearOperationLockForTest, removeOperationLockFs, withOperationLock } = createOperationLocks(() => APP_DIR);
+const { operationLocks, clearForTest: _clearOperationLockForTest, removeOperationLockFs, withOperationLock: acquireOperationLock } = createOperationLocks(() => APP_DIR);
+async function withOperationLock<T>(name: string, fn: () => Promise<T>) {
+ if (name === "scanner" && operationLocks.has("device")) return { acquired: false } as { acquired: boolean; result?: T };
+ return acquireOperationLock(name, fn);
+}
 export { _clearOperationLockForTest };
 
 function secureFilename(name: string): string {
@@ -845,10 +853,11 @@ app.post("/print", async(c)=>{
       } catch { /* fall through to lp and report its error */ }
       if(!printMsg){
         await Bun.write(target, buf);
-        const result=await submitPrint(queueName, target, {copies, grayscale, title:name});
+        const locked = await withOperationLock("device", () => submitPrint(queueName, target, {copies, grayscale, title:name}));
+        const result = locked.acquired ? locked.result! : { ok:false, stdout:"", stderr:"Printer maintenance is running. Try again when it completes.", returncode:1 };
         clearStatusCaches();
         // lp sometimes reports errors on stdout; never return a bare "Print failed."
-        const detail=(result.stderr || result.stdout || "").trim();
+        const detail=truncateErrorText(result.stderr || result.stdout || "");
         printOk=result.ok; printMsg=result.ok?"File added to the print queue.":(detail||"Print failed.");
         if(!result.ok) console.error(`[print] lp failed queue=${queueName} file=${name} copies=${copies}: ${detail || `exit ${result.returncode}`}`);
         if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
@@ -1136,14 +1145,14 @@ app.post("/api/scan", async(c)=>{
     body=await c.req.parseBody();
     if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
   }
-  const dpi=Number.parseInt(String(body["dpi"]||"300"),10);
+  const dpi=Number(body["dpi"] ?? 300);
   let mode=String(body["mode"]||"Color");
   let fmt=String(body["format"]||body["fmt"]||"pdf");
   if(![150,200,300,600].includes(dpi)){
     return c.json({ ok:false, error:"DPI must be 150, 200, 300 or 600." }, 400);
   }
-  if(!["Color","Gray","Lineart"].includes(mode)) mode="Color";
-  fmt=fmt.toLowerCase(); if(!["pdf","png","jpg","jpeg"].includes(fmt)) fmt="pdf";
+  if(!["Color","Gray","Lineart"].includes(mode)) return c.json({ ok:false, error:"Invalid scan mode" }, 400);
+  fmt=fmt.toLowerCase(); if(!["pdf","png","jpg","jpeg"].includes(fmt)) return c.json({ ok:false, error:"Invalid scan format" }, 400);
   // Drop hung jobs (see SCAN_JOB_STALE_MS) and clear a dangling activeScanJobId
   // so one crashed scan can't block everything forever.
   reapStaleScanJobs();
@@ -1237,113 +1246,17 @@ app.post("/api/scan/cancel-all", async(c)=>{
   return c.json({ ok:true, cancelled });
 });
 
-// In-flight dedup for /api/status: concurrent dashboard polls share one backend fan-out
-let _statusInflight: Promise<any> | null = null;
-let _statusInflightKey = "";
-app.get("/api/status", async(c)=>{
-  const auth=requireAuth(c);
-  if(auth) return auth;
-  const printerIp=currentPrinterIp();
-  const printerName=currentPrinterName();
-  const client = clientSetup(printerName, c.req.header("host") || new URL(c.req.url).host);
-  const key = `${printerIp}:${printerName}:${client.host}`;
-  if (_statusInflight && _statusInflightKey === key) {
-    try { return c.json(await _statusInflight); } catch {}
-  }
-  const p = (async () => {
-    let scans:string[]=[];
-    try{scans=recentScans(10).map(s=>s.name);}catch{scans=[];}
-    const [reachable, printer, scanner, queue] = printerIp
-      ? await Promise.all([
-          cachedPrinterReachable(printerIp),
-          cachedCupsPrinterStatus(printerName),
-          scannerStatus(printerIp),
-          cachedListJobs(printerName),
-        ])
-      : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
-    return {
-      printer_ip:printerIp,
-      printer_ip_managed: false,
-      client_setup: client,
-      printer_name:printerName,
-      display_name:currentDisplayName(),
-      network_sharing:networkSharingEnabledSync(),
-      reachable,
-      printer,
-      scanner,
-      queue,
-      recent_prints: (()=>{try{return listPrintHistory(10);}catch{return [];}})(),
-      scans,
-      ink: printerIp ? getCachedInkLevels(printerIp) : null,
-      printer_network: printerIp ? printerNetworkHint(printerIp, localIPv4s(), reachable) : null,
-      max_upload_mb: MAX_UPLOAD_MB,
-      max_scan_files: MAX_SCAN_FILES,
-    };
-  })();
-  _statusInflight = p; _statusInflightKey = key;
-  try {
-    const data = await p;
-    return c.json(data);
-  } finally {
-    if (_statusInflight === p) { _statusInflight = null; _statusInflightKey = ""; }
-  }
+const printerDeviceService = createPrinterDeviceService({
+ reachable: ip => cachedPrinterReachable(ip), queueStatus: queue => cachedCupsPrinterStatus(queue), jobs: queue => cupsBackend.listJobs(queue),
+ scannerBusy: () => !!findActiveScanJob() || operationLocks.has("scanner"),
+ lock: fn => withOperationLock("device", fn),
 });
+registerDeviceApi(app, { auth: requireAuth, ip: currentPrinterIp, queue: currentPrinterName,
+ scanner: scannerManager, printer: printerDeviceService, csrf: isCsrfValid, readBody: readMutationBody });
 
-app.get("/api/ink", async(c)=>{
-  const auth=requireAuth(c);
-  if(auth) return auth;
-  const printerIp=currentPrinterIp();
-  if(!printerIp) return c.json({ ok:false, source:"none", cartridges:[], message:"Set up the printer first." }, 400);
-  const force = c.req.query("refresh") === "1";
-  try{
-    if (force) {
-      const { clearInkCache } = await import("./ink.ts");
-      clearInkCache();
-    }
-    return c.json(await getInkLevels(printerIp));
-  }catch(e:any){
-    return c.json({ ok:false, source:"none", cartridges:[], message:String(e?.message||e) }, 502);
-  }
-});
-
-app.get("/api/discover", async(c)=>{
-  const auth=requireAuth(c);
-  if(auth) return auth;
-  try{
-    const { discoverPrinters } = await import("./discover.ts");
-    return c.json(await discoverPrinters({ refresh: c.req.query("refresh") === "1" }));
-  }catch(e:any){
-    return c.json({ ok:false, printers:[], subnets:[], scanned_at:new Date().toISOString(), message:String(e?.message||e) }, 502);
-  }
-});
-
-app.get("/api/history", async(c)=>{
-  const auth=requireAuth(c);
-  if(auth) return auth;
-  let limit=100;
-  try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
-  if(Number.isNaN(limit)) limit=100;
-  try {
-    return c.json({ history: listPrintHistory(limit) });
-  } catch (error) {
-    console.error("[history] Could not read print history", error);
-    return c.json({ ok: false, error: "Print history is temporarily unavailable. Try again shortly." }, 503);
-  }
-});
-
-// Cache health probe 10s — Docker HEALTHCHECK + frontend both hit this
-let _healthCache: { at: number; p: Promise<any> } | null = null;
-app.get("/api/health", async(c)=>{
-  const now = Date.now();
-  if (!_healthCache || now - _healthCache.at > 10_000) {
-    _healthCache = {
-      at: now,
-      p: runCommand(["lpstat","-r"],3000).catch(() => ({ ok: false, stdout: "", stderr: "lpstat failed" }) as any),
-    };
-  }
-  const result:any=await _healthCache.p;
-  return c.json({ok:result.ok, service:"epson-printer-ha", cups:result.stdout||result.stderr}, result.ok?200:503);
-});
+registerStatusApi(app, { requireAuth, currentPrinterIp, currentPrinterName, currentDisplayName,
+ clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService,
+ limits: () => ({ upload: MAX_UPLOAD_MB, scans: MAX_SCAN_FILES }) });
 
 // Vite SPA assets (public/assets/*) – StyleX + Vite emit here
 app.get("/assets/*", async(c)=>{
