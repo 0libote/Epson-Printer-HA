@@ -1,9 +1,10 @@
-import app, { MAX_UPLOAD_MB } from "./app.ts";
+import { buildInfo } from "./system/build-info.ts";
+import app, { MAX_UPLOAD_MB, deviceRecovery } from "./app.ts";
 import { main as historyMain } from "./history_worker.ts";
 
 const port = Number.parseInt(process.env.WEB_PORT || "8080", 10);
 
-console.log(`[server] Starting Epson Hub on port ${port} with Bun ${Bun.version}`);
+console.log(`[server] Starting Epson Hub Build ${buildInfo.number} on port ${port} with Bun ${Bun.version}`);
 
 if (import.meta.main) {
   // Start history worker in background only when run as main entrypoint.
@@ -14,6 +15,7 @@ if (import.meta.main) {
     historyMain().catch((e) => console.error("[history] worker failed", e));
   }
 
+  const stopRecovery = deviceRecovery.start();
   const server = Bun.serve({
     port,
     hostname: "0.0.0.0",
@@ -46,6 +48,7 @@ if (import.meta.main) {
   const shutdown = (sig: string) => {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    stopRecovery();
     console.log(`[server] Received ${sig}, draining…`);
     try { server.stop(false); } catch {}
     // Give in-flight requests a few seconds, then force out so the

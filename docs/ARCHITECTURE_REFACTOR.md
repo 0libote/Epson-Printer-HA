@@ -229,3 +229,76 @@ protocol or GUI automation is shipped. Any future utility integration requires
 licence/interface validation and exclusion of conflicting external CUPS jobs
 before enabling capability flags. These are acceptance gates, not hidden
 unfinished cleanup.
+
+## Follow-up: visible builds and automatic address recovery
+
+User deployment uses GHCR latest, host networking, shared /data, and legacy scanner
+mode. Local commits are not present in that installation until published/pulled.
+This follow-up must work with that Compose unchanged; direct IPC remains optional.
+
+Plan: add shared monotonically numbered CI build metadata to both images, status,
+health/diagnostics and the footer. Discover advertised printers through resolved
+Avahi DNS-SD before bounded subnet fallback. Remember UUID/MAC identity, learn it
+while the saved address responds, and use it to relocate after DHCP changes.
+Start recovery on server boot, check once per minute, avoid changing settings
+while scan/maintenance/queue configuration runs, and recheck settings under lock
+before committing an address. Reconfigure the existing CUPS queue before saving
+and invalidate scanner/network/status caches; legacy sidecar follows shared
+settings. Do not send print or scan jobs automatically. Multiple or mismatching
+identities must not trigger a guessed switch. Show recovery state and offer
+one-click discovery/use rather than asking users to copy an IP.
+
+Files: src/discover.ts, src/device/recovery.ts, app/server/status/device API,
+frontend Settings/footer, build metadata script/workflow/Dockerfiles, tests/docs.
+Tests: DNS-SD escaping/identity, initial setup, DHCP change, ambiguous/mismatched
+identity, sleeping device, recovery backoff/dedup, stale settings, configuration
+failure and operation conflicts; build metadata consistency and old API fields.
+Risks: multicast can be blocked, sleeping printers may not answer, duplicate
+printers need deliberate selection, native SF2 profiles remain address-bound.
+
+- [x] Build identity visible and generated consistently
+- [x] mDNS and stable identity discovery
+- [x] Automatic setup/recovery with transactional queue/settings changes
+- [x] Recovery UI and one-click selection
+- [x] Tests, container validation and deployment guidance
+
+Follow-up implementation: discovery resolves IPP/IPPS/scanner/eSCL advertisements,
+merges service records by address and uses bounded HTTP fingerprinting/ARP as
+fallback. Background checks prefer mDNS and only sweep when no identity match is
+found, once per five minutes; explicit reconnect bypasses the sweep cooldown.
+Recovery updates the existing queue (does not delete queued jobs), rechecks saved
+IP/identity under the configuration lock, persists settings atomically and
+invalidates caches. A settings write failure attempts queue rollback. Scan/device
+operations and queue configuration now exclude one another in the application.
+No scan/print acquisition is automatically repeated.
+
+Build 132 is the local recorded identity. CI generates 131 + workflow run number
+for both images and reports commit revision/time, with build-N image tags and
+OCI version labels. New workflow runs increment once; reruns preserve the number.
+Failed/PR runs may make gaps between published builds. README describes updating
+both GHCR images while preserving the supplied ZimaOS binds. No image was pushed
+or deployment changed during this local task.
+
+Hardware boundaries remain: test actual multicast visibility, DHCP movement and
+Wi-Fi sleep/rejoin on the XP-2205 before claiming physical acceptance. Existing
+installations whose old address is already unreachable and have no remembered
+identity need one deliberate selection. No MAC identity is assumed across routed
+networks. Direct native profiles remain validated against their original IP.
+
+Follow-up validation: 138 Bun tests pass (463 assertions), including 13 pure
+recovery/discovery tests, actual app queue/settings recovery and stale-edit tests,
+three build metadata/workflow tests and authenticated/CSRF recovery API tests.
+Both typechecks, frontend build, Compose configs, shell syntax and CI YAML/matrix
+checks pass. Both Docker images build with matching build-132 labels; sidecar
+health reports the shared build. Main CUPS/ESC/P-R smoke passes with recovery
+running. The real installed legacy sidecar followed a shared settings change
+from 192.0.2.10 to 192.0.2.44 on its next update cycle.
+
+The collaborative preview explicitly reported no desktop automation host in this
+turn, so a disposable headless Chrome fixture was used. Browser checks confirm
+Build 132 in the footer/diagnostics, reconnect click updates persisted settings
+and dashboard after simulated DHCP movement, and one-click discovered-printer
+selection is rendered. Hardware-facing commands were mocked in that fixture;
+it is not physical DHCP/scan validation. Temporary fixture services are removed.
+Hosted GitHub Actions and publication remain unrun; local image builds do not
+change the user's remote GHCR/ZimaOS installation.

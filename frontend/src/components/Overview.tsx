@@ -102,9 +102,9 @@ export type PrinterNetwork = {
   hint: string;
 } | null;
 
-export function PrinterUnreachableBanner({ network, queuedJobs }: { network: PrinterNetwork; queuedJobs: number }) {
+export function PrinterUnreachableBanner({ network, queuedJobs, recoveryMessage }: { network: PrinterNetwork; queuedJobs: number; recoveryMessage?: string }) {
   const wrongNetwork = network?.sameSubnet === false;
-  const hint = network?.hint ?? "The printer is not responding on the network. Check it is powered on with solid Wi-Fi, then verify its address in Settings.";
+  const hint = recoveryMessage || network?.hint || "The printer is not responding on the network. Check it is powered on with solid Wi-Fi, then verify its address in Settings.";
   return (
     <Card>
       <div role="alert" aria-live="assertive">
@@ -126,7 +126,7 @@ export function PrinterUnreachableBanner({ network, queuedJobs }: { network: Pri
               onClick={() => { window.location.hash = "settings"; }}
               style={{ color: vars.accent as string, fontWeight: 600 }}
             >
-              Check the printer address in Settings
+              Find and reconnect in Settings
             </a>
             .
           </span>

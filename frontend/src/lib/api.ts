@@ -1,7 +1,8 @@
+export type RecoveryStatus = { state: string; message: string; lastChecked: string | null; lastRecovered: string | null; previousAddress: string | null };
 export type ScannerCapabilities = { resolutions: number[]; modes: string[]; sources: string[]; formats: string[]; verified: boolean; combinations?: Array<{ dpi: number; mode: string }> };
 export type PrinterCapabilities = { inkLevels: boolean; pageCount: boolean; nozzleCheck: boolean; headCleaning: boolean };
 export type CapabilitiesResponse = { printing: { backend: string; name: string }; scanner: { selected: string | null; capabilities: ScannerCapabilities | null; backends: Array<{ id: string; name: string; capabilities: ScannerCapabilities; lastError: string | null }> }; printer: { backend: string; capabilities: PrinterCapabilities; maintenance: { state: string; action: string | null } } };
-export type DiagnosticsResponse = { version: string; architecture: string; printerAddress: string; printing: { backend: string; cups: string | null; escpr: string | null }; scanner: CapabilitiesResponse["scanner"]; printer: CapabilitiesResponse["printer"]; epsonScan2: { available: boolean; version: string | null; profilesValidated: boolean; lastError: string | null }; epsonUtility: { installed: boolean; version: string | null; available: boolean; reason: string } };
+export type DiagnosticsResponse = { build_number: number; recovery?: RecoveryStatus; version: string; architecture: string; printerAddress: string; printing: { backend: string; cups: string | null; escpr: string | null }; scanner: CapabilitiesResponse["scanner"]; printer: CapabilitiesResponse["printer"]; epsonScan2: { available: boolean; version: string | null; profilesValidated: boolean; lastError: string | null }; epsonUtility: { installed: boolean; version: string | null; available: boolean; reason: string } };
 export type ScanItem = {
   name: string;
   path?: string;
@@ -35,6 +36,8 @@ export type InkStatus = {
 };
 
 export type StatusResponse = {
+  build_number?: number;
+  recovery?: RecoveryStatus;
   printer_ip: string;
   client_setup?: { host: string; ipp_uri: string; http_uri: string; queue_path: string };
   printer_name: string;
@@ -337,4 +340,9 @@ export async function rediscoverScanner() {
 export async function runMaintenance(action: "nozzle-check" | "head-clean") {
  const csrf = await ensureCsrf();
  return readJson(await csrfAwareFetch(`/api/printer/maintenance/${action}`, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
+}
+
+export async function recoverPrinter(): Promise<RecoveryStatus> {
+ const csrf = await ensureCsrf();
+ return readJson(await csrfAwareFetch("/api/printer/recover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
 }

@@ -3,7 +3,7 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useState } from "react";
 import { Check, Copy, Loader2, Radar } from "lucide-react";
 import { useToast } from "./Toast";
-import { fetchDiagnostics, rediscoverScanner, postClientSettings, postSetup, isPlausiblePrinterIpv4, fetchDiscovered, type DiscoveredPrinter } from "../lib/api";
+import { type RecoveryStatus, recoverPrinter, fetchDiagnostics, rediscoverScanner, postClientSettings, postSetup, isPlausiblePrinterIpv4, fetchDiscovered, type DiscoveredPrinter } from "../lib/api";
 import { s as ui, Card, StatusDot } from "./ui";
 
 const s = stylex.create({
@@ -176,7 +176,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
   );
 }
 
-export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: string; onSaved: () => void }) {
+export function PrinterAddressSettings({ printerIp, recovery, onSaved }: { printerIp: string; recovery?: RecoveryStatus; onSaved: () => void }) {
   const { push } = useToast();
   const [ip, setIp] = useState(printerIp);
   const [busy, setBusy] = useState(false);
@@ -191,11 +191,12 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
     try {
       // Explicit searches always force a fresh sweep (never a cached one).
       const res = await fetchDiscovered(true);
-      setResults(res.printers);
+      const printers = res.printers.filter(printer => printer.likelyEpson);
+      setResults(printers);
       setScannedAt(res.scanned_at);
       if (!res.ok) {
         push({ kind: "error", title: "Network search failed", desc: (res.message || "Try again.").slice(0, 200) });
-      } else if (!res.printers.length) {
+      } else if (!printers.length) {
         push({ kind: "info", title: "No printers found", desc: "Check the printer is powered on with solid Wi-Fi on this network, then try again." });
       }
     } catch (err: any) {
@@ -205,9 +206,7 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
     }
   };
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const v = ip.trim();
+  const saveAddress = async (v: string) => {
     if (!v) return;
     if (!isPlausiblePrinterIpv4(v)) {
       push({ kind: "error", title: "That doesn't look like a printer address", desc: "Use the printer's normal IPv4 address, e.g. 192.168.1.50." });
@@ -230,9 +229,12 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
   return (
     <Card>
       <div {...stylex.props(ui.sectionHead)}>
-        <h2 {...stylex.props(ui.sectionTitle)}>Printer address</h2>
+        <h2 {...stylex.props(ui.sectionTitle)}>Find your printer</h2>
       </div>
-      <form {...stylex.props(s.stack)} onSubmit={submit}>
+      <p {...stylex.props(s.p)} role="status">{recovery?.message || "The hub finds Epson printers automatically and follows address changes once your printer is remembered."}</p>
+      <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={busy || scanning} onClick={async () => { setScanning(true); try { const result = await recoverPrinter(); push({kind: "info", title: result.message}); onSaved(); } catch { push({kind: "error", title: "Could not reconnect yet"}); } finally { setScanning(false); } }}>Find and reconnect automatically</button>
+      <details style={{ marginTop: 14 }}><summary>Advanced: enter an address manually</summary>
+      <form {...stylex.props(s.stack)} onSubmit={e => { e.preventDefault(); void saveAddress(ip.trim()); }}>
         <label {...stylex.props(ui.fieldLabel)}>
           <span>Printer IP address</span>
           <input {...stylex.props(ui.input, ui.mono)} disabled={busy} value={ip} onChange={(e) => setIp(e.target.value)} placeholder="192.168.1.50" inputMode="decimal" required />
@@ -246,6 +248,8 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
           </button>
         </div>
       </form>
+      </details>
+      <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={{ marginTop: 12 }}>{scanning ? "Searching…" : "Choose a printer on the network"}</button>
       {scanning ? (
         <p {...stylex.props(s.p)}>Scanning the local network for printers — this can take up to ~25 seconds.</p>
       ) : null}
@@ -260,18 +264,18 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
                 <div key={r.ip} {...stylex.props(ui.statusRow)}>
                   <StatusDot tone={r.likelyEpson ? "good" : "idle"} />
                   <span style={{ flex: 1, minWidth: 0 }}>
-                    <span {...stylex.props(ui.mono)}>{r.ip}</span>
-                    <span {...stylex.props(s.toggleSub)}>{r.model ? `${r.model} · ` : ""}{r.detail}</span>
+                    <span>{r.model || "Epson printer"}</span>
+                    <span {...stylex.props(s.toggleSub)}>{r.ip} · {r.detail}</span>
                   </span>
-                  <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={() => setIp(r.ip)}>
-                    Use this address
+                  <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={busy} onClick={() => { setIp(r.ip); void saveAddress(r.ip); }}>
+                    Connect this printer
                   </button>
                 </div>
               ))}
             </div>
           ) : (
             <p {...stylex.props(s.p)}>
-              Nothing with printer ports answered{scannedAt ? ` (searched ${new Date(scannedAt).toLocaleTimeString()})` : ""}.
+              No Epson printer was identified{scannedAt ? ` (searched ${new Date(scannedAt).toLocaleTimeString()})` : ""}.
               Make sure the printer is powered on with solid Wi-Fi on the same network as this hub.
             </p>
           )}
@@ -300,7 +304,7 @@ export function BackendDiagnostics({ onChanged }: { onChanged: () => void }) {
     {error ? <p role="alert">{error}</p> : null}
     {data ? <>
       <dl>
-        <dt>Application</dt><dd>{data.version} · {data.architecture}</dd>
+        <dt>Application</dt><dd>{data.version} · Build {data.build_number} · {data.architecture}</dd>
         <dt>Printing</dt><dd>CUPS {data.printing.cups || "version unavailable"} · ESC/P-R {data.printing.escpr || "version unavailable"}</dd>
         <dt>Scanning</dt><dd>{data.scanner.backends.find(b => b.id === data.scanner.selected)?.name || "No backend detected"}</dd>
         <dt>Available scanner backends</dt><dd>{data.scanner.backends.map(b => b.name).join(", ") || "None detected"}</dd>

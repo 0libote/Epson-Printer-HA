@@ -4,10 +4,17 @@
 // Pure helpers (parseEpsonTitle, rankCandidates) are unit-tested; the live
 // sweep has a test hook (_setScanImplForTest) so API tests never touch LAN.
 
-import { localIPv4s, tcpOpen } from "./core.ts";
+import { localIPv4s, tcpOpen } from "./system/network.ts";
+import { runCommand } from "./system/commands.ts";
+import { validatePrinterAddress } from "./system/validation.ts";
+import { readFileSync } from "node:fs";
 
 export interface DiscoveredPrinter {
   ip: string;
+  uuid?: string;
+  mac?: string;
+  hostname?: string;
+  source?: "mdns" | "network";
   model: string | null;
   ports: number[];
   likelyEpson: boolean;
@@ -28,7 +35,7 @@ const FINGERPRINT_TIMEOUT_MS = 3000;
 // Overall ceiling so one /api/discover call can't stall past client timeouts.
 const DISCOVER_OVERALL_TIMEOUT_MS = 25_000;
 const DISCOVER_CACHE_TTL_MS = 120_000;
-const DISCOVER_CONCURRENCY = 256;
+const DISCOVER_CONCURRENCY = 64;
 const FINGERPRINT_CONCURRENCY = 24;
 
 /** Extract a display model from an Epson (or generic) status page. */
@@ -71,11 +78,15 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<{ text:
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: "text/html" } });
+      const res = await fetch(url, { redirect: "error", signal: ctrl.signal, headers: { Accept: "text/html" } });
       if (!res.ok) return null;
       const ct = res.headers.get("content-type") || "";
       if (ct && !ct.includes("html") && !ct.includes("text")) return null;
-      const text = await res.text();
+      let text = "";
+      if (!res.body) return null;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder(); let bytes = 0;
+      try { while (true) { const chunk = await reader.read(); if (chunk.done) break; bytes += chunk.value.length; if (bytes > 256 * 1024) return null; text += decoder.decode(chunk.value, { stream: true }); } } finally { await reader.cancel().catch(() => {}); }
       return { text, server: res.headers.get("server") || "" };
     } finally {
       clearTimeout(timer);
@@ -85,7 +96,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<{ text:
   }
 }
 
-async function fingerprint(ip: string, ports: number[]): Promise<DiscoveredPrinter> {
+export async function fingerprint(ip: string, ports: number[]): Promise<DiscoveredPrinter> {
   let model: string | null = null;
   let likelyEpson = false;
   let detail = `Open ports: ${ports.join(", ")}`;
@@ -125,7 +136,7 @@ async function fingerprint(ip: string, ports: number[]): Promise<DiscoveredPrint
   if (!likelyEpson && (ports.includes(631) || ports.includes(9100))) {
     detail += " — IPP/raw printing port open, model unknown";
   }
-  return { ip, model, ports, likelyEpson, detail };
+  return { ip, model, ports, likelyEpson, detail, mac: arpIdentity(ip), source: "network" };
 }
 
 async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
@@ -152,14 +163,16 @@ export function usableSubnets(nets: string[]): string[] {
 
 /** Sweep every /24 of the hub's LAN addresses for printer ports. */
 export async function scanSubnets(subnets: string[]): Promise<DiscoveredPrinter[]> {
+  const deadline = Date.now() + 18_000;
   const ips: string[] = [];
+  const self = new Set(localIPv4s());
   for (const net of subnets) {
-    for (let host = 1; host <= 254; host++) ips.push(`${net}.${host}`);
+    for (let host = 1; host <= 254; host++) { const ip = `${net}.${host}`; if (!self.has(ip)) ips.push(ip); }
   }
   const probed = await mapPool(ips, DISCOVER_CONCURRENCY, async (ip) => ({ ip, ports: await probeHost(ip) }));
   const responders = probed.filter((p) => p.ports.length > 0);
-  const fingerprinted = await mapPool(responders, FINGERPRINT_CONCURRENCY, (r) => fingerprint(r.ip, r.ports));
-  return rankCandidates(fingerprinted);
+  const fingerprinted = await mapPool(responders, FINGERPRINT_CONCURRENCY, (r) => Date.now() < deadline ? fingerprint(r.ip, r.ports) : Promise.resolve(null));
+  return rankCandidates(fingerprinted.filter((p): p is DiscoveredPrinter => !!p));
 }
 
 // ── cached orchestrator (mirrors ink.ts pattern) ────────────────────
@@ -182,17 +195,19 @@ function unknownResult(subnets: string[], message: string): DiscoverResult {
   return { ok: false, printers: [], subnets, scanned_at: new Date().toISOString(), message };
 }
 
-export async function discoverPrinters(opts: { refresh?: boolean } = {}): Promise<DiscoverResult> {
-  if (opts.refresh) clearDiscoverCache();
+export async function discoverPrinters(opts: { refresh?: boolean; includeSweep?: boolean } = {}): Promise<DiscoverResult> {
+  if (opts.refresh) _cache = null; // Keep an ongoing search shared, even on explicit refresh.
   const now = Date.now();
-  if (_cache && _cache.exp > now) return _cache.value;
+  if (!opts.includeSweep && _cache && _cache.exp > now) return _cache.value;
   if (_inflight) return _inflight;
   const p = (async (): Promise<DiscoverResult> => {
     const nets = usableSubnets([...new Set(localIPv4s().map((ip) => ip.split(".").slice(0, 3).join(".")))]);
     if (!nets.length) return unknownResult([], "No hub network address found.");
     // Test hook replaces only the sweep so cache/in-flight behaviour stays live.
     const sweep = _scanImpl ?? (async () => {
-      const printers = await scanSubnets(nets);
+      const advertised = await discoverAdvertisedPrinters();
+      const swept = opts.includeSweep || !advertised.some(p => p.likelyEpson) ? await scanSubnets(nets.slice(0, 4)) : [];
+      const printers = mergeCandidates([...advertised, ...swept]);
       return { ok: true, printers, subnets: nets, scanned_at: new Date().toISOString() };
     });
     const chain = sweep();
@@ -215,4 +230,63 @@ export async function discoverPrinters(opts: { refresh?: boolean } = {}): Promis
   });
   _inflight = p;
   return p;
+}
+
+/** Avahi's parsable fields escape punctuation as decimal \DDD sequences. */
+export function unescapeAvahi(value: string): string {
+ return value.replace(/\\(\d{3})/g, (_, digits) => String.fromCharCode(Number(digits)));
+}
+export function parseMdnsPrinters(output: string): DiscoveredPrinter[] {
+ const found: DiscoveredPrinter[] = [];
+ for (const line of output.split("\n")) {
+  const fields = line.split(";");
+  if (fields[0] !== "=" || fields[2] !== "IPv4" || fields.length < 10) continue;
+  const ip = fields[7]; try { validatePrinterAddress(ip); } catch { continue; }
+  const txt: Record<string, string> = {};
+  for (const match of fields.slice(9).join(";").matchAll(/"((?:\\.|[^"\\])*)"/g)) {
+   const value = unescapeAvahi(match[1]); const at = value.indexOf("=");
+   if (at > 0) txt[value.slice(0, at).toLowerCase()] = value.slice(at + 1).slice(0, 200);
+  }
+  const name = unescapeAvahi(fields[3]), hostname = unescapeAvahi(fields[6]);
+  const model = txt.ty || txt.product?.replace(/^\(|\)$/g, "") || name;
+  const uuid = (txt.uuid || "").replace(/^urn:uuid:/i, "").toLowerCase();
+  const port = Number(fields[8]); if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+  found.push({ ip, model, ports: [port], likelyEpson: /epson/i.test(`${name} ${model} ${txt.usb_mfg || ""}`),
+   hostname, uuid: /^[a-z0-9-]{8,80}$/.test(uuid) ? uuid : undefined, mac: arpIdentity(ip),
+   source: "mdns", detail: "Advertised printer on your network" });
+ }
+ return mergeCandidates(found);
+}
+export function arpIdentity(ip: string, table?: string): string | undefined {
+ try {
+  for (const line of (table ?? readFileSync("/proc/net/arp", "utf8")).split("\n")) {
+   const fields = line.trim().split(/\s+/); const mac = fields[3]?.toLowerCase();
+   if (fields[0] === ip && (Number(fields[2]) & 2) && mac && /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac) && mac !== "00:00:00:00:00:00") return mac;
+  }
+ } catch { /* Different network or no ARP table; UUID remains preferred. */ }
+ return undefined;
+}
+export function mergeCandidates(found: DiscoveredPrinter[]): DiscoveredPrinter[] {
+ const byIp = new Map<string, DiscoveredPrinter>();
+ for (const p of found) {
+  const previous = byIp.get(p.ip);
+  byIp.set(p.ip, previous ? { ...p, ...previous, uuid: previous.uuid || p.uuid, mac: previous.mac || p.mac,
+   likelyEpson: previous.likelyEpson || p.likelyEpson, ports: [...new Set([...previous.ports, ...p.ports])], model: previous.model || p.model } : p);
+ }
+ return rankCandidates([...byIp.values()]);
+}
+export async function discoverAdvertisedPrinters(): Promise<DiscoveredPrinter[]> {
+ const results = await Promise.all(["_ipp._tcp", "_ipps._tcp", "_scanner._tcp", "_uscan._tcp"].map(type =>
+  runCommand(["avahi-browse", "--resolve", "--parsable", "--terminate", "--ignore-local", type], 6000)));
+ return mergeCandidates(results.flatMap(result => parseMdnsPrinters(result.stdout)));
+}
+export async function identifyPrinter(ip: string): Promise<DiscoveredPrinter | null> {
+ validatePrinterAddress(ip);
+ const advertised = (await discoverAdvertisedPrinters()).find(p => p.ip === ip);
+ const device = await fingerprint(ip, await probeHost(ip));
+ return mergeCandidates([...(advertised ? [advertised] : []), device])[0] ?? null;
+}
+
+export function cachedDiscoveredPrinter(ip: string): DiscoveredPrinter | undefined {
+ return _cache && _cache.exp > Date.now() ? _cache.value.printers.find(p => p.ip === ip) : undefined;
 }

@@ -1,3 +1,4 @@
+import { buildInfo } from "../system/build-info.ts";
 import type { Hono } from "hono";
 import { cachedPrinterReachable, cachedCupsPrinterStatus, scannerStatus, cachedListJobs, localIPv4s, printerNetworkHint, runCommand } from "../core.ts";
 import { listPrintHistory } from "../history.ts";
@@ -9,6 +10,7 @@ export function registerStatusApi(app: Hono, deps: {
  clientSetup: (name: string, host: string) => any; networkSharingEnabledSync: () => boolean;
  recentScans: (limit: number) => Array<{ name: string; path: string }>;
  printerDeviceService: ReturnType<typeof createPrinterDeviceService>;
+ recovery?: () => unknown;
  limits: () => { upload: number; scans: number };
 }) {
  const { requireAuth, currentPrinterIp, currentPrinterName, currentDisplayName, clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService, limits } = deps;
@@ -37,8 +39,10 @@ app.get("/api/status", async(c)=>{
         ])
       : [false, {ok:false, state:"setup_required"}, {ok:false, state:"setup_required"}, []];
     return {
+      build_number: buildInfo.number, build: buildInfo,
+      recovery: deps.recovery?.() ?? null,
       printer_ip:printerIp,
-      printer_ip_managed: false,
+      printer_ip_managed: true,
       client_setup: client,
       printer_name:printerName,
       display_name:currentDisplayName(),
@@ -118,7 +122,7 @@ app.get("/api/health", async(c)=>{
     };
   }
   const result:any=await _healthCache.p;
-  return c.json({ok:result.ok, service:"epson-printer-ha", cups:result.stdout||result.stderr}, result.ok?200:503);
+  return c.json({ok:result.ok, service:"epson-printer-ha", build_number: buildInfo.number, build: buildInfo, cups:result.stdout||result.stderr}, result.ok?200:503);
 });
 
 

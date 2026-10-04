@@ -1,3 +1,4 @@
+import { buildInfo } from "../system/build-info.ts";
 import type { Hono } from "hono";
 import { arch } from "node:os";
 import { runCommand } from "../system/commands.ts";
@@ -7,6 +8,7 @@ import type { createScannerManager } from "../scanning/manager.ts";
 import { version } from "../../package.json";
 
 export function registerDeviceApi(app: Hono, deps: {
+ recovery?: () => unknown;
  auth: (c: any) => Response | null;
  ip: () => string; queue: () => string;
  scanner: ReturnType<typeof createScannerManager>;
@@ -66,7 +68,7 @@ export function registerDeviceApi(app: Hono, deps: {
    deps.scanner.capabilities(deps.ip()), deps.printer.capabilities(deps.ip()), getVersions(),
    epsonUtilityIntegration.installation(), deps.scanner.epson.health().catch(() => null),
   ]);
-  return c.json({ version, architecture: arch(), printerAddress: deps.ip(), printing: { backend: "cups", ...installedVersions },
+  return c.json({ version, build_number: buildInfo.number, build: buildInfo, recovery: deps.recovery?.() ?? null, architecture: arch(), printerAddress: deps.ip(), printing: { backend: "cups", ...installedVersions },
    scanner, epsonScan2: { available: !!epson, version: epson?.version ?? null, profilesValidated: !!epson?.capabilities.verified && epson.printerAddress === deps.ip(),
     lastError: epson?.lastError ?? deps.scanner.epson.lastError }, printer, epsonUtility: utility });
  });

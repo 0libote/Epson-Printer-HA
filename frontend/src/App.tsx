@@ -7,7 +7,6 @@ import { useStatus, useHistory, useScans } from "./hooks/useStatus";
 import { useToast } from "./components/Toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "./components/Header";
-import { Setup } from "./components/Setup";
 import { PrintCard } from "./components/PrintCard";
 import { ScanCard } from "./components/ScanCard";
 import { StatusStrip, Queue, PrinterUnreachableBanner } from "./components/Overview";
@@ -204,10 +203,10 @@ export default function App() {
       <div {...stylex.props(s.page)}>
         <Header printerName={printerName} displayName={displayName} online={false} setupNeeded />
         <main {...stylex.props(s.main)}>
-          <Setup onDone={() => { refreshAll(qc); }} />
+          <PrinterAddressSettings printerIp="" recovery={data?.recovery} onSaved={() => refreshAll(qc)} />
           <footer {...stylex.props(s.footer)}>
             <span>Print Room · Epson XP-2200</span>
-            <span>Local network only</span>
+            <span>{data?.build_number ? `Build ${data.build_number} · ` : ""}Local network only</span>
           </footer>
         </main>
       </div>
@@ -252,7 +251,7 @@ export default function App() {
         <section hidden={tab !== "overview"} aria-label="Print and scan">
             {printerIp && !reachable ? (
               <div {...stylex.props(s.stack)}>
-                <PrinterUnreachableBanner network={data?.printer_network ?? null} queuedJobs={queue.length} />
+                <PrinterUnreachableBanner recoveryMessage={data?.recovery?.message} network={data?.printer_network ?? null} queuedJobs={queue.length} />
               </div>
             ) : null}
             <div {...stylex.props(s.actionGrid)}>
@@ -302,7 +301,7 @@ export default function App() {
               host={host}
               onSaved={() => refreshAll(qc)}
             />
-            <PrinterAddressSettings printerIp={printerIp} onSaved={() => refreshAll(qc)} />
+            <PrinterAddressSettings recovery={data?.recovery} printerIp={printerIp} onSaved={() => refreshAll(qc)} />
             <BackendDiagnostics onChanged={() => refreshAll(qc)} />
           </div>
         ) : null}
@@ -330,7 +329,7 @@ export default function App() {
 
         <footer {...stylex.props(s.footer)}>
           <span>Print Room · {displayName} · {printerIp}</span>
-          <span>Local network only</span>
+          <span>{data?.build_number ? `Build ${data.build_number} · ` : ""}Local network only</span>
         </footer>
       </main>
 

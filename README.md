@@ -96,6 +96,60 @@ The ZimaOS stack enables this automatically. Other Docker installs must set `EPS
 
 If Epson's server is temporarily unavailable, the sidecar retries at most six times with exponential backoff. Licence, CPU-architecture, checksum, package-name and archive-safety failures are treated as permanent: the container exits with an actionable message rather than executing unverified code or looping internally. Compose caps these failed restarts at five, so correct the configuration and recreate the service. The published compatibility image supports `linux/amd64` because Epson's bundle is x86-64 only.
 
+## Automatic discovery and address recovery
+
+The hub finds Epson printers on startup using resolved mDNS/DNS-SD adverts,
+with a bounded network search when adverts are unavailable. With one identified
+Epson on a fresh installation it configures the printer automatically. If several
+are found, choose **Connect this printer** in Settings; no IP copying is needed.
+Manual address entry is available under Advanced.
+
+The hub remembers a stable UUID or local-network MAC in `/data/settings.json`.
+Every minute it checks connectivity and searches for the same device after an
+outage. Background subnet searches are limited to once every five minutes;
+**Find and reconnect automatically** can request a fresh search immediately.
+After a match it updates the existing CUPS queue, saves the new address and
+invalidates scanner/status caches. Waiting print jobs are retained. The legacy
+scanner sidecar follows the saved address within its next ten-second check.
+
+An existing installation learns identity while its saved printer is reachable.
+If its address already changed before identity was learned, select the printer
+once in Settings. The hub refuses to guess between different or duplicate device
+identities. It cannot wake a printer disconnected from Wi-Fi; it keeps searching
+until the device returns. mDNS can be blocked between VLANs, and MAC learning
+works only on the hub's directly connected network. The fallback sweep covers
+up to four local `/24` networks. Direct Epson SF2 profiles remain address-bound
+and still require validation after an address change.
+
+### Builds and updating an installed appliance
+
+The footer, Settings diagnostics, `/api/status`, `/api/health` and
+`/api/diagnostics` show the build number. The recorded development build is 132.
+CI uses **131 + this workflow's run number**, increasing by one per new CI run;
+reruns keep the same identity. Both images share the number and commit revision.
+Published images also have a `build-N` tag. Failed/unpublished runs can leave
+gaps between installed builds. For a deliberate local release, run
+`python3 scripts/build-info.py --bump` once and commit both generated JSON files.
+Ordinary development rebuilds do not increment the release identity.
+
+A stack using GHCR `latest` runs published images, not your local checkout.
+After a release is published, pull **both** images and recreate the services
+using ZimaOS's update/recreate controls, or from the directory of your existing
+Compose file:
+
+```sh
+docker compose pull epson-hub epson-scan-bridge
+docker compose up -d --force-recreate epson-hub epson-scan-bridge
+```
+
+Keep the existing `/data`, CUPS spool and cache binds; do not remove volumes.
+The user's host-network/legacy-sidecar Compose requires no new environment
+variables or IPC volume for automatic recovery. Confirm the new build in the
+footer or health endpoint. A browser refresh alone does not update a container.
+For source deployments, the repository's `docker-compose.yml` builds locally;
+that is a separate deployment from a custom ZimaOS stack and may use different
+volume paths. Preserve your existing bind mounts when testing local builds.
+
 ## Backend capabilities and diagnostics
 
 Settings shows active scanner backends, reported scan options and runtime versions.

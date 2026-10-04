@@ -1,3 +1,5 @@
+import { createDeviceRecovery, identityOf } from "./device/recovery.ts";
+import { arpIdentity, cachedDiscoveredPrinter, discoverAdvertisedPrinters, discoverPrinters, identifyPrinter } from "./discover.ts";
 import { registerStatusApi } from "./api/status.ts";
 import { registerDeviceApi } from "./api/device.ts";
 import { createPrinterDeviceService } from "./printer/manager.ts";
@@ -207,6 +209,7 @@ function saveSettingsSync(data: Record<string, any>) {
 
 const { operationLocks, clearForTest: _clearOperationLockForTest, removeOperationLockFs, withOperationLock: acquireOperationLock } = createOperationLocks(() => APP_DIR);
 async function withOperationLock<T>(name: string, fn: () => Promise<T>) {
+ if ((name === "cups-config" && (operationLocks.has("scanner") || operationLocks.has("device"))) || ((name === "scanner" || name === "device") && operationLocks.has("cups-config"))) return { acquired: false } as { acquired: boolean; result?: T };
  if (name === "scanner" && operationLocks.has("device")) return { acquired: false } as { acquired: boolean; result?: T };
  return acquireOperationLock(name, fn);
 }
@@ -314,7 +317,7 @@ function networkSharingEnabledSync(): boolean {
   const s = String(v ?? (DEFAULT_SHARE_PRINTER ? "true" : "false")).trim().toLowerCase();
   return ["1", "true", "yes", "on"].includes(s);
 }
-function savePrinterIp(ip:string){ const data=savedSettingsSync(); data.printer_ip=ip; saveSettingsSync(data); }
+function savePrinterIp(ip:string){ const data={...savedSettingsSync()}; if(data.printer_ip !== ip) delete data.printer_identity; data.printer_ip=ip; saveSettingsSync(data); }
 async function configureCups(printerIp:string, opts:{printerName?:string|null;displayName?:string|null;sharePrinter?:boolean|null;oldPrinterName?:string}={}):Promise<[boolean,string]> {
  return cupsBackend.configureQueue(printerIp, { printerName: opts.printerName || currentPrinterName(), displayName: opts.displayName || currentDisplayName(),
  sharePrinter: opts.sharePrinter ?? networkSharingEnabledSync(), oldPrinterName: opts.oldPrinterName });
@@ -732,7 +735,7 @@ app.post("/setup", async(c)=>{
   let setupOk=false; let setupMsg="";
   const lock=await withOperationLock("cups-config", async()=>{
     const [ok,log]=await configureCups(printerIp);
-    if(ok){ savePrinterIp(printerIp); clearStatusCaches(); setupOk=true; setupMsg=`Printer saved at ${printerIp}. CUPS is configured.`; if(!wantsJson(c)) setFlash(c,"success",setupMsg); }
+    if(ok){ savePrinterIp(printerIp); const selected = cachedDiscoveredPrinter(printerIp); if(selected) { const data = savedSettingsSync(); data.printer_identity = identityOf({ ...selected, mac: selected.mac || arpIdentity(printerIp) }); saveSettingsSync(data); } clearStatusCaches(); setupOk=true; setupMsg=`Printer saved at ${printerIp}. CUPS is configured.`; if(!wantsJson(c)) setFlash(c,"success",setupMsg); }
     else { setupOk=false; setupMsg=`CUPS setup failed; the previous printer setting was kept: ${(log||"unknown error").slice(-800)}`; if(!wantsJson(c)) setFlash(c,"error",setupMsg); }
   });
   if(!lock.acquired){
@@ -1251,11 +1254,44 @@ const printerDeviceService = createPrinterDeviceService({
  scannerBusy: () => !!findActiveScanJob() || operationLocks.has("scanner"),
  lock: fn => withOperationLock("device", fn),
 });
+export const deviceRecovery = createDeviceRecovery({
+ read: () => ({ ip: currentPrinterIp(), identity: savedSettingsSync().printer_identity }),
+ reachable: ip => cachedPrinterReachable(ip), identify: identifyPrinter,
+ discover: async sweep => sweep ? (await discoverPrinters({ refresh: true, includeSweep: true })).printers : discoverAdvertisedPrinters(),
+ busy: () => !!findActiveScanJob() || ["scanner", "device", "cups-config"].some(name => operationLocks.has(name)),
+ remember: async (expectedIp, identity) => {
+  const lock = await withOperationLock("cups-config", async () => {
+   if(currentPrinterIp() !== expectedIp) return false;
+   const data = savedSettingsSync(); data.printer_identity = identity; saveSettingsSync(data); return true;
+  });
+  return !!lock.acquired && !!lock.result;
+ },
+ relocate: async (expected, printer) => {
+  const result = await withOperationLock("cups-config", async () => {
+   if(currentPrinterIp() !== expected.ip || JSON.stringify(savedSettingsSync().printer_identity) !== JSON.stringify(expected.identity)) return "stale" as const;
+   const [ok] = await configureCups(printer.ip);
+   if(!ok) return "failed" as const;
+   const data = { ...savedSettingsSync(), printer_ip: printer.ip, printer_identity: identityOf({ ...printer, mac: printer.mac || arpIdentity(printer.ip) }) };
+   try { saveSettingsSync(data); } catch {
+    if(expected.ip) await configureCups(expected.ip);
+    return "failed" as const;
+   }
+   clearStatusCaches(); return "ok" as const;
+  });
+  return result.acquired ? result.result! : "busy";
+ },
+});
+app.post("/api/printer/recover", async c => {
+ const auth = requireAuth(c); if(auth) return auth;
+ const body = await readMutationBody(c); if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token", 400);
+ return c.json(await deviceRecovery.tick(true));
+});
+
 registerDeviceApi(app, { auth: requireAuth, ip: currentPrinterIp, queue: currentPrinterName,
- scanner: scannerManager, printer: printerDeviceService, csrf: isCsrfValid, readBody: readMutationBody });
+ scanner: scannerManager, printer: printerDeviceService, csrf: isCsrfValid, readBody: readMutationBody, recovery: deviceRecovery.status });
 
 registerStatusApi(app, { requireAuth, currentPrinterIp, currentPrinterName, currentDisplayName,
- clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService,
+ clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService, recovery: deviceRecovery.status,
  limits: () => ({ upload: MAX_UPLOAD_MB, scans: MAX_SCAN_FILES }) });
 
 // Vite SPA assets (public/assets/*) – StyleX + Vite emit here
