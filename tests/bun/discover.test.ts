@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import {
   parseEpsonTitle,
   rankCandidates,
+  usableSubnets,
   _setScanImplForTest,
   _clearDiscoverCacheForTest,
   type DiscoveredPrinter,
@@ -35,6 +36,12 @@ describe("discover - ranking", () => {
   test("epson-likely first, then numeric ip order", () => {
     const ranked = rankCandidates([mk("192.168.1.50", false), mk("192.168.1.9", true), mk("192.168.1.100", false)]);
     expect(ranked.map((r) => r.ip)).toEqual(["192.168.1.9", "192.168.1.50", "192.168.1.100"]);
+  });
+});
+
+describe("discover - subnets", () => {
+  test("link-local subnets are skipped", () => {
+    expect(usableSubnets(["192.168.1", "169.254.27", "10.0.0"])).toEqual(["192.168.1", "10.0.0"]);
   });
 });
 

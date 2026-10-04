@@ -1625,7 +1625,7 @@ app.get("/api/discover", async(c)=>{
   if(auth) return auth;
   try{
     const { discoverPrinters } = await import("./discover.ts");
-    return c.json(await discoverPrinters());
+    return c.json(await discoverPrinters({ refresh: c.req.query("refresh") === "1" }));
   }catch(e:any){
     return c.json({ ok:false, printers:[], subnets:[], scanned_at:new Date().toISOString(), message:String(e?.message||e) }, 502);
   }

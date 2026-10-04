@@ -166,8 +166,9 @@ export type DiscoverResponse = {
   message?: string;
 };
 
-export async function fetchDiscovered(): Promise<DiscoverResponse> {
-  return readJson<DiscoverResponse>(await fetch("/api/discover", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+export async function fetchDiscovered(refresh = false): Promise<DiscoverResponse> {
+  const url = refresh ? "/api/discover?refresh=1" : "/api/discover";
+  return readJson<DiscoverResponse>(await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
 async function parseFormResponse(res: Response): Promise<{ ok: boolean; message?: string; redirect?: string }> {

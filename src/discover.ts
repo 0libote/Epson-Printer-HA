@@ -23,12 +23,12 @@ export interface DiscoverResult {
 }
 
 const PROBE_PORTS = [631, 9100, 515, 80] as const;
-const PROBE_TIMEOUT_MS = 350;
-const FINGERPRINT_TIMEOUT_MS = 3500;
+const PROBE_TIMEOUT_MS = 250;
+const FINGERPRINT_TIMEOUT_MS = 3000;
 // Overall ceiling so one /api/discover call can't stall past client timeouts.
 const DISCOVER_OVERALL_TIMEOUT_MS = 25_000;
 const DISCOVER_CACHE_TTL_MS = 120_000;
-const DISCOVER_CONCURRENCY = 128;
+const DISCOVER_CONCURRENCY = 256;
 const FINGERPRINT_CONCURRENCY = 24;
 
 /** Extract a display model from an Epson (or generic) status page. */
@@ -141,6 +141,15 @@ async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => P
   return results;
 }
 
+/** Link-local is never routed to a printer; skip it so the sweep budget is spent on real LANs. */
+export function usableSubnets(nets: string[]): string[] {
+  return nets.filter((n) => {
+    const first = Number(n.split(".")[0]);
+    if (first === 169) return false; // 169.254.0.0/16 link-local
+    return true;
+  });
+}
+
 /** Sweep every /24 of the hub's LAN addresses for printer ports. */
 export async function scanSubnets(subnets: string[]): Promise<DiscoveredPrinter[]> {
   const ips: string[] = [];
@@ -173,12 +182,13 @@ function unknownResult(subnets: string[], message: string): DiscoverResult {
   return { ok: false, printers: [], subnets, scanned_at: new Date().toISOString(), message };
 }
 
-export async function discoverPrinters(): Promise<DiscoverResult> {
+export async function discoverPrinters(opts: { refresh?: boolean } = {}): Promise<DiscoverResult> {
+  if (opts.refresh) clearDiscoverCache();
   const now = Date.now();
   if (_cache && _cache.exp > now) return _cache.value;
   if (_inflight) return _inflight;
   const p = (async (): Promise<DiscoverResult> => {
-    const nets = [...new Set(localIPv4s().map((ip) => ip.split(".").slice(0, 3).join(".")))];
+    const nets = usableSubnets([...new Set(localIPv4s().map((ip) => ip.split(".").slice(0, 3).join(".")))]);
     if (!nets.length) return unknownResult([], "No hub network address found.");
     // Test hook replaces only the sweep so cache/in-flight behaviour stays live.
     const sweep = _scanImpl ?? (async () => {

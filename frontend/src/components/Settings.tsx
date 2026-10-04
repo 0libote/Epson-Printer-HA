@@ -189,7 +189,8 @@ export function PrinterAddressSettings({ printerIp, onSaved }: { printerIp: stri
   const search = async () => {
     setScanning(true);
     try {
-      const res = await fetchDiscovered();
+      // Explicit searches always force a fresh sweep (never a cached one).
+      const res = await fetchDiscovered(true);
       setResults(res.printers);
       setScannedAt(res.scanned_at);
       if (!res.ok) {
