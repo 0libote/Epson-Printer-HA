@@ -147,6 +147,25 @@ describe("core", () => {
     expect(h.hint).toContain("responding");
   });
 
+  test("concurrent device probes share one scanimage run", async () => {
+    core.clearDeviceCache();
+    let calls = 0;
+    const mockRun = spyOn(core, "runCommand").mockImplementation(async () => {
+      calls++;
+      await Bun.sleep(50);
+      return { ok: true, stdout: "device `net:127.0.0.1:epsonscan2:XP-2200' is a Epson XP-2200", stderr: "", returncode: 0 };
+    });
+    const [a, b] = await Promise.all([
+      core.detectSaneDeviceCached("192.0.2.10", true),
+      core.detectSaneDeviceCached("192.0.2.10", true),
+    ]);
+    expect(calls).toBe(1);
+    expect(a[0]).toContain("epsonscan2");
+    expect(b).toEqual(a);
+    mockRun.mockRestore();
+    core.clearDeviceCache();
+  });
+
   test("local IPv4 helper returns string addresses", () => {
     const ips = core.localIPv4s();
     expect(Array.isArray(ips)).toBe(true);

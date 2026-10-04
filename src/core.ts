@@ -318,7 +318,9 @@ export async function cancelJob(jobId: string): Promise<CommandResult> {
 }
 
 export async function detectSaneDevice(printerIp = ""): Promise<[string | null, string | null]> {
-  const result = await runCommand(["scanimage", "-L"], 12_000);
+  // A dozing printer can take ~16s to answer SANE probes; cutting off at 12s
+  // made detection (and therefore every scan) impossible while it naps.
+  const result = await runCommand(["scanimage", "-L"], 30_000);
   if (!result.ok) return [null, null];
 
   type Candidate = [number, string, string];
@@ -354,15 +356,11 @@ const deviceCache = new Map<string, { device: string | null; backend: string | n
 const DEVICE_CACHE_TTL_MS = 45_000;
 
 const deviceInflight = new Map<string, Promise<[string | null, string | null]>>();
-export async function detectSaneDeviceCached(printerIp = "", forceRefresh = false): Promise<[string | null, string | null]> {
-  const key = printerIp || "__any__";
-  const now = Date.now();
-  const cached = deviceCache.get(key);
-  if (!forceRefresh && cached && now - cached.ts < DEVICE_CACHE_TTL_MS) {
-    return [cached.device, cached.backend];
-  }
+function refreshDeviceCache(key: string, printerIp: string): Promise<[string | null, string | null]> {
+  // In-flight probes are shared, never duplicated: a forced refresh joins the
+  // running probe instead of clobbering another caller's slot.
   const ongoing = deviceInflight.get(key);
-  if (ongoing && !forceRefresh) return ongoing;
+  if (ongoing) return ongoing;
   const p = detectSaneDevice(printerIp).then((res) => {
     if (deviceCache.size > 32) {
       const oldest = deviceCache.keys().next().value;
@@ -373,14 +371,31 @@ export async function detectSaneDeviceCached(printerIp = "", forceRefresh = fals
     if (res[0] && !deviceCache.has("__any__")) {
       deviceCache.set("__any__", { device: res[0], backend: res[1], ts: Date.now() });
     }
-    deviceInflight.delete(key);
+    if (deviceInflight.get(key) === p) deviceInflight.delete(key);
     return res;
   }, (e) => {
-    deviceInflight.delete(key);
+    if (deviceInflight.get(key) === p) deviceInflight.delete(key);
     throw e;
   });
   deviceInflight.set(key, p);
   return p;
+}
+export async function detectSaneDeviceCached(printerIp = "", forceRefresh = false): Promise<[string | null, string | null]> {
+  const key = printerIp || "__any__";
+  const now = Date.now();
+  const cached = deviceCache.get(key);
+  if (!forceRefresh && cached && now - cached.ts < DEVICE_CACHE_TTL_MS) {
+    return [cached.device, cached.backend];
+  }
+  // Stale-while-revalidate: a slow probe (sleeping printer answers in ~16s)
+  // must not stall /api/status polls. Serve the last-known answer immediately
+  // and refresh in the background — except when the caller explicitly needs a
+  // fresh answer (scan jobs force-refresh and wait) or nothing is known yet.
+  if (!forceRefresh && cached) {
+    refreshDeviceCache(key, printerIp).catch(() => {});
+    return [cached.device, cached.backend];
+  }
+  return refreshDeviceCache(key, printerIp);
 }
 
 export function clearDeviceCache() {
