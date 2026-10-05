@@ -377,3 +377,38 @@ passes real CUPS/ESC/P-R print filtering to a TCP fixture, authenticated multipa
 submission, SANE test-device acquisition and image-to-PDF conversion; its cached
 status API responds in 41ms with an unavailable configured printer. Hardware
 integration and hosted CI remain the explicit acceptance gates above.
+
+## Follow-up: workspace UI redesign — Build 134
+
+Goal: substantially improve the visual design and everyday navigation without
+changing hardware adapters, API contracts, status delivery or operation locking.
+
+- [x] Replace tab bar with persistent desktop sidebar and floating mobile navigation.
+- [x] Introduce a forest/cream visual system, larger type, consistent card/field
+      spacing, separate print and scan colours, and matching light/dark themes.
+- [x] Redesign upload surface, add flatbed scanning guidance and a printer summary
+      illustration, and replace ink rows with four compact supplies tiles.
+- [x] Keep forms and scan cancellation mounted while navigating; retain capability
+      options, checking/offline states, discovery/recovery and lazy view fetching.
+- [x] Remove external font requests; use immediate local system font fallbacks.
+- [x] Check desktop/mobile, themes, view navigation and scan setting preservation.
+- [x] Run production build, typechecks, automated tests and container smoke checks.
+
+Files: frontend App, WorkspaceNavigation, Header, PrintCard, ScanCard, InkLevels,
+shared primitives/tokens/CSS, HTML theme/favicon and shared build metadata.
+Workspace CSS inherits theme variables from the application and responds at
+800px; bottom navigation reserves document space so it does not cover final
+controls. Scan and print forms still use the existing request/job logic. No
+runtime migration or Compose changes are needed. Build metadata advances once to
+134; this remains a local release until images are published and recreated.
+
+Validation: 152 Bun tests / 814 assertions pass; both typechecks and production
+build pass. A browser fixture with mocked device status checked 1440, 1024, 800,
+768, 390 and 320px widths without horizontal overflow; desktop actions are side
+by side, mobile navigation stays in the viewport, light/dark themes work, all
+four views open, skip-to-content focuses main, and scanner mode survives moving
+to Settings and back. The native T3 preview initially worked, then explicitly
+reported no automation host; final screenshots/checks used disposable headless
+Chrome. Both Build 134 images build; CUPS/ESC/P-R and SANE container smoke use the
+existing real-tool fixture. Physical printer validation and hosted CI are not
+claimed by this visual redesign.

@@ -124,7 +124,7 @@ and still require validation after an address change.
 ### Builds and updating an installed appliance
 
 The footer, Settings diagnostics, `/api/status`, `/api/health` and
-`/api/diagnostics` show the build number. The recorded development build is 133.
+`/api/diagnostics` show the build number. The recorded development build is 134.
 CI uses **131 + this workflow's run number**, increasing by one per new CI run;
 reruns keep the same identity. Both images share the number and commit revision.
 Published images also have a `build-N` tag. Failed/unpublished runs can leave
@@ -166,6 +166,10 @@ is safe. It contains local status/job metadata and has no credentials. Checks
 have separate timestamps and failure backoff; an offline printer retains its
 last-known ink readings. Active scans suppress background scanner discovery.
 Hardware operations are never automatically replayed.
+
+The dashboard uses a forest-green desktop sidebar and a floating mobile navigation
+bar, with distinct print/scan workflows, compact ink tiles and light/dark themes.
+Fonts use local system fallbacks; no Google Fonts requests are needed.
 
 History, saved scans and Advanced diagnostics load when opened. Idle browser
 polling is slower, while background updates and queued jobs get faster feedback.
