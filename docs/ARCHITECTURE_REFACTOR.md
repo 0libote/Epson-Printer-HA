@@ -302,3 +302,78 @@ selection is rendered. Hardware-facing commands were mocked in that fixture;
 it is not physical DHCP/scan validation. Temporary fixture services are removed.
 Hosted GitHub Actions and publication remain unrun; local image builds do not
 change the user's remote GHCR/ZimaOS installation.
+
+## Follow-up: fast status delivery and dashboard polish — 2026-10-05
+
+Observed bottlenecks: cold /api/status waits for SANE discovery (up to 30s), then
+awaits device status; the SPA renders a full-page skeleton until that fan-out
+finishes. Opening hidden tabs still mounts print/scan/ink/maintenance, while
+history and scan library poll before those tabs are used. Freshness currently
+means HTTP request completion, not the time hardware was actually checked.
+
+Plan: introduce one shared background status snapshot collector with independent
+component updates, in-flight deduplication, stale metadata and a bounded persistent
+last-known snapshot. The dashboard will read /api/status?cached=1 without waiting
+for hardware; legacy /api/status continues to await initial/fresh checks for HA
+compatibility. Start collection on server boot and invalidate on mutations/IP
+changes. Never replay print, scan or maintenance actions. Keep auth/CSRF and mark
+cold/stale/offline states honestly. Then polish dashboard hierarchy, mobile tabs,
+loading/error/recovery feedback, form accessibility and lazy section loading.
+Build advances once to 133 for this local release.
+
+Files: src/system/status-snapshot.ts, src/api/status.ts, core/app/server wiring,
+frontend App/hooks/api/shared components/styles and focused regression tests.
+Validation: stalled scanner cannot delay cached status or printer/queue updates;
+independent failures, concurrent clients, refresh dedup, invalidation race, wrong
+IP/restart cache, auth and legacy fields; browser cold/slow/offline reload, mobile
+layout and keyboard access; production build/typechecks and CUPS smoke.
+
+- [x] Independent background snapshot and safe persistence
+- [x] Fast dashboard route with truthful freshness
+- [x] Lazy frontend requests and responsive UX polish
+- [x] Performance, compatibility, browser and container checks
+
+Implementation: each status component has its own TTL, in-flight task and safe
+failure metadata. Failed probes retain known values and back off 30s. Changed
+configuration discards obsolete results without launching duplicate old probes.
+The generic TTL and supplies caches also reject obsolete task completions.
+Disk writes are debounced, atomic and private (0600); corrupt, oversized,
+wrong-device or expired snapshots are ignored. Background ink collection skips
+unreachable devices; scanner acquisition suppresses scanner discovery. Manual
+supplies refresh joins a running check and cannot be overwritten by an older
+sample. The server starts/stops one sampler; mutations invalidate it.
+
+The frontend uses the cached route with an 8s HTTP deadline, separate freshness
+labels and explicit checking states. History/library/preview bundles are lazy;
+history/library queries and advanced diagnostics only run when opened. Print and
+scan forms stay mounted when navigating so active scan cancellation survives.
+Ink no longer starts a second polling chain; manual refresh is retained. UI work
+includes view headings, mobile navigation, reduced-motion support, keyboard skip
+and focus styles, readable mobile form text and per-view loading/error recovery.
+The global progress animation no longer applies to static ink bars.
+
+Performance evidence: a browser fixture with a deliberately 30s scanner probe
+rendered usable print controls in 124–182ms; its initial cached status requests
+took 7–18ms (earlier collaborative-preview measurements: 10–45ms). These are local
+mock-hardware measurements, not a promise for a physical deployment. Browser
+checks show no initial history/library/ink/diagnostics calls, lazy history and
+diagnostics on demand, 320px/390px mobile without horizontal overflow, 16px mobile
+inputs, keyboard skip-to-content focus, and last-known supplies retained when the fixture printer goes offline.
+The T3 preview initially worked, then reported that the automation host was
+unavailable; the remaining checks used disposable headless Chrome.
+
+Migration: no Compose changes or new database required. Build 133 must still be
+published and both GHCR services pulled/recreated to affect the supplied ZimaOS
+installation. Backend architecture and direct CLI remain as documented in earlier
+phases: no physically validated SF2 profiles or safe headless printer utility
+maintenance are claimed. The legacy scanner bridge and standard status fallbacks
+remain available. Hosted CI/publication have not been run in this local session.
+
+Final validation: 152 Bun tests / 814 assertions pass, including mocked stalled
+hardware, active-scan probe suppression and offline ink-backend suppression.
+Backend and frontend typechecks, production frontend build and shell syntax pass.
+Both appliance images build with matching build-133 labels. Main image smoke
+passes real CUPS/ESC/P-R print filtering to a TCP fixture, authenticated multipart
+submission, SANE test-device acquisition and image-to-PDF conversion; its cached
+status API responds in 41ms with an unavailable configured printer. Hardware
+integration and hosted CI remain the explicit acceptance gates above.

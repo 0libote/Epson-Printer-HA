@@ -124,12 +124,12 @@ and still require validation after an address change.
 ### Builds and updating an installed appliance
 
 The footer, Settings diagnostics, `/api/status`, `/api/health` and
-`/api/diagnostics` show the build number. The recorded development build is 132.
+`/api/diagnostics` show the build number. The recorded development build is 133.
 CI uses **131 + this workflow's run number**, increasing by one per new CI run;
 reruns keep the same identity. Both images share the number and commit revision.
 Published images also have a `build-N` tag. Failed/unpublished runs can leave
 gaps between installed builds. For a deliberate local release, run
-`python3 scripts/build-info.py --bump` once and commit both generated JSON files.
+`python3 scripts/build-info.py --bump` once and commit both generated JSON files and the synchronized Docker build defaults.
 Ordinary development rebuilds do not increment the release identity.
 
 A stack using GHCR `latest` runs published images, not your local checkout.
@@ -149,6 +149,30 @@ footer or health endpoint. A browser refresh alone does not update a container.
 For source deployments, the repository's `docker-compose.yml` builds locally;
 that is a separate deployment from a custom ZimaOS stack and may use different
 volume paths. Preserve your existing bind mounts when testing local builds.
+
+### Fast dashboard status
+
+The Web UI reads `GET /api/status?cached=1` immediately from a shared background
+snapshot. Printer, scanner, queue and supplies update independently; a slow or
+sleeping scanner does not hold up the page. Collection starts at server boot and
+is shared across browser clients. The original `/api/status` still awaits its
+initial status checks for Home Assistant compatibility; `/api/ink` retains the
+explicit supplies check, including `?refresh=1`.
+
+A private `/data/status-cache.json` preserves last-known readings across restarts.
+It is advisory, limited to 256 KiB and 24 hours, validated against the configured
+address/queue, and always shown as stale until checked again. Deleting this file
+is safe. It contains local status/job metadata and has no credentials. Checks
+have separate timestamps and failure backoff; an offline printer retains its
+last-known ink readings. Active scans suppress background scanner discovery.
+Hardware operations are never automatically replayed.
+
+History, saved scans and Advanced diagnostics load when opened. Idle browser
+polling is slower, while background updates and queued jobs get faster feedback.
+Settings includes connection recovery and optional diagnostics; the dashboard
+shows checking/last-known states rather than treating every page refresh as a
+new hardware reading. `POST /api/status/refresh` queues a background refresh and
+requires the same authentication and CSRF token as other mutations.
 
 ## Backend capabilities and diagnostics
 
