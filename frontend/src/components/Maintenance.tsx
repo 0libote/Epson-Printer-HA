@@ -1,16 +1,13 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { fetchCapabilities, runMaintenance } from "../lib/api";
+import { type PrinterCapabilities, runMaintenance } from "../lib/api";
 import { Card } from "./ui";
-export function Maintenance({ onChanged }: { onChanged: () => void }) {
- const query = useQuery({ queryKey: ["capabilities"], queryFn: fetchCapabilities, staleTime: 60_000 });
+export function Maintenance({ capabilities: caps, onChanged }: { capabilities?: PrinterCapabilities; onChanged: () => void }) {
  const [running, setRunning] = useState(false);
  const [message, setMessage] = useState("");
- const caps = query.data?.printer.capabilities;
  if (!caps?.nozzleCheck && !caps?.headCleaning) return null;
  const run = async (action: "nozzle-check" | "head-clean") => {
   setRunning(true); setMessage("Maintenance running");
-  try { await runMaintenance(action); setMessage("Maintenance complete"); onChanged(); await query.refetch(); }
+  try { await runMaintenance(action); setMessage("Maintenance complete"); onChanged(); }
   catch { setMessage("Maintenance failed. Check the printer and try again."); }
   finally { setRunning(false); }
  };

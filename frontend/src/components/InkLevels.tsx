@@ -2,8 +2,6 @@ import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
 import { Droplet, RefreshCw } from "lucide-react";
 import { useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useInk } from "../hooks/useStatus";
 import { fetchInk, type InkStatus } from "../lib/api";
 import { useToast } from "./Toast";
 import { s as ui, Card, CardHeader, StatusDot } from "./ui";
@@ -37,20 +35,18 @@ function toneFor(state: string): "good" | "warn" | "bad" | "idle" {
   return "idle";
 }
 
-export function InkLevels({ initial }: { initial?: InkStatus | null }) {
-  const inkQ = useInk(true);
-  const qc = useQueryClient();
+export function InkLevels({ initial, stale = false }: { initial?: InkStatus | null; stale?: boolean }) {
+  const [manual, setManual] = useState<InkStatus | null>(null);
   const { push } = useToast();
   const [refreshing, setRefreshing] = useState(false);
 
-  // Prefer the live /api/ink poll; fall back to the snapshot piggy-backed on /api/status.
-  const ink: InkStatus | undefined = (inkQ.data as InkStatus | undefined) ?? initial ?? undefined;
+  const ink = manual && (!initial || Date.parse(manual.updated_at) > (Date.parse(initial.updated_at) || 0)) ? manual : initial;
 
   const refresh = async () => {
     setRefreshing(true);
     try {
       const fresh = await fetchInk(true);
-      qc.setQueryData(["ink"], fresh);
+      if (fresh.ok || !ink?.cartridges.some(c => c.level !== null)) setManual(fresh);
       if (!fresh.ok) push({ kind: "info", title: "Ink check finished", desc: fresh.message.slice(0, 160) });
     } catch (err: any) {
       push({ kind: "error", title: "Couldn't refresh ink levels", desc: String(err.message || err).slice(0, 200) });
@@ -62,7 +58,7 @@ export function InkLevels({ initial }: { initial?: InkStatus | null }) {
   const carts = ink?.cartridges ?? [];
   const subtitle = ink
     ? ink.ok
-      ? `via ${ink.source.toUpperCase()} · updated ${formatTime(ink.updated_at)}`
+      ? `${stale ? "Last known · " : ""}via ${ink.source.toUpperCase()} · updated ${formatTime(ink.updated_at)}`
       : ink.message.slice(0, 90)
     : "Checking printer supplies…";
 
@@ -80,7 +76,7 @@ export function InkLevels({ initial }: { initial?: InkStatus | null }) {
           </button>
         }
       />
-      {inkQ.isLoading && !ink ? (
+      {!ink?.updated_at ? (
         <div {...stylex.props(ui.statusRow)}><StatusDot tone="idle" /> Checking printer supplies…</div>
       ) : !carts.length ? (
         <p {...stylex.props(ui.help)}>No ink data yet. Make sure the printer is awake, then press Refresh.</p>
@@ -93,7 +89,7 @@ export function InkLevels({ initial }: { initial?: InkStatus | null }) {
                 <div {...stylex.props(s.name)}>{c.name}</div>
                 <div {...stylex.props(s.sub)}>{c.state === "unknown" ? "unknown" : c.state}</div>
               </div>
-              <div {...stylex.props(s.bar)} role="progressbar" aria-valuenow={c.level ?? 0} aria-valuemin={0} aria-valuemax={100} aria-label={`${c.name} ink`}>
+              <div {...stylex.props(s.bar)} role="progressbar" aria-valuenow={c.level ?? undefined} aria-valuetext={c.level == null ? "Unknown" : `${c.level}%`} aria-valuemin={0} aria-valuemax={100} aria-label={`${c.name} ink`}>
                 <span
                   {...stylex.props(s.fill)}
                   style={{

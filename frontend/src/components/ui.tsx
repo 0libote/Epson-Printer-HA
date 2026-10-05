@@ -263,9 +263,8 @@ export function Pill({ tone, children }: { tone?: "good" | "warn" | "bad"; child
 
 export function ProgressBar({ color }: { color?: string }) {
   return (
-    <div {...stylex.props(s.progressTrack)} role="progressbar" aria-label="Working">
+    <div data-operation-progress {...stylex.props(s.progressTrack)} role="progressbar" aria-label="Working">
       <span {...stylex.props(s.progressBar)} style={color ? { backgroundColor: color } : undefined} />
-      <style>{`@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(250%)}} [role="progressbar"] > span{animation:slide 1.2s ease-in-out infinite}`}</style>
     </div>
   );
 }

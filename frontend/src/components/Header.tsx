@@ -54,7 +54,7 @@ const s = stylex.create({
   },
 });
 
-export function Header({ printerName, displayName, online, setupNeeded }: { printerName: string; displayName: string; online: boolean; setupNeeded: boolean }) {
+export function Header({ printerName, displayName, online, setupNeeded, checking = false, stale = false }: { printerName: string; displayName: string; online: boolean; setupNeeded: boolean; checking?: boolean; stale?: boolean }) {
   const { theme, toggle } = useTheme();
   return (
     <header {...stylex.props(s.bar)}>
@@ -69,6 +69,10 @@ export function Header({ printerName, displayName, online, setupNeeded }: { prin
         <span {...stylex.props(s.spacer)} />
         {setupNeeded ? (
           <Pill tone="warn"><StatusDot tone="warn" /> Setup needed</Pill>
+        ) : checking ? (
+          <Pill><StatusDot tone="idle" /> Checking</Pill>
+        ) : stale ? (
+          <Pill><StatusDot tone="idle" /> Last known</Pill>
         ) : online ? (
           <Pill tone="good"><StatusDot tone="good" /> Online</Pill>
         ) : (

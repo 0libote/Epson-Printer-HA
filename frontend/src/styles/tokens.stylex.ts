@@ -16,7 +16,7 @@ export const vars = stylex.defineVars({
   // text
   text: "#17181a",
   textSecondary: "#55585e",
-  textTertiary: "#8a8e96",
+  textTertiary: "#666d78",
 
   // lines
   line: "#e2e2de",
@@ -63,7 +63,7 @@ export const lightTheme = stylex.createTheme(vars, {
   overlay: "rgba(20, 22, 26, 0.45)",
   text: "#17181a",
   textSecondary: "#55585e",
-  textTertiary: "#8a8e96",
+  textTertiary: "#666d78",
   line: "#e2e2de",
   lineStrong: "#cfcfc9",
   accent: "#3b5bdb",

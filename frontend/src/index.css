@@ -19,3 +19,30 @@
 
 /* Native dialogs provide focus containment and Escape handling. */
 dialog::backdrop { background: rgb(0 0 0 / 45%); }
+
+/* Shared interaction states remain legible in both themes. */
+button:not(:disabled), a, summary { -webkit-tap-highlight-color: transparent; }
+button { touch-action: manipulation; }
+button:disabled { cursor: not-allowed; }
+button:not(:disabled):hover { filter: brightness(0.96); }
+summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
+.skip-link { position: fixed; left: 16px; top: -60px; z-index: 100; padding: 12px 18px; background: #3b5bdb; color: white; border-radius: 8px; text-decoration: none; }
+.skip-link:focus { top: 12px; }
+.section-loading { padding: 24px 0; font-size: 14px; opacity: .7; }
+.loading-placeholder { animation: placeholder-pulse 1.4s ease-in-out infinite; }
+.spin { animation: gentle-spin 1s linear infinite; }
+[data-operation-progress] > span { animation: operation-slide 1.2s ease-in-out infinite; }
+@keyframes operation-slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@keyframes placeholder-pulse { 50% { opacity: .45; } }
+@keyframes gentle-spin { to { transform: rotate(360deg); } }
+.diagnostics-list { display: grid; grid-template-columns: minmax(120px, .6fr) 1fr; gap: 12px 24px; margin: 20px 0; font-size: 13px; line-height: 1.5; }
+.diagnostics-list dt { opacity: .7; }
+.diagnostics-list dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+ input, select, textarea { font-size: 16px !important; }
+ .diagnostics-list { grid-template-columns: 1fr; gap: 4px; }
+ .diagnostics-list dd { margin-bottom: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+ *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

@@ -36,6 +36,9 @@ export type InkStatus = {
 };
 
 export type StatusResponse = {
+  status_meta?: { cached: boolean; refreshing: boolean; parts: Record<string, { updated_at: string | null; refreshing: boolean; stale: boolean; error: string | null }> };
+  printer_capabilities?: PrinterCapabilities;
+  maintenance?: { state: string; action: string | null };
   build_number?: number;
   recovery?: RecoveryStatus;
   printer_ip: string;
@@ -145,7 +148,7 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchStatus(): Promise<StatusResponse> {
-  return readJson<StatusResponse>(await fetch("/api/status", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+  return readJson<StatusResponse>(await fetch("/api/status?cached=1", { signal: AbortSignal.timeout(8000), credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function fetchHistory(limit = 100): Promise<HistoryResponse> {
   return readJson<HistoryResponse>(await fetch(`/api/history?limit=${limit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
@@ -345,4 +348,9 @@ export async function runMaintenance(action: "nozzle-check" | "head-clean") {
 export async function recoverPrinter(): Promise<RecoveryStatus> {
  const csrf = await ensureCsrf();
  return readJson(await csrfAwareFetch("/api/printer/recover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
+}
+
+export async function refreshStatus(): Promise<StatusResponse> {
+ const csrf = await ensureCsrf();
+ return readJson(await csrfAwareFetch("/api/status/refresh", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}", signal: AbortSignal.timeout(8000) }));
 }

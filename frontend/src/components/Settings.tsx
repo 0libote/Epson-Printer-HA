@@ -303,7 +303,7 @@ export function BackendDiagnostics({ onChanged }: { onChanged: () => void }) {
     <h2 {...stylex.props(ui.sectionTitle)}>Backend diagnostics</h2>
     {error ? <p role="alert">{error}</p> : null}
     {data ? <>
-      <dl>
+      <dl className="diagnostics-list">
         <dt>Application</dt><dd>{data.version} · Build {data.build_number} · {data.architecture}</dd>
         <dt>Printing</dt><dd>CUPS {data.printing.cups || "version unavailable"} · ESC/P-R {data.printing.escpr || "version unavailable"}</dd>
         <dt>Scanning</dt><dd>{data.scanner.backends.find(b => b.id === data.scanner.selected)?.name || "No backend detected"}</dd>
@@ -318,4 +318,12 @@ export function BackendDiagnostics({ onChanged }: { onChanged: () => void }) {
     </> : !error ? <p>Loading diagnostics…</p> : null}
     <button {...stylex.props(ui.buttonQuiet)} disabled={busy} onClick={() => refresh(true)}>{busy ? "Discovering…" : "Rediscover scanner"}</button>
   </Card>;
+}
+
+export function AdvancedDiagnostics({ onChanged }: { onChanged: () => void }) {
+ const [open, setOpen] = useState(false);
+ return <details onToggle={event => setOpen(event.currentTarget.open)}>
+  <summary>Advanced diagnostics</summary>
+  {open ? <BackendDiagnostics onChanged={onChanged} /> : <p>Versions, active backends and scanner rediscovery.</p>}
+ </details>;
 }

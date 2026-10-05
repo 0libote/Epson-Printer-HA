@@ -10,9 +10,9 @@ export function useStatus(enabled = true) {
       // poll faster when jobs exist; idle clients stay quiet (was 2s/3s/5s hammering CUPS)
       const data = query.state.data as StatusResponse | undefined;
       const hasJobs = !!(data && data.queue && data.queue.length > 0);
-      const scannerStarting = !!(data && !data.scanner?.ok);
+      const checking = data?.status_meta?.refreshing;
+      if (checking) return 2000;
       if (hasJobs) return 4000;
-      if (scannerStarting) return 8000;
       return 15000;
     },
     refetchIntervalInBackground: false,
@@ -24,9 +24,10 @@ export function useStatus(enabled = true) {
   });
 }
 
-export function useHistory(limit = 100) {
+export function useHistory(limit = 100, enabled = true) {
   return useQuery({
     queryKey: ["history", limit],
+    enabled,
     queryFn: () => fetchHistory(limit),
     refetchInterval: 15000,
     refetchIntervalInBackground: false,
