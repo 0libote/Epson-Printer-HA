@@ -7,24 +7,15 @@ import { useToast } from "./Toast";
 import { s as ui, Card, CardHeader, StatusDot } from "./ui";
 
 const s = stylex.create({
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-    padding: "10px 0",
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: vars.line,
-  },
-  lastRow: { borderBottomWidth: 0, borderBottomStyle: "none" },
-  dot: { width: "14px", height: "14px", borderRadius: vars.radiusFull, flexShrink: 0, borderWidth: "1px", borderStyle: "solid", borderColor: "rgba(0,0,0,0.15)" },
+  grid: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "14px", "@media (max-width: 600px)": { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" } },
+  row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px", padding: "18px", borderRadius: vars.radiusMd, backgroundColor: vars.bg, borderWidth: "1px", borderStyle: "solid", borderColor: vars.line },
+  dot: { width: "10px", height: "10px", borderRadius: vars.radiusFull, flexShrink: 0 },
   nameWrap: { flex: 1, minWidth: 0 },
-  name: { fontFamily: vars.fontSans, fontSize: "13.5px", fontWeight: 600, color: vars.text },
-  sub: { fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary, marginTop: "1px" },
-  bar: { width: "120px", height: "8px", borderRadius: vars.radiusFull, backgroundColor: vars.bgSunken, overflow: "hidden", flexShrink: 0 },
+  name: { fontSize: "13px", fontWeight: 600, color: vars.text },
+  sub: { fontSize: "11px", color: vars.textTertiary, marginTop: "2px" },
+  bar: { order: 4, width: "100%", height: "6px", borderRadius: vars.radiusFull, backgroundColor: vars.line, overflow: "hidden", marginTop: "4px" },
   fill: { display: "block", height: "100%", borderRadius: vars.radiusFull },
-  pct: { fontFamily: vars.fontMono, fontSize: "12px", color: vars.textSecondary, minWidth: "44px", textAlign: "right" },
-  foot: { display: "flex", alignItems: "center", gap: "8px", marginTop: "12px", fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary },
+  pct: { order: 3, width: "100%", fontSize: "30px", fontWeight: 600, letterSpacing: "-0.05em", color: vars.text, marginTop: "6px" },
   refresh: { marginLeft: "auto" },
 });
 
@@ -58,7 +49,7 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
   const carts = ink?.cartridges ?? [];
   const subtitle = ink
     ? ink.ok
-      ? `${stale ? "Last known · " : ""}via ${ink.source.toUpperCase()} · updated ${formatTime(ink.updated_at)}`
+      ? `${stale ? "Last known · " : ""}Supplies updated ${formatTime(ink.updated_at)}`
       : ink.message.slice(0, 90)
     : "Checking printer supplies…";
 
@@ -66,7 +57,7 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
     <Card>
       <CardHeader
         icon={<Droplet size={18} />}
-        title="Ink levels"
+        title="Ink & supplies"
         sub={subtitle}
         tileBg={vars.accentSoft as string}
         tileColor={vars.accent as string}
@@ -81,9 +72,9 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
       ) : !carts.length ? (
         <p {...stylex.props(ui.help)}>No ink data yet. Make sure the printer is awake, then press Refresh.</p>
       ) : (
-        <div>
-          {carts.map((c, i) => (
-            <div key={c.key} {...stylex.props(s.row, i === carts.length - 1 && s.lastRow)}>
+        <div {...stylex.props(s.grid)}>
+          {carts.map((c) => (
+            <div key={c.key} {...stylex.props(s.row)}>
               <span {...stylex.props(s.dot)} style={{ backgroundColor: c.color }} aria-hidden="true" />
               <div {...stylex.props(s.nameWrap)}>
                 <div {...stylex.props(s.name)}>{c.name}</div>
@@ -103,9 +94,6 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
               <StatusDot tone={toneFor(c.state)} />
             </div>
           ))}
-          <div {...stylex.props(s.foot)}>
-            <span>{ink?.ok ? `Source: ${ink.source}` : "Printer may be asleep"}</span>
-          </div>
         </div>
       )}
       <style>{`.spin{animation:spin 1.2s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}`}</style>

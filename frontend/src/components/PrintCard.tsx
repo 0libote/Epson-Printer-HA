@@ -12,22 +12,25 @@ const s = stylex.create({
   drop: {
     display: "flex",
     alignItems: "center",
-    gap: "12px",
-    padding: "16px",
+    gap: "10px",
+    flexDirection: "column",
+    minHeight: "158px",
+    justifyContent: "center",
+    padding: "24px 16px",
     borderRadius: vars.radiusMd,
     borderWidth: "1.5px",
     borderStyle: "dashed",
     borderColor: vars.lineStrong,
-    backgroundColor: vars.bgSunken,
+    backgroundColor: vars.accentSoft,
     cursor: "pointer",
     width: "100%",
-    textAlign: "left",
+    textAlign: "center",
     transition: "border-color .15s, background-color .15s",
   },
   dropActive: { borderColor: vars.accent, backgroundColor: vars.accentSoft },
   dropIcon: {
-    width: "36px",
-    height: "36px",
+    width: "44px",
+    height: "44px",
     borderRadius: "10px",
     backgroundColor: vars.panel,
     borderWidth: "1px",
@@ -142,7 +145,7 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
         icon={<Printer size={18} />}
         tileBg={vars.accentSoft as string}
         tileColor={vars.accent as string}
-        title="Print"
+        title="Print a document"
         sub="PDF, images or plain text"
       />
       <form onSubmit={submit}>
@@ -168,9 +171,9 @@ export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?:
         >
           <span {...stylex.props(s.dropIcon)}><Upload size={17} /></span>
           <span>
-            <span {...stylex.props(s.dropText)}>{dragOver ? "Drop it" : "Choose a file or drag it here"}</span>
+            <span {...stylex.props(s.dropText)}>{dragOver ? "Drop it" : "Drop a document here"}</span>
             <br />
-            <span {...stylex.props(s.dropHint)}>PDF · PNG · JPG · TXT · up to {maxMbEffective} MB</span>
+            <span {...stylex.props(s.dropHint)}>or click to browse · up to {maxMbEffective} MB</span>
           </span>
         </button>
 

@@ -199,8 +199,8 @@ export function ScanCard({ scannerOk, scannerDetail, capabilities, onScanned }: 
         icon={<ScanLine size={18} />}
         tileBg={vars.tealSoft as string}
         tileColor={vars.teal as string}
-        title="Scan"
-        sub="Flatbed · A4 · saved to the scan library"
+        title="Scan a page"
+        sub="From paper to something you can keep"
       />
       {!scannerOk && !busy ? (
         <div {...stylex.props(s.dormant)}>
@@ -208,6 +208,7 @@ export function ScanCard({ scannerOk, scannerDetail, capabilities, onScanned }: 
         </div>
       ) : null}
       <form onSubmit={submit} style={{ marginTop: scannerOk || busy ? 0 : 12 }}>
+        <div className="workspace-scan-guide"><ScanLine size={36} strokeWidth={1.2} /><span><strong>Keep a digital copy.</strong><small>Place your page face-down on the flatbed.</small></span></div>
         <div {...stylex.props(s.grid)}>
           <label {...stylex.props(ui.fieldLabel)}>
             <span>Colour</span>
@@ -233,7 +234,7 @@ export function ScanCard({ scannerOk, scannerDetail, capabilities, onScanned }: 
             600 dpi scans are large and slow. Best for photos — 300 dpi is plenty for documents.
           </div>
         ) : null}
-        <p {...stylex.props(ui.help)} style={{ marginTop: 12 }}>Place the page face-down on the glass, then scan.</p>
+        <p {...stylex.props(ui.help)} style={{ marginTop: 12 }}>Choose your settings. We’ll save the result to Saved scans.</p>
         {blocked ? (
           <div {...stylex.props(ui.noteBox)} style={{ marginTop: 12 }}>
             Another scan may be running. Cancel it only if you want to stop that scan.

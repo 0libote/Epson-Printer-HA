@@ -1,9 +1,10 @@
+import { WorkspaceNavigation, PrinterIllustration } from "./components/WorkspaceNavigation";
 import { SectionBoundary } from "./components/SectionBoundary";
 import { Maintenance } from "./components/Maintenance";
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "./styles/tokens.stylex";
-import { useEffect, useState, lazy, Suspense, type ReactNode } from "react";
-import { Clock, FolderOpen, History as HistoryIcon, LayoutGrid, RefreshCw, Settings as SettingsIcon, ShieldAlert } from "lucide-react";
+import { useEffect, useState, lazy, Suspense, type CSSProperties } from "react";
+import { Clock, RefreshCw, ShieldAlert } from "lucide-react";
 import { useStatus, useHistory, useScans } from "./hooks/useStatus";
 import { useToast } from "./components/Toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -19,7 +20,7 @@ const Library = lazy(() => import("./components/Library").then(m => ({ default: 
 const History = lazy(() => import("./components/History").then(m => ({ default: m.History })));
 const PreviewModal = lazy(() => import("./components/PreviewModal").then(m => ({ default: m.PreviewModal })));
 const sectionInfo = {
- overview: { title: "Print & scan", description: "Send a document or turn a paper page into a file." },
+ overview: { title: "Make room for the everyday.", description: "A document to print. A page to keep. All in one little workspace." },
  scans: { title: "Saved scans", description: "Preview, download and organise the pages saved on your hub." },
  history: { title: "Print history", description: "Your recent documents, with progress and results." },
  settings: { title: "Printer settings", description: "Connect your printer and share it across your home." },
@@ -28,65 +29,20 @@ function SectionLoading() { return <div className="section-loading" role="status
 
 const s = stylex.create({
   page: { backgroundColor: vars.bg, color: vars.text, minHeight: "100vh", fontFamily: vars.fontSans },
-  main: { maxWidth: "1080px", margin: "0 auto", padding: "28px 24px 48px", "@media (max-width: 600px)": { padding: "20px 16px 32px" } },
+  main: { maxWidth: "1180px", margin: "0 auto", padding: "38px 40px 48px", "@media (max-width: 1100px)": { padding: "28px 24px 48px" }, "@media (max-width: 600px)": { padding: "24px 16px 120px" } },
   hero: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", marginBottom: "24px", flexWrap: "wrap" },
   eyebrow: { fontSize: "11px", fontWeight: 650, letterSpacing: "0.12em", color: vars.textTertiary, textTransform: "uppercase", marginBottom: "6px" },
-  heading: { fontSize: "30px", fontWeight: 680, letterSpacing: "-0.035em", lineHeight: 1.15, "@media (max-width: 600px)": { fontSize: "26px" } },
+  heading: { fontSize: "42px", maxWidth: "550px", fontWeight: 650, letterSpacing: "-0.035em", lineHeight: 1.15, "@media (max-width: 600px)": { fontSize: "32px" } },
   intro: { color: vars.textSecondary, fontSize: "14px", marginTop: "8px", lineHeight: 1.5 },
   checking: { color: vars.textSecondary, backgroundColor: vars.accentSoft, padding: "8px 12px", borderRadius: vars.radiusFull, fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" },
   actionGrid: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
-    gap: "16px",
-    marginTop: "16px",
+    gap: "20px",
+    marginTop: "20px",
     "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
   },
   stack: { display: "grid", gap: "16px", marginTop: "16px" },
-  tabs: {
-    display: "flex",
-    gap: "4px",
-    flexWrap: "nowrap",
-    overflowX: "auto",
-    padding: "5px",
-    borderRadius: vars.radiusMd,
-    backgroundColor: vars.bgSunken,
-    marginTop: "20px",
-    "@media (max-width: 600px)": { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))" },
-  },
-  tab: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "7px",
-    padding: "11px 16px",
-    borderRadius: vars.radiusSm,
-    minHeight: "44px",
-    position: "relative",
-    "@media (max-width: 600px)": { flexDirection: "column", justifyContent: "center", padding: "9px 4px", gap: "5px", fontSize: "11px" },
-    whiteSpace: "nowrap",
-    flexShrink: 0,
-    borderWidth: 0,
-    borderStyle: "none",
-    backgroundColor: "transparent",
-    fontFamily: vars.fontSans,
-    fontSize: "13.5px",
-    fontWeight: 550,
-    color: vars.textTertiary,
-    cursor: "pointer",
-    borderBottomWidth: "2px",
-    borderBottomStyle: "solid",
-    borderBottomColor: "transparent",
-    marginBottom: "-1px",
-  },
-  tabActive: { color: vars.accent, backgroundColor: vars.panel, boxShadow: vars.shadowSm },
-  tabCount: {
-    fontFamily: vars.fontMono,
-    fontSize: "11px",
-    backgroundColor: vars.bgSunken,
-    color: vars.textSecondary,
-    borderRadius: vars.radiusFull,
-    padding: "1px 7px",
-    "@media (max-width: 600px)": { position: "absolute", top: "5px", right: "5px", fontSize: "9px", padding: "0 4px" },
-  },
   liveRow: {
     display: "flex",
     alignItems: "center",
@@ -184,10 +140,10 @@ export default function App() {
       <div {...stylex.props(s.page)}>
         <Header printerName={printerName} displayName={displayName} online={false} checking setupNeeded={false} />
         <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-          <div {...stylex.props(s.skeleton)} className="loading-placeholder" style={{ height: 86 }} />
+          <div {...stylex.props(s.skeleton)} className={`${stylex.props(s.skeleton).className} loading-placeholder`} style={{ height: 86 }} />
           <div {...stylex.props(s.actionGrid)}>
-            <div {...stylex.props(s.skeleton)} className="loading-placeholder" style={{ height: 320 }} />
-            <div {...stylex.props(s.skeleton)} className="loading-placeholder" style={{ height: 320 }} />
+            <div {...stylex.props(s.skeleton)} className={`${stylex.props(s.skeleton).className} loading-placeholder`} style={{ height: 320 }} />
+            <div {...stylex.props(s.skeleton)} className={`${stylex.props(s.skeleton).className} loading-placeholder`} style={{ height: 320 }} />
           </div>
           <p className="section-loading" role="status">Opening Print Room…</p>
         </main>
@@ -239,21 +195,16 @@ export default function App() {
     );
   }
 
-  const tabs: Array<{ id: Tab; label: string; icon: ReactNode; count?: number }> = [
-    { id: "overview", label: "Print & scan", icon: <LayoutGrid size={14} /> },
-    { id: "scans", label: "Saved scans", icon: <FolderOpen size={14} />, count: scansQ.data ? scansTotal : undefined },
-    { id: "history", label: "Print history", icon: <HistoryIcon size={14} />, count: historyQ.data ? history.length : undefined },
-    { id: "settings", label: "Settings", icon: <SettingsIcon size={14} /> },
-  ];
 
   return (
-    <div {...stylex.props(s.page)}>
+    <div {...stylex.props(s.page)} className={`${stylex.props(s.page).className} workspace`} style={{ "--ui-bg": vars.bg, "--ui-panel": vars.panel, "--ui-sunken": vars.bgSunken, "--ui-text": vars.text, "--ui-muted": vars.textSecondary, "--ui-line": vars.line, "--ui-accent": vars.accent, "--ui-soft": vars.accentSoft } as CSSProperties}>
+      <WorkspaceNavigation view={tab} onView={view => { window.location.hash = view; setTab(view); }} displayName={displayName} build={data?.build_number} scanCount={scansQ.data ? scansTotal : undefined} historyCount={historyQ.data ? history.length : undefined} />
       <a className="skip-link" href="#main-content">Skip to content</a>
       <Header printerName={printerName} displayName={displayName} online={reachable} checking={!reachChecked} stale={statusStale || isError} setupNeeded={false} />
       <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-        <div {...stylex.props(s.hero)}>
-          <div><p {...stylex.props(s.eyebrow)}>{displayName}</p><h1 {...stylex.props(s.heading)}>{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
-          {statusPending ? <span {...stylex.props(s.checking)} role="status"><RefreshCw size={12} className="spin" /> Updating devices in the background</span> : null}
+        <div {...stylex.props(s.hero)} className={`${stylex.props(s.hero).className} workspace-hero`}>
+          <div><p {...stylex.props(s.eyebrow)}>{tab === "overview" ? "YOUR HOME PRINTING STUDIO" : "YOUR WORKSPACE"}</p><h1 {...stylex.props(s.heading)}>{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
+          <div className="workspace-hero-device"><PrinterIllustration /><div><small>YOUR PRINTER</small><strong>{displayName}</strong><span>{!reachChecked ? "Checking connection…" : statusStale ? "Last known connection" : reachable ? "Connected to your home" : "Waiting to reconnect"}</span></div></div>
         </div>
         <StatusStrip
           printerChecking={!reachChecked || statusStale || !!parts?.device?.stale || !!parts?.printer?.stale}
@@ -268,19 +219,6 @@ export default function App() {
           queueCount={queue.length}
         />
 
-        <nav {...stylex.props(s.tabs)} aria-label="Sections">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              {...stylex.props(s.tab, tab === t.id && s.tabActive)}
-              onClick={() => { window.location.hash = t.id; setTab(t.id); }}
-              aria-current={tab === t.id ? "page" : undefined}
-            >
-              {t.icon} {t.label}
-              {typeof t.count === "number" ? <span {...stylex.props(s.tabCount)}>{t.count}</span> : null}
-            </button>
-          ))}
-        </nav>
 
         <section hidden={tab !== "overview"} aria-label="Print and scan">
             {printerIp && reachChecked && !reachable && !statusStale ? (
@@ -288,7 +226,7 @@ export default function App() {
                 <PrinterUnreachableBanner recoveryMessage={data?.recovery?.message} network={data?.printer_network ?? null} queuedJobs={queue.length} />
               </div>
             ) : null}
-            <div {...stylex.props(s.actionGrid)}>
+            <div {...stylex.props(s.actionGrid)} className={`${stylex.props(s.actionGrid).className} workspace-actions`}>
               <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} />
               <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} capabilities={data?.scanner.capabilities} onScanned={() => refreshAll(qc)} />
             </div>
@@ -343,7 +281,7 @@ export default function App() {
         <div {...stylex.props(s.liveRow)}>
           <Clock size={12} />
           <span>
-            Status received {new Date(dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            {statusPending ? "Checking devices · " : ""}Status received {new Date(dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             {isError ? " · Connection lost; showing last known status" : statusPending ? " · Updating in background" : statusStale ? " · Last known status" : ""}
           </span>
           <span {...stylex.props(s.refreshBtn)}>

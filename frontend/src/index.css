@@ -13,8 +13,8 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
-  ::selection { background: #3b5bdb; color: #fff; }
-  :focus-visible { outline: 2px solid #3b5bdb; outline-offset: 2px; border-radius: 4px; }
+  ::selection { background: #25634c; color: #fff; }
+  :focus-visible { outline: 2px solid var(--ui-accent, #25634c); outline-offset: 2px; border-radius: 4px; }
 }
 
 /* Native dialogs provide focus containment and Escape handling. */
@@ -26,7 +26,7 @@ button { touch-action: manipulation; }
 button:disabled { cursor: not-allowed; }
 button:not(:disabled):hover { filter: brightness(0.96); }
 summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
-.skip-link { position: fixed; left: 16px; top: -60px; z-index: 100; padding: 12px 18px; background: #3b5bdb; color: white; border-radius: 8px; text-decoration: none; }
+.skip-link { position: fixed; left: 16px; top: -60px; z-index: 100; padding: 12px 18px; background: #25634c; color: white; border-radius: 8px; text-decoration: none; }
 .skip-link:focus { top: 12px; }
 .section-loading { padding: 24px 0; font-size: 14px; opacity: .7; }
 .loading-placeholder { animation: placeholder-pulse 1.4s ease-in-out infinite; }
@@ -45,4 +45,55 @@ summary { cursor: pointer; padding: 12px 0; font-weight: 600; }
 }
 @media (prefers-reduced-motion: reduce) {
  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* Workspace shell: a quiet stationery palette with persistent navigation. */
+.workspace { padding-left: 232px; }
+.workspace-sidebar { position: fixed; inset: 0 auto 0 0; width: 232px; z-index: 30; padding: 32px 18px 22px; display: flex; flex-direction: column; background: #193e30; color: #f5f8f1; }
+.workspace-brand { display: flex; gap: 12px; align-items: center; color: inherit; text-decoration: none; padding: 0 10px; font-size: 21px; font-weight: 650; letter-spacing: -.04em; }
+.workspace-brand small { display: block; color: #b7ccbe; font-size: 11px; font-weight: 400; letter-spacing: 0; margin-top: 5px; }
+.workspace-mark { display: grid; place-items: center; width: 42px; height: 44px; border-radius: 14px; background: #d8eac7; color: #193e30; flex-shrink: 0; }
+.workspace-nav-caption { margin: 48px 14px 14px; color: #b7ccbe; font-size: 10px; letter-spacing: .14em; font-weight: 600; }
+.workspace-navigation { display: grid; gap: 6px; }
+.workspace-navigation button { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 12px 14px; border: 0; border-radius: 12px; background: transparent; color: #d0ded4; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; }
+.workspace-navigation button:hover { background: #ffffff0b; }
+.workspace-navigation button[aria-current] { background: #d8eac7; color: #193e30; }
+.workspace-navigation small { margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 5px; background: #ffffff20; }
+.workspace-sidebar-bottom { margin-top: auto; padding: 24px 8px 0; }
+.workspace-device { display: grid; gap: 10px; padding: 18px 14px; border: 1px solid #ffffff25; border-radius: 16px; text-decoration: none; color: inherit; }
+.workspace-device-icon { color: #d8eac7; }
+.workspace-device strong { font-size: 12px; font-weight: 550; overflow-wrap: anywhere; }
+.workspace-device > span:last-child { display: flex; align-items: center; gap: 5px; color: #b7ccbe; font-size: 11px; }
+.workspace-sidebar-bottom p { display: flex; align-items: center; gap: 6px; font-size: 10px; color: #b7ccbe; margin-top: 26px; }
+.workspace-sidebar-bottom > small { display: block; font-size: 10px; color: #b7ccbe; margin: 8px 0 0 20px; }
+.workspace-hero { align-items: center !important; margin-bottom: 32px !important; }
+.workspace-hero > div:first-child { flex: 1; min-width: 240px; }
+.workspace-hero-device { width: 260px; display: flex; align-items: center; gap: 8px; border-radius: 20px; padding: 14px; background: var(--ui-soft); color: var(--ui-accent); }
+.workspace-printer-art { width: 100px; flex-shrink: 0; }
+.workspace-hero-device > div { min-width: 0; }
+.workspace-hero-device small { font-size: 9px; letter-spacing: .1em; }
+.workspace-hero-device strong { display: block; font-size: 13px; color: var(--ui-text); margin: 5px 0; overflow-wrap: anywhere; }
+.workspace-hero-device span { display: block; color: var(--ui-muted); font-size: 10px; line-height: 1.5; }
+.workspace-actions { margin-top: 26px !important; }
+@media (max-width: 1250px) { .workspace-hero-device { width: 220px; } .workspace-printer-art { width: 75px; } }
+@media (max-width: 1000px) { .workspace-hero-device { display: none; } }
+@media (max-width: 800px) {
+ .workspace { padding-left: 0; }
+ .workspace-sidebar { inset: auto 12px 12px; width: auto; max-width: 480px; margin: 0 auto; padding: 5px; border: 1px solid var(--ui-line); border-radius: 20px; background: var(--ui-panel); color: var(--ui-text); box-shadow: 0 8px 36px #00000020; padding-bottom: max(5px, env(safe-area-inset-bottom)); }
+ .workspace-brand, .workspace-nav-caption, .workspace-sidebar-bottom { display: none; }
+ .workspace-navigation { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; }
+ .workspace-navigation button { flex-direction: column; justify-content: center; gap: 5px; min-height: 58px; padding: 8px 2px; color: var(--ui-muted); font-size: 10px; position: relative; text-align: center; }
+ .workspace-navigation button[aria-current] { background: var(--ui-soft); color: var(--ui-accent); }
+ .workspace-navigation small { position: absolute; right: 5px; top: 4px; padding: 0 3px; font-size: 9px; }
+ .workspace main { padding-bottom: 120px; }
+ .workspace-hero { margin-bottom: 24px !important; }
+}
+@media (prefers-reduced-motion: no-preference) { button, input, select { transition: background-color .16s, border-color .16s, box-shadow .16s; } }
+.workspace-scan-guide { display: flex; align-items: center; justify-content: center; gap: 16px; min-height: 130px; padding: 20px; border-radius: 16px; margin-bottom: 22px; background: var(--ui-bg); color: var(--ui-accent); border: 1px solid var(--ui-line); }
+.workspace-scan-guide strong { display: block; color: var(--ui-text); font-size: 14px; font-weight: 550; }
+.workspace-scan-guide small { display: block; color: var(--ui-muted); font-size: 12px; margin-top: 6px; line-height: 1.5; }
+.workspace-sidebar :focus-visible { outline-color: #d8eac7; }
+@media (max-width: 800px) {
+ .workspace-sidebar :focus-visible { outline-color: var(--ui-accent); }
+ .workspace-navigation button { font-size: 11px; }
 }

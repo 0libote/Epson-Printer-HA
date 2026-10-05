@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { Moon, Printer, Sun } from "lucide-react";
+import { Moon, Sparkles, Sun } from "lucide-react";
 import { useTheme } from "../styles/ThemeProvider";
 import { Pill, StatusDot } from "./ui";
 
@@ -12,13 +12,14 @@ const s = stylex.create({
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: vars.line,
-    backgroundColor: vars.panel,
+    backgroundColor: vars.bg,
   },
   inner: {
-    maxWidth: "1080px",
+    maxWidth: "1180px",
     margin: "0 auto",
-    padding: "0 20px",
-    height: "60px",
+    padding: "0 40px",
+    height: "76px",
+    "@media (max-width: 600px)": { padding: "0 16px", height: "64px" },
     display: "flex",
     alignItems: "center",
     gap: "12px",
@@ -28,8 +29,8 @@ const s = stylex.create({
     width: "32px",
     height: "32px",
     borderRadius: "9px",
-    backgroundColor: vars.accent,
-    color: vars.onAccent,
+    backgroundColor: vars.accentSoft,
+    color: vars.accent,
     display: "grid",
     placeItems: "center",
     flexShrink: 0,
@@ -60,9 +61,9 @@ export function Header({ printerName, displayName, online, setupNeeded, checking
     <header {...stylex.props(s.bar)}>
       <div {...stylex.props(s.inner)}>
         <a {...stylex.props(s.brand)} href="#overview">
-          <span {...stylex.props(s.mark)}><Printer size={17} /></span>
+          <span {...stylex.props(s.mark)}><Sparkles size={17} /></span>
           <span {...stylex.props(s.brandText)}>
-            <span {...stylex.props(s.name)}>Print Room</span>
+            <span {...stylex.props(s.name)}>Home workspace</span>
             <span {...stylex.props(s.sub)}>{setupNeeded ? "setup" : displayName || printerName}</span>
           </span>
         </a>
