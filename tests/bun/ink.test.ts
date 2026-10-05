@@ -222,3 +222,8 @@ describe("ink - cache and api", () => {
     }
   });
 });
+test('explicit ink refresh joins a current hardware poll instead of duplicating it',async()=>{
+ const ink=await import('../../src/ink.ts');ink._clearInkCacheForTest();let calls=0,finish!: (value:any)=>void;
+ ink._setFetchImplForTest(()=>{calls++;return new Promise(resolve=>finish=resolve);});
+ try {const first=ink.getInkLevels('192.0.2.42');ink.clearInkCache();const second=ink.getInkLevels('192.0.2.42');expect(calls).toBe(1);finish({ok:false,source:'none',updated_at:new Date().toISOString(),cartridges:[],message:'offline'});await Promise.all([first,second]);}finally{ink._setFetchImplForTest(null);ink._clearInkCacheForTest();}
+});

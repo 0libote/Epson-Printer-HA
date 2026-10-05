@@ -8,6 +8,7 @@ export function ttlCached<T>(cache: Map<string, { exp: number; value: T }>, infl
   if (ongoing) return ongoing;
   const p = fn().then(
     (v) => {
+      if (inflight.get(key) !== p) return v;
       if (cache.size > 128) {
         const oldest = cache.keys().next().value;
         if (oldest !== undefined) cache.delete(oldest);
@@ -17,7 +18,7 @@ export function ttlCached<T>(cache: Map<string, { exp: number; value: T }>, infl
       return v;
     },
     (e) => {
-      inflight.delete(key);
+      if (inflight.get(key) === p) inflight.delete(key);
       throw e;
     }
   );

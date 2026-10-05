@@ -10,9 +10,9 @@ let _fetchImpl: ((host: string) => Promise<InkStatus>) | null = null;
 export function _setFetchImplForTest(fn: ((host: string) => Promise<InkStatus>) | null) {
   _fetchImpl = fn;
 }
-/** Drop cached levels and in-flight polls (used by ?refresh=1 and tests). */
-export function clearInkCache() { cache.clear(); inflight.clear(); }
-export function _clearInkCacheForTest() { clearInkCache(); }
+/** Refresh requests join a current hardware check instead of duplicating it. */
+export function clearInkCache() { cache.clear(); }
+export function _clearInkCacheForTest() { cache.clear(); inflight.clear(); }
 
 function unknownStatus(host: string, message: string): InkStatus {
   const cartridges: InkCartridge[] = (["black", "cyan", "magenta", "yellow"] as InkKey[]).map((key) => ({
@@ -70,6 +70,7 @@ export async function getInkLevels(host: string): Promise<InkStatus> {
   const ongoing = inflight.get(host);
   if (ongoing) return ongoing;
   const p = fetchInkLevels(host).then((v) => {
+    if (inflight.get(host) !== p) return v;
     // cache successes 2 min, failures 30 s (don't hammer a sleeping printer)
     const ttl = v.ok ? 120_000 : 30_000;
     if (cache.size > 64) {
@@ -80,7 +81,7 @@ export async function getInkLevels(host: string): Promise<InkStatus> {
     inflight.delete(host);
     return v;
   }, (e) => {
-    inflight.delete(host);
+    if (inflight.get(host) === p) inflight.delete(host);
     throw e;
   });
   inflight.set(host, p);

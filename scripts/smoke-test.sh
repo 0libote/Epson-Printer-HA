@@ -62,6 +62,18 @@ docker exec "$container_name" python3 -c 'from PIL import Image; Image.new("RGB"
 # Exercise the same multipart endpoint used by the dashboard, including CSRF,
 # persisted queue settings and the unprivileged CUPS service identity.
 docker exec "$container_name" python3 -c 'import json; json.dump({"printer_ip": "192.0.2.10", "printer_name": "Smoke_Epson"}, open("/data/settings.json", "w"))'
+# Hardware discovery must not block the dashboard's cached status read.
+python3 - <<'PYTHON'
+import json, time, urllib.request
+started = time.monotonic()
+with urllib.request.urlopen("http://127.0.0.1:18080/api/status?cached=1", timeout=2) as response:
+    status = json.load(response)
+elapsed = time.monotonic() - started
+assert elapsed < 1, elapsed
+assert status["printer_name"] == "Smoke_Epson", status
+assert status["status_meta"]["cached"] is True, status
+print("Cached dashboard status: %.3fs" % elapsed)
+PYTHON
 docker cp "$container_name:/tmp/smoke.pdf" "$work_dir/smoke.pdf"
 curl -fsS -c "$work_dir/cookies" http://127.0.0.1:18080/api/csrf > "$work_dir/csrf.json"
 csrf_token="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["csrf_token"])' "$work_dir/csrf.json")"

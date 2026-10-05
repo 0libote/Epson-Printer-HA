@@ -5,14 +5,16 @@ import { tmpdir } from "node:os";
 let app: typeof import("../../src/app.ts");
 import * as core from "../../src/core.ts";
 let dir:string;
+let inkProbe: ReturnType<typeof spyOn>;
 const restores: Array<{ mockRestore():void }> = [];
 beforeEach(async ()=>{
  dir=mkdtempSync(join(tmpdir(),'epson-device-api-'));process.env.APP_DATA=dir;app=await import('../../src/app.ts');app._setAppDirForTest(dir);app._setAuthForTest('','');app._savePrinterIp('192.0.2.10');
+ const standard=await import('../../src/printer/standard.ts');inkProbe=spyOn(standard,'getInkLevels').mockResolvedValue({ok:false,source:'none',updated_at:new Date().toISOString(),cartridges:[],message:'fixture'});restores.push(inkProbe);
  const history=await import('../../src/history.ts');history._setAppDir(dir);history.initHistory();
  restores.push(spyOn(core.scannerManager,'capabilities').mockResolvedValue({selected:null,backends:[],capabilities:null}));
  restores.push(spyOn(core.scannerManager.epson,'health').mockRejectedValue(new Error('unavailable')));
 });
-afterEach(()=>{ for(const r of restores.splice(0))r.mockRestore();app._setAuthForTest('','');rmSync(dir,{recursive:true,force:true}); });
+afterEach(()=>{ app._resetScanJobsForTest(); for(const r of restores.splice(0))r.mockRestore();app._setAuthForTest('','');rmSync(dir,{recursive:true,force:true}); });
 async function token(){const response=await app.app.request('/api/csrf');const data=await response.json() as any;return {csrf:data.csrf_token,cookie:response.headers.get('set-cookie')!.split(';')[0]};}
 function post(path:string,csrf:string,cookie:string){return app.app.request(path,{method:'POST',headers:{'content-type':'application/json','x-csrf-token':csrf,cookie},body:'{}'});}
 test('capabilities are honest and setup-independent',async()=>{
@@ -83,4 +85,44 @@ test('a manual edit during discovery prevents stale recovery from reconfiguring 
  restores.push(spyOn(discovery,'discoverPrinters').mockImplementation(async()=>{app._savePrinterIp('192.0.2.99');return {ok:true,printers:[{ip:'192.0.2.44',uuid:'device-123456',model:'Epson',ports:[631],likelyEpson:true,detail:'mdns'}],subnets:[],scanned_at:''};}));
  const configure=spyOn(core.cupsBackend,'configureQueue').mockResolvedValue([true,'configured']);restores.push(configure);
  expect((await app.deviceRecovery.tick(true)).state).toBe('waiting');expect(configure).not.toHaveBeenCalled();expect(app.currentPrinterIp()).toBe('192.0.2.99');
+});
+test('cold cached dashboard status returns while scanner is still blocked',async()=>{
+ let finish!: (value:any)=>void;const blocked=new Promise<any>(resolve=>finish=resolve);
+ const scanner=spyOn(core,'scannerStatus').mockImplementation(()=>blocked);restores.push(scanner);
+ restores.push(spyOn(core,'cachedPrinterReachable').mockResolvedValue(true));
+ restores.push(spyOn(core,'cachedCupsPrinterStatus').mockResolvedValue({ok:true,state:'ready',detail:'idle'}));
+ restores.push(spyOn(core,'cachedListJobs').mockResolvedValue([]));
+ const start=performance.now();const response=await app.app.request('/api/status?cached=1');const status=await response.json() as any;
+ expect(performance.now()-start).toBeLessThan(200);expect(response.headers.get('cache-control')).toBe('no-store');expect(status.printer_ip).toBe('192.0.2.10');expect(status.status_meta.parts.scanner.refreshing).toBe(true);
+ const again=await app.app.request('/api/status?cached=1');expect(again.status).toBe(200);expect(scanner).toHaveBeenCalledTimes(1);
+ finish({ok:true,state:'ready',detail:'ready',backend:'AirScan',device:'fixture',open_source:true});await Bun.sleep(0);
+ const fresh=await (await app.app.request('/api/status?cached=1')).json() as any;expect(fresh.scanner.ok).toBe(true);expect(fresh.status_meta.parts.scanner.updated_at).toBeTruthy();
+});
+test('background status refresh is authenticated and CSRF protected',async()=>{
+ app._setAuthForTest('test','secret');expect((await app.app.request('/api/status?cached=1')).status).toBe(401);expect((await app.app.request('/api/status/refresh',{method:'POST'})).status).toBe(401);app._setAuthForTest('','');
+ expect((await app.app.request('/api/status/refresh',{method:'POST'})).status).toBe(400);
+ const {csrf,cookie}=await token();const response=await post('/api/status/refresh',csrf,cookie);expect(response.status).toBe(200);expect((await response.json() as any).status_meta).toHaveProperty('parts');
+});
+
+test('background dashboard sampling does not discover scanners during acquisition',async()=>{
+ const scanner=spyOn(core,'scannerStatus').mockResolvedValue({ok:true,state:'ready',detail:'ready',backend:'AirScan',device:'fixture',open_source:true});restores.push(scanner);
+ restores.push(spyOn(core,'cachedPrinterReachable').mockResolvedValue(false));
+ restores.push(spyOn(core,'cachedCupsPrinterStatus').mockResolvedValue({ok:true,state:'ready',detail:'idle'}));
+ restores.push(spyOn(core,'cachedListJobs').mockResolvedValue([]));
+ app._getScanJobsForTest().set('active',{id:'active',state:'scanning',printerIp:'192.0.2.10',dpi:300,mode:'Color',fmt:'png',createdAt:Date.now(),cancelRequested:false,progress:'Scanning'});
+ await app.app.request('/api/status?cached=1');await Bun.sleep(0);
+ const data=await (await app.app.request('/api/status?cached=1')).json() as any;
+ expect(data.scanner.state).toBe('scanning');expect(scanner).not.toHaveBeenCalled();
+});
+
+test('offline background sampling preserves known supplies without polling the ink backend',async()=>{
+ inkProbe.mockResolvedValue({ok:true,source:'snmp',updated_at:new Date().toISOString(),cartridges:[{key:'black',name:'Black',color:'#000',level:78,state:'ok',detail:''}],message:''});
+ await app.app.request('/api/ink');expect(inkProbe).toHaveBeenCalledTimes(1);
+ restores.push(spyOn(core,'cachedPrinterReachable').mockResolvedValue(false));
+ restores.push(spyOn(core,'cachedCupsPrinterStatus').mockResolvedValue({ok:true,state:'ready',detail:'idle'}));
+ restores.push(spyOn(core,'scannerStatus').mockResolvedValue({ok:false,state:'not_detected',detail:'offline',backend:null,device:null,open_source:false}));
+ restores.push(spyOn(core,'cachedListJobs').mockResolvedValue([]));
+ app.dashboardStatus.refresh();
+ let data:any;for(let i=0;i<250;i++){ await Bun.sleep(20);data=await (await app.app.request('/api/status?cached=1')).json();if(data.status_meta.parts.ink.stale)break; }
+ expect(data.ink.cartridges[0].level).toBe(78);expect(data.status_meta.parts.ink.stale).toBe(true);expect(inkProbe).toHaveBeenCalledTimes(1);
 });

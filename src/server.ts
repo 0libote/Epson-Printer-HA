@@ -1,5 +1,5 @@
 import { buildInfo } from "./system/build-info.ts";
-import app, { MAX_UPLOAD_MB, deviceRecovery } from "./app.ts";
+import app, { MAX_UPLOAD_MB, deviceRecovery, dashboardStatus } from "./app.ts";
 import { main as historyMain } from "./history_worker.ts";
 
 const port = Number.parseInt(process.env.WEB_PORT || "8080", 10);
@@ -16,6 +16,7 @@ if (import.meta.main) {
   }
 
   const stopRecovery = deviceRecovery.start();
+  const stopStatus = dashboardStatus.start();
   const server = Bun.serve({
     port,
     hostname: "0.0.0.0",
@@ -49,6 +50,7 @@ if (import.meta.main) {
     if (_shuttingDown) return;
     _shuttingDown = true;
     stopRecovery();
+    stopStatus();
     console.log(`[server] Received ${sig}, draining…`);
     try { server.stop(false); } catch {}
     // Give in-flight requests a few seconds, then force out so the

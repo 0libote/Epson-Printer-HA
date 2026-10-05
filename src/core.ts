@@ -37,4 +37,6 @@ export async function scannerStatus(ip: string) {
 }
 export const scannerManager = createScannerManager(saneService, (...args) => runCommand(...args));
 export function scanDocument(...args: Parameters<typeof scannerManager.scan>) { return scannerManager.scan(...args); }
-export function clearStatusCaches() { clearNetworkCache(); cupsBackend.clearCache(); saneService.clearStatusCache(); }
+const statusInvalidators = new Set<() => void>();
+export function onStatusInvalidated(callback: () => void) { statusInvalidators.add(callback); return () => statusInvalidators.delete(callback); }
+export function clearStatusCaches() { for (const invalidate of statusInvalidators) invalidate(); clearNetworkCache(); cupsBackend.clearCache(); saneService.clearStatusCache(); }

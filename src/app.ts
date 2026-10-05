@@ -11,6 +11,7 @@ import { join, basename, extname } from "node:path";
 import { mkdirSync, readdirSync, statSync, unlinkSync, rmSync, linkSync, renameSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import {
+  onStatusInvalidated,
   cupsBackend,
   scannerManager,
   cachedCupsPrinterStatus,
@@ -75,6 +76,7 @@ export let WEB_PASSWORD = process.env.WEB_PASSWORD || "";
 export let SESSION_COOKIE_SECURE = ["1", "true", "yes", "on"].includes((process.env.SESSION_COOKIE_SECURE || "false").trim().toLowerCase());
 
 export function _setAppDirForTest(dir: string) {
+  dashboardStatus?.reset();
   _settingsCache = null;
   _recentScansCache = null;
   APP_DIR = dir;
@@ -1290,9 +1292,11 @@ app.post("/api/printer/recover", async c => {
 registerDeviceApi(app, { auth: requireAuth, ip: currentPrinterIp, queue: currentPrinterName,
  scanner: scannerManager, printer: printerDeviceService, csrf: isCsrfValid, readBody: readMutationBody, recovery: deviceRecovery.status });
 
-registerStatusApi(app, { requireAuth, currentPrinterIp, currentPrinterName, currentDisplayName,
- clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService, recovery: deviceRecovery.status,
+export const dashboardStatus = registerStatusApi(app, { requireAuth, currentPrinterIp, currentPrinterName, currentDisplayName,
+ clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService, recovery: deviceRecovery.status, dataDir: () => APP_DIR, scannerBusy: () => !!findActiveScanJob() || operationLocks.has("scanner"), csrf: isCsrfValid, readBody: readMutationBody,
  limits: () => ({ upload: MAX_UPLOAD_MB, scans: MAX_SCAN_FILES }) });
+
+onStatusInvalidated(() => dashboardStatus.invalidate());
 
 // Vite SPA assets (public/assets/*) – StyleX + Vite emit here
 app.get("/assets/*", async(c)=>{
