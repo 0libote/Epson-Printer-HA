@@ -1,5 +1,5 @@
 [install]
-# Bun 1.4 isolated linker with global virtual store - up to 7x faster warm installs
+# Bun 1.4.3 isolated linker with global virtual store - up to 7x faster warm installs
 linker = "isolated"
 saveTextLockfile = true
 frozenLockfile = false
@@ -10,10 +10,10 @@ disableManifestCache = false
 [test]
 preload = []
 timeout = 10000
-# Bun 1.4 parallel test execution enabled by default via --parallel flag
+# Bun 1.4.3 parallel test execution enabled by default via --parallel flag
 # coverage reporter defaults
 coverageReporter = ["text", "lcov"]
 
 [run]
-# Bun 1.4 bun run --parallel support for concurrent scripts
+# Bun 1.4.3 bun run --parallel support for concurrent scripts
 bun = true

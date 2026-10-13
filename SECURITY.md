@@ -8,6 +8,7 @@ Epson Printer Hub is intended for a trusted private LAN.
 - Leaving either credential blank disables dashboard authentication. This is convenient on a trusted household LAN, but anyone who can reach the dashboard can then submit print jobs, start scans and change the configured queue.
 - CUPS permits LAN clients to print and read queue status. Queue administration is restricted to localhost, and all operations not explicitly allowed by the policy are denied.
 - The web dashboard and history collector run as an unprivileged service account. CUPS, D-Bus and Avahi retain only the privileges their system daemons require.
+- Both Bun processes start with `--disallow-code-generation-from-strings`, so `eval()` and `new Function()` throw instead of executing. The codebase uses neither; a future dependency attempting runtime code generation fails loudly rather than running.
 - The main `epson-printer-ha` image contains no Epson Scan 2 proprietary network plug-in and has no package-install endpoint.
 - The optional `epson-printer-ha-scan-bridge` sidecar downloads a pinned Epson bundle directly over HTTPS, verifies its SHA-256 checksum, limits archive size and extraction, and only accepts pinned amd64 versions and exact filenames for Debian packages named `epsonscan2` and `epsonscan2-non-free-plugin`.
 - The pinned Epson scanner bundle is x86-64 only. On another architecture, or without explicit licence acceptance, the sidecar exits with a clear permanent setup error instead of repeatedly downloading it.

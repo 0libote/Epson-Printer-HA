@@ -249,7 +249,7 @@ Because installing a manufacturer connectivity suite on every computer just to p
 
 ## Local development
 
-Install Bun 1.4.2, then run `bun install --frozen-lockfile` and `bun run dev:all`.
+Install Bun 1.4.3, then run `bun install --frozen-lockfile` and `bun run dev:all`.
 Open `http://localhost:5173` for the dashboard; Vite proxies API and form requests
 (including network-sharing settings) to the backend on port 8080. Set `APP_DATA`
 to a writable directory when running outside Docker. CUPS, SANE and the Epson

@@ -31,9 +31,9 @@ RUN arch="$(dpkg --print-architecture)"; \
       exit 1; \
     fi
 
-# Install Bun 1.4.2 (Rust) - official install script
-RUN curl --proto '=https' --tlsv1.2 -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.4.2/bun-linux-x64.zip -o /tmp/bun.zip && \
-    echo "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913  /tmp/bun.zip" | sha256sum -c && \
+# Install Bun 1.4.3 (Rust) - official install script
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-x64.zip -o /tmp/bun.zip && \
+    echo "3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18  /tmp/bun.zip" | sha256sum -c && \
     unzip /tmp/bun.zip -d /tmp && mv /tmp/bun-linux-x64/bun /usr/local/bin/bun && chmod +x /usr/local/bin/bun && rm -rf /tmp/bun.zip /tmp/bun-linux-x64 && \
     mkdir -p /root/.bun/bin && ln -sf /usr/local/bin/bun /root/.bun/bin/bun
 ENV BUN_INSTALL=/root/.bun
@@ -65,7 +65,7 @@ ENV WEB_PORT=8080 \
     APP_DATA=/data \
     PRINT_PROTOCOL=auto \
     SANE_NET_TIMEOUT=1 \
-    BUN_VERSION=1.4.2
+    BUN_VERSION=1.4.3
 
 EXPOSE 8080 631
 VOLUME ["/data", "/var/cache/cups", "/var/spool/cups"]

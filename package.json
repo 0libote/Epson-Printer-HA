@@ -1,10 +1,10 @@
 {
   "name": "epson-printer-ha",
   "version": "1.4.0",
-  "description": "Epson Printer Hub - Bun 1.4 migration",
+  "description": "Epson Printer Hub - Bun 1.4.3",
   "type": "module",
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.3"
   },
   "scripts": {
     "dev": "bun --watch src/server.ts",
@@ -15,29 +15,27 @@
     "preview": "vite preview --config frontend/vite.config.ts",
     "test": "bun test --timeout 10000",
     "test:watch": "bun test --watch --timeout 10000",
-    "lint": "tsc --noEmit",
-    "typecheck:web": "tsc --project frontend/tsconfig.json --noEmit",
+    "lint": "bun check",
+    "typecheck:web": "bun check -p frontend",
     "format": "bun x prettier --write ."
   },
   "dependencies": {
-    "@stylexjs/stylex": "^0.19.0",
-    "@tanstack/react-query": "^5.102.8",
-    "hono": "^4.13.7",
-    "lucide-react": "^1.41.0",
+    "@stylexjs/stylex": "^0.19.1",
+    "@tanstack/react-query": "^5.104.2",
+    "hono": "^4.13.13",
+    "lucide-react": "^1.56.0",
     "pdf-lib": "^1.17.1",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@stylexjs/babel-plugin": "^0.19.0",
-    "@stylexjs/eslint-plugin": "^0.19.0",
-    "@stylexjs/unplugin": "^0.19.0",
-    "@types/bun": "^1.4.1",
-    "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.7",
-    "@vitejs/plugin-react": "^6.1.1",
-    "typescript": "^7.0.2",
-    "vite": "^8.2.2"
+    "@stylexjs/babel-plugin": "^0.19.1",
+    "@stylexjs/unplugin": "^0.19.1",
+    "@types/bun": "^1.4.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "vite": "^8.3.4"
   },
   "trustedDependencies": []
 }

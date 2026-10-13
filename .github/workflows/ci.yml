@@ -23,8 +23,8 @@ jobs:
           echo "BUILD_NUMBER=$((131 + BUILD_RUN))" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2.0.2
         with:
-          bun-version: 1.4.2
-      - name: Install dependencies (Bun 1.4 isolated linker)
+          bun-version: 1.4.3
+      - name: Install dependencies (Bun 1.4.3 isolated linker)
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Typecheck
         run: |
@@ -42,7 +42,7 @@ jobs:
         run: |
           docker compose -f docker-compose.yml config -q
           docker compose -f compose.zimaos.yml config -q
-      - name: Run tests (bun:test - Bun 1.4)
+      - name: Run tests (bun:test - Bun 1.4.3)
         run: bun test --timeout 10000
 
   docker:
