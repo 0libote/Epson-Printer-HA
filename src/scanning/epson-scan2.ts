@@ -16,6 +16,10 @@ export class EpsonScan2Backend implements ScannerBackend {
  private inflight: Promise<EpsonHealth> | null = null;
  private statuses = new Map<string, { until: number; value: { ok: boolean; state: string; error?: string } }>();
  private statusInflight = new Map<string, Promise<{ ok: boolean; state: string; error?: string }>>();
+ // A cancel acknowledgement does not prove the remote acquisition has stopped.
+ // Keep uncertain jobs across discovery/cache invalidation so another adapter
+ // cannot acquire the same scanner while the sidecar still owns it.
+ private unsettled = new Map<string, string>();
  lastError: string | null = null;
  constructor(private request: RequestFn = (path, body) => fetch(`http://scanner${path}`, {
    unix: process.env.EPSON_SCANNER_SOCKET || "/run/epson-scanner/api.sock",
@@ -28,6 +32,23 @@ export class EpsonScan2Backend implements ScannerBackend {
   catch { throw new Error("Scanner sidecar unavailable; the scanner may still be running"); }
  }
  invalidate() { this.healthCache = null; this.statuses.clear(); }
+ async canAcquire(ip: string): Promise<boolean> {
+  const id = this.unsettled.get(ip);
+  if (!id) return true;
+  try {
+   const response = await this.call(`/jobs/${id}`);
+   // The sidecar only removes settled jobs (expiry or a later acquisition).
+   // Restarting it also stops its acquisition process before losing the job.
+   if (response.status === 404) { this.unsettled.delete(ip); return true; }
+   if (!response.ok) return false;
+   const job = await response.json() as { state?: string };
+   if (["done", "error", "cancelled"].includes(job.state ?? "")) {
+    this.unsettled.delete(ip);
+    return true;
+   }
+  } catch { /* Unreachable is not evidence that the scanner stopped. */ }
+  return false;
+ }
  async health(): Promise<EpsonHealth> {
   if (this.healthCache && this.healthCache.until > Date.now()) return this.healthCache.value;
   if (this.inflight) return this.inflight;
@@ -85,12 +106,14 @@ export class EpsonScan2Backend implements ScannerBackend {
   };
   try {
    if (control?.isCancelled()) return [commandResult(false, "", "scan_cancelled", 130), null];
+   if (!(await this.canAcquire(ip))) return [commandResult(false, "", "The previous Epson scan has not confirmed it stopped. Check the scanner connection before trying again.", 1), null];
    if (!(await this.supports(ip, options))) return [commandResult(false, "", "No validated Epson profile for these settings", 2), null];
    const response = await this.call("/scan", { ip, dpi: options.dpi ?? 300, mode: options.mode ?? "Color", format: "png" });
    if (!response.ok) throw new Error(response.status === 409 ? "Scanner busy" : "Epson Scan 2 could not start the scan");
    const started = await response.json() as { id: string };
    if (!/^[a-f0-9]{32}$/.test(started.id)) throw new Error("Invalid Epson scan job response");
    id = started.id;
+   this.unsettled.set(ip, id);
    control?.registerProcess({ kill: cancel });
    const deadline = Date.now() + 280_000;
    while (Date.now() < deadline) {
@@ -98,6 +121,7 @@ export class EpsonScan2Backend implements ScannerBackend {
     const poll = await this.call(`/jobs/${id}`);
     if (!poll.ok) throw new Error("Lost contact with Epson scanner; it may still be running");
     const job = await poll.json() as { state: string };
+    if (["done", "error", "cancelled"].includes(job.state)) this.unsettled.delete(ip);
     if (job.state === "cancelled") return [commandResult(false, "", "scan_cancelled", 130), null];
     if (job.state === "error") throw new Error("Epson scan failed; check the printer and validated profile");
     if (job.state === "done") {

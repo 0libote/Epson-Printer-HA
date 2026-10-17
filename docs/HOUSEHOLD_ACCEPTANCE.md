@@ -33,6 +33,8 @@ publishers, opt-in rotation, read-only/low-space rejection and preservation of
 originals. A process test verifies that a storage failure after acquisition never
 starts another acquisition automatically. Library API tests search and paginate
 an existing collection beyond its configured scan limit.
+Epson adapter tests also verify that a lost status response and an acknowledged
+cancel cannot permit a fallback acquisition while the remote job is still active.
 
 Browser verification can use a temporary fixture backend with no printer
 commands executed. That verifies interface behavior, not physical output.
