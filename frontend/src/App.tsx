@@ -4,23 +4,23 @@ import { Maintenance } from "./components/Maintenance";
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "./styles/tokens.stylex";
 import { useEffect, useState, lazy, Suspense, type CSSProperties } from "react";
-import { Clock, RefreshCw, ShieldAlert } from "lucide-react";
+import { ArrowRight, Clock, FolderOpen, ListOrdered, Printer, RefreshCw, ScanLine, ShieldAlert, ShieldCheck, Wifi } from "lucide-react";
 import { useStatus, useHistory, useScans } from "./hooks/useStatus";
 import { useToast } from "./components/Toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { Header } from "./components/Header";
 import { PrintCard } from "./components/PrintCard";
 import { ScanCard } from "./components/ScanCard";
-import { StatusStrip, Queue, PrinterUnreachableBanner } from "./components/Overview";
+import { StatusStrip, Queue, QueueAttention, PrinterUnreachableBanner } from "./components/Overview";
 import { InkLevels } from "./components/InkLevels";
 import { SharingSettings, PrinterAddressSettings, AdvancedDiagnostics } from "./components/Settings";
-import { refreshStatus, type ScanItem } from "./lib/api";
+import { refreshStatus, type ScanItem, type ScanSort } from "./lib/api";
 
 const Library = lazy(() => import("./components/Library").then(m => ({ default: m.Library })));
 const History = lazy(() => import("./components/History").then(m => ({ default: m.History })));
 const PreviewModal = lazy(() => import("./components/PreviewModal").then(m => ({ default: m.PreviewModal })));
 const sectionInfo = {
- overview: { title: "Make room for the everyday.", description: "A document to print. A page to keep. All in one little workspace." },
+ overview: { title: "Paperwork, handled.", description: "Print what you need. Keep what matters. All right here at home." },
  scans: { title: "Saved scans", description: "Preview, download and organise the pages saved on your hub." },
  history: { title: "Print history", description: "Your recent documents, with progress and results." },
  settings: { title: "Printer settings", description: "Connect your printer and share it across your home." },
@@ -109,10 +109,11 @@ export default function App() {
     return ["overview", "scans", "history", "settings"].includes(hash) ? hash as Tab : "overview";
   };
   const [tab, setTab] = useState<Tab>(readTab);
+  const [workflow, setWorkflow] = useState<"print" | "scan">(window.location.hash === "#scan" ? "scan" : "print");
   const historyQ = useHistory(100, tab === "history");
   const history = historyQ.data?.history || [];
   useEffect(() => {
-    const update = () => { if (["overview", "scans", "history", "settings"].includes(window.location.hash.slice(1))) setTab(readTab()); };
+    const update = () => { if (window.location.hash === "#scan") { setTab("overview"); setWorkflow("scan"); } else if (["overview", "scans", "history", "settings"].includes(window.location.hash.slice(1))) setTab(readTab()); };
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
   }, []);
@@ -125,7 +126,9 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
-  const scansQ = useScans(100, !!printerIp && tab === "scans");
+  const [scanFilter, setScanFilter] = useState("");
+  const [scanSort, setScanSort] = useState<ScanSort>("newest");
+  const scansQ = useScans(100, !!printerIp && tab === "scans", scanFilter, scanSort);
   const scans: ScanItem[] = (scansQ.data?.scans as ScanItem[]) || [];
   const scansTotal = scansQ.data?.total ?? scans.length;
   const scansMax = scansQ.data?.max ?? 100;
@@ -185,6 +188,7 @@ export default function App() {
       <div {...stylex.props(s.page)}>
         <Header printerName={printerName} displayName={displayName} online={false} setupNeeded />
         <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
+          <div className="setup-intro"><span className="setup-mark"><Printer size={30} /></span><p>WELCOME TO PRINT ROOM</p><h1>One printer.<br />Everyone at home.</h1><div>Connect your Epson once, then print and scan from any device on your network.</div><ol><li><span>1</span> Turn on your printer</li><li><span>2</span> Join the same Wi-Fi</li><li><span>3</span> Connect below</li></ol></div>
           <PrinterAddressSettings printerIp="" recovery={data?.recovery} onSaved={() => refreshAll(qc)} />
           <footer {...stylex.props(s.footer)}>
             <span>Print Room · Epson XP-2200</span>
@@ -197,19 +201,19 @@ export default function App() {
 
 
   return (
-    <div {...stylex.props(s.page)} className={`${stylex.props(s.page).className} workspace`} style={{ "--ui-bg": vars.bg, "--ui-panel": vars.panel, "--ui-sunken": vars.bgSunken, "--ui-text": vars.text, "--ui-muted": vars.textSecondary, "--ui-line": vars.line, "--ui-accent": vars.accent, "--ui-soft": vars.accentSoft } as CSSProperties}>
-      <WorkspaceNavigation view={tab} onView={view => { window.location.hash = view; setTab(view); }} displayName={displayName} build={data?.build_number} scanCount={scansQ.data ? scansTotal : undefined} historyCount={historyQ.data ? history.length : undefined} />
+    <div {...stylex.props(s.page)} className={`${stylex.props(s.page).className} workspace`} style={{ "--ui-on-accent": vars.onAccent, "--ui-bg": vars.bg, "--ui-panel": vars.panel, "--ui-sunken": vars.bgSunken, "--ui-text": vars.text, "--ui-muted": vars.textSecondary, "--ui-line": vars.line, "--ui-accent": vars.accent, "--ui-soft": vars.accentSoft, "--ui-border-strong": vars.lineStrong, "--ui-good": vars.good, "--ui-good-soft": vars.goodSoft, "--ui-scan": vars.teal, "--ui-scan-soft": vars.tealSoft } as CSSProperties}>
+      <WorkspaceNavigation view={tab} onView={view => { window.location.hash = view; setTab(view); }} displayName={displayName} build={data?.build_number} scanCount={data?.scan_storage?.total ?? (scansQ.data ? scansTotal : undefined)} historyCount={historyQ.data ? history.length : undefined} />
       <a className="skip-link" href="#main-content">Skip to content</a>
       <Header printerName={printerName} displayName={displayName} online={reachable} checking={!reachChecked} stale={statusStale || isError} setupNeeded={false} />
       <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
         <div {...stylex.props(s.hero)} className={`${stylex.props(s.hero).className} workspace-hero`}>
-          <div><p {...stylex.props(s.eyebrow)}>{tab === "overview" ? "YOUR HOME PRINTING STUDIO" : "YOUR WORKSPACE"}</p><h1 {...stylex.props(s.heading)}>{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
-          <div className="workspace-hero-device"><PrinterIllustration /><div><small>YOUR PRINTER</small><strong>{displayName}</strong><span>{!reachChecked ? "Checking connection…" : statusStale ? "Last known connection" : reachable ? "Connected to your home" : "Waiting to reconnect"}</span></div></div>
+          <div><p {...stylex.props(s.eyebrow)}>{tab === "overview" ? "A LITTLE LESS PAPERWORK" : "YOUR HOME WORKSPACE"}</p><h1 {...stylex.props(s.heading)} className={`${stylex.props(s.heading).className} workspace-title`}>{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
+          <span className="local-badge"><ShieldCheck size={15} /> On your home network</span>
         </div>
         <StatusStrip
           printerChecking={!reachChecked || statusStale || !!parts?.device?.stale || !!parts?.printer?.stale}
           scannerChecking={!!parts && (!parts.scanner?.updated_at || parts.scanner.stale)}
-          queueChecking={!!parts && !parts.queue?.updated_at}
+          queueChecking={!!parts && (!parts.queue?.updated_at || parts.queue.stale)}
           printerOk={reachable && !!printer.ok}
           printerState={data?.device?.state || printer.state}
           printerDetail={`${displayName} · ${printerIp}`}
@@ -221,38 +225,61 @@ export default function App() {
 
 
         <section hidden={tab !== "overview"} aria-label="Print and scan">
+            {printer.state === "disabled" ? <QueueAttention onChanged={() => refreshAll(qc)} /> : null}
             {printerIp && reachChecked && !reachable && !statusStale ? (
               <div {...stylex.props(s.stack)}>
                 <PrinterUnreachableBanner recoveryMessage={data?.recovery?.message} network={data?.printer_network ?? null} queuedJobs={queue.length} />
               </div>
             ) : null}
-            <div {...stylex.props(s.actionGrid)} className={`${stylex.props(s.actionGrid).className} workspace-actions`}>
-              <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} />
-              <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} capabilities={data?.scanner.capabilities} onScanned={() => refreshAll(qc)} />
-            </div>
-            {queue.length > 0 ? (
-              <div {...stylex.props(s.stack)}>
-                <Queue jobs={queue} onChanged={() => refreshAll(qc)} />
+            <div className="workbench-grid">
+              <div className="workbench-panel">
+                <div className="workflow-tabs" role="tablist" aria-label="Choose an action" onKeyDown={event => {
+                  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                  event.preventDefault();
+                  const next = event.key === "Home" ? "print" : event.key === "End" ? "scan" : workflow === "print" ? "scan" : "print";
+                  setWorkflow(next);
+                  document.getElementById(`workflow-${next}`)?.focus();
+                }}>
+                  <button id="workflow-print" role="tab" aria-selected={workflow === "print"} aria-controls="print-panel" tabIndex={workflow === "print" ? 0 : -1} onClick={() => setWorkflow("print")}><Printer size={17} /> Print a document</button>
+                  <button id="workflow-scan" role="tab" aria-selected={workflow === "scan"} aria-controls="scan-panel" tabIndex={workflow === "scan" ? 0 : -1} onClick={() => setWorkflow("scan")}><ScanLine size={17} /> Scan a page</button>
+                </div>
+                <div id="print-panel" role="tabpanel" aria-labelledby="workflow-print" hidden={workflow !== "print"}>
+                  <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} offline={reachChecked && !statusStale && !reachable} />
+                </div>
+                <div id="scan-panel" role="tabpanel" aria-labelledby="workflow-scan" hidden={workflow !== "scan"}>
+                  <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} capabilities={data?.scanner.capabilities} storage={data?.scan_storage} onScanned={() => refreshAll(qc)} />
+                </div>
               </div>
-            ) : null}
-            <div {...stylex.props(s.stack)}>
-              <InkLevels key={printerIp} initial={initialInk} stale={parts?.ink?.stale} />
-              <Maintenance capabilities={data?.printer_capabilities} onChanged={() => refreshAll(qc)} />
+              <aside className="printer-rail" aria-label="Your printer">
+                <div className="printer-summary"><div className="rail-heading"><span>YOUR PRINTER</span><a href="#settings" aria-label="Manage printer"><ArrowRight size={16} /></a></div><div className="printer-stage"><PrinterIllustration /></div><h2>{displayName}</h2><p><Wifi size={13} /> {printerIp}</p><span className={`connection-label ${reachable && !statusStale ? "is-online" : ""}`}><span />{!reachChecked ? "Checking connection" : statusStale ? "Last known connection" : reachable ? printer.ok && printer.state !== "disabled" ? "Connected to your network" : "Connected · Queue needs attention" : "Waiting to reconnect"}</span></div>
+                <InkLevels key={printerIp} initial={initialInk} stale={parts?.ink?.stale} />
+                <a className="device-help-link" href="#settings">Connect another device <ArrowRight size={14} /></a>
+              </aside>
             </div>
+            <div className="queue-area">
+              {queue.length > 0 ? <Queue jobs={queue} onChanged={() => refreshAll(qc)} /> : <div className="queue-empty"><span className="queue-empty-icon"><ListOrdered size={22} strokeWidth={1.5} /></span><div><h2>{parts?.queue?.error ? "Print queue temporarily unavailable" : parts && (!parts.queue?.updated_at || parts.queue.stale) ? "Checking the print queue" : "A clear queue. A fresh start."}</h2><p>{parts?.queue?.error ? "The last queue check failed. Refresh status or check the hub in Settings." : parts && (!parts.queue?.updated_at || parts.queue.stale) ? "Jobs will appear here once the hub has checked CUPS." : "Your print jobs will appear here while they’re waiting or printing."}</p></div><a href="#history">Print history <ArrowRight size={14} /></a></div>}
+            </div>
+            <div className="home-footnotes"><span><ShieldCheck size={14} /> Files stay on your home network</span><a href="#scans"><FolderOpen size={14} /> Find your saved scans <ArrowRight size={13} /></a></div>
         </section>
 
         {tab === "scans" ? (
           <div {...stylex.props(s.stack)}>
             {scansQ.isError ? <p role="alert">Couldn’t load saved scans: {scansQ.error.message} <button onClick={() => scansQ.refetch()}>Retry</button></p> : null}
-            <SectionBoundary key={tab}><Suspense fallback={<SectionLoading />}><Library
+            {!scansQ.isError || scansQ.data ? <SectionBoundary key={tab}><Suspense fallback={<SectionLoading />}><Library
               scans={scans}
               total={scansTotal}
               max={scansMax}
+              storage={scansQ.data?.storage}
+              filter={scanFilter} onFilter={setScanFilter} sort={scanSort} onSort={setScanSort}
+              matched={scansQ.data?.matched ?? scansTotal}
+              hasMore={scansQ.hasNextPage} loadingMore={scansQ.isFetchingNextPage}
+              searching={scansQ.isSearching}
+              onLoadMore={() => scansQ.fetchNextPage()}
               now={now}
               loading={scansQ.isLoading}
               onChanged={() => refreshAll(qc)}
               onPreview={setPreviewScan}
-            /></Suspense></SectionBoundary>
+            /></Suspense></SectionBoundary> : null}
           </div>
         ) : null}
 
@@ -274,6 +301,7 @@ export default function App() {
               host={host}
               onSaved={() => refreshAll(qc)}
             />
+            <Maintenance capabilities={data?.printer_capabilities} onChanged={() => refreshAll(qc)} />
             <AdvancedDiagnostics onChanged={() => refreshAll(qc)} />
           </div>
         ) : null}

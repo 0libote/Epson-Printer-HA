@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clearCachedCsrf, deleteScan, cancelScanJob, cancelAllScans, fetchHistory, fetchScans, postClientSettings } from "../../frontend/src/lib/api";
+import { clearCachedCsrf, deleteScan, cancelScanJob, cancelAllScans, fetchHistory, fetchScans, postClientSettings, startScanJob, pollScanJob } from "../../frontend/src/lib/api";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -62,6 +62,39 @@ describe("dashboard API client", () => {
       expect(attempts).toBe(2);
     });
   }
+
+  test("saved-scan requests send complete-library search, ordering and page offset", async () => {
+    mockFetch(async (input,init) => {
+      const url=new URL(String(input),"http://localhost");
+      expect(url.searchParams.get("limit")).toBe("100"); expect(url.searchParams.get("offset")).toBe("100");
+      expect(url.searchParams.get("q")).toBe("old receipt"); expect(url.searchParams.get("sort")).toBe("name");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Response.json({scans:[],total:125,matched:1,limit:100,max:100,next_offset:null});
+    });
+    expect((await fetchScans(100,100,"old receipt","name")).matched).toBe(1);
+  });
+
+  test("scan requests preserve their submission identity", async () => {
+    cookie = "csrf_token=token";
+    let calls = 0;
+    mockFetch(async (input, init) => {
+      expect(String(input)).toBe("/api/scan");
+      expect(JSON.parse(String(init?.body)).submission_id).toBe("scan_request_from_browser_123");
+      calls++;
+      return Response.json({ok:true,jobId:"abcdef123456",state:"scanning",pollUrl:"/api/scan/jobs/abcdef123456"}, {status:202});
+    });
+    await startScanJob({ dpi:"300", mode:"Color", format:"pdf", submissionId:"scan_request_from_browser_123" });
+    expect(calls).toBe(1);
+  });
+
+  test("scan polling retains a missing-job HTTP status and has a request deadline", async () => {
+    mockFetch(async (_input, init) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return new Response("Job not found", {status:404});
+    });
+    try { await pollScanJob("abcdef123456"); throw new Error("Expected failure"); }
+    catch (error) { expect((error as {status?:number}).status).toBe(404); }
+  });
 
   test("an HTML fallback is never reported as a successful settings save", async () => {
     cookie = "csrf_token=token";

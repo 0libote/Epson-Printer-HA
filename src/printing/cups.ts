@@ -1,6 +1,7 @@
 import { validateQueue, validatePrinterAddress } from "../system/validation.ts";
 import { commandResult, readCommandStream, type CommandResult, runCommand as defaultRunner } from "../system/commands.ts";
 import { ttlCached } from "../system/cache.ts";
+import { parsePrintOptions, type PrintOptions } from "./options.ts";
 export function createCupsBackend(runCommand: typeof defaultRunner = defaultRunner) {
 async function cupsPrinterStatus(printerName: string): Promise<{ ok: boolean; state: string; detail: string }> {
   try { validateQueue(printerName); } catch { return { ok: false, state: "unconfigured", detail: "Invalid queue name" }; }
@@ -11,7 +12,7 @@ async function cupsPrinterStatus(printerName: string): Promise<{ ok: boolean; st
     let state = "ready";
     if (lower.includes("disabled")) state = "disabled";
     else if (lower.includes("printing")) state = "printing";
-    return { ok: true, state, detail: text };
+    return { ok: state !== "disabled", state, detail: text };
   }
   return { ok: false, state: "unconfigured", detail: text || "CUPS queue not configured" };
 }
@@ -25,7 +26,8 @@ async function cachedCupsPrinterStatus(printerName: string) {
 async function listJobs(printerName: string): Promise<Array<{ id: string; owner: string; size: string; raw: string }>> {
   try { validateQueue(printerName); } catch { return []; }
   const result = await runCommand(["lpstat", "-o", printerName], 5000);
-  if (!result.ok || !result.stdout) return [];
+  if (!result.ok) throw new Error("Print queue is temporarily unavailable");
+  if (!result.stdout) return [];
   const jobs: Array<{ id: string; owner: string; size: string; raw: string }> = [];
   for (const line of result.stdout.split("\n")) {
     const parts = line.trim().split(/\s+/);
@@ -44,13 +46,18 @@ async function cachedListJobs(printerName: string) {
   return ttlCached(jobsCache, jobsInflight, printerName, 4_000, () => listJobs(printerName));
 }
 
-async function submitPrint(printerName: string, path: string, opts: { copies?: number; grayscale?: boolean; title?: string } = {}): Promise<CommandResult> {
+async function submitPrint(printerName: string, path: string, opts: Partial<PrintOptions> & { title?: string } = {}): Promise<CommandResult> {
   try { validateQueue(printerName); } catch { return commandResult(false, "", "Invalid queue name", 2); }
   if (opts.copies !== undefined && (!Number.isInteger(opts.copies) || opts.copies < 1 || opts.copies > 99)) return commandResult(false, "", "Invalid copy count", 2);
+  let validated: PrintOptions;
+  try { validated = parsePrintOptions(opts); } catch (error) { return commandResult(false, "", (error as Error).message, 2); }
   const copies = Math.max(1, Math.min(opts.copies ?? 1, 99));
   const title = (opts.title ?? path.split("/").pop() ?? "WebUI print").slice(0, 255) || "WebUI print";
   const args = ["lp", "-U", "epson", "-d", printerName, "-t", title, "-n", String(copies)];
   if (opts.grayscale) args.push("-o", "Ink=MONO");
+  args.push("-o", `media=${validated.paper}`, "-o", `orientation-requested=${validated.orientation === "landscape" ? 4 : 3}`,
+    "-o", `fit-to-page=${validated.scaling === "fit"}`, "-o", "sides=one-sided", "-o", "Collate=True");
+  if (validated.pages) args.push("-o", `page-ranges=${validated.pages}`);
   args.push(path);
   return runCommand(args, 60_000);
 }
@@ -60,6 +67,13 @@ async function cancelJob(jobId: string): Promise<CommandResult> {
     return commandResult(false, "", "Invalid job id", 2);
   }
   return runCommand(["cancel", jobId], 10_000);
+}
+
+async function resumeQueue(printerName: string): Promise<CommandResult> {
+  try { validateQueue(printerName); } catch { return commandResult(false, "", "Invalid queue name", 2); }
+  const enabled = await runCommand(["cupsenable", printerName], 10_000);
+  if (!enabled.ok) return enabled;
+  return runCommand(["cupsaccept", printerName], 10_000);
 }
 
 async function configureQueue(printerIp: string, opts: { printerName: string; displayName: string; sharePrinter: boolean; oldPrinterName?: string }): Promise<[boolean, string]> {
@@ -83,6 +97,6 @@ async function configureQueue(printerIp: string, opts: { printerName: string; di
   }catch(exc:any){ return [false,String(exc?.message ?? exc)]; }
 }
 return { id: "cups", getStatus: cupsPrinterStatus, cachedStatus: cachedCupsPrinterStatus,
- configureQueue, listJobs, cachedJobs: cachedListJobs, submitJob: submitPrint, cancelJob,
+ configureQueue, listJobs, cachedJobs: cachedListJobs, submitJob: submitPrint, cancelJob, resumeQueue,
  clearCache() { cupsStatusCache.clear(); cupsStatusInflight.clear(); jobsCache.clear(); jobsInflight.clear(); } };
 }

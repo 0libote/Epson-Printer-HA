@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { Moon, Sparkles, Sun } from "lucide-react";
+import { Moon, Printer, Sun } from "lucide-react";
 import { useTheme } from "../styles/ThemeProvider";
 import { Pill, StatusDot } from "./ui";
 
@@ -18,7 +18,7 @@ const s = stylex.create({
     maxWidth: "1180px",
     margin: "0 auto",
     padding: "0 40px",
-    height: "76px",
+    height: "72px",
     "@media (max-width: 600px)": { padding: "0 16px", height: "64px" },
     display: "flex",
     alignItems: "center",
@@ -61,9 +61,9 @@ export function Header({ printerName, displayName, online, setupNeeded, checking
     <header {...stylex.props(s.bar)}>
       <div {...stylex.props(s.inner)}>
         <a {...stylex.props(s.brand)} href="#overview">
-          <span {...stylex.props(s.mark)}><Sparkles size={17} /></span>
+          <span {...stylex.props(s.mark)}><Printer size={17} /></span>
           <span {...stylex.props(s.brandText)}>
-            <span {...stylex.props(s.name)}>Home workspace</span>
+            <span {...stylex.props(s.name)}>Print Room</span>
             <span {...stylex.props(s.sub)}>{setupNeeded ? "setup" : displayName || printerName}</span>
           </span>
         </a>

@@ -350,8 +350,8 @@ describe("web - Bun Hono", () => {
       body: form,
       headers: { Accept: "application/json", "X-CSRF-Token": csrf },
     });
-    // no CUPS queue exists in the test env, so the pre-check must explain that
-    expect(res.status).toBe(500);
+    // An unavailable queue is a retryable service failure.
+    expect(res.status).toBe(503);
     const data: any = await res.json();
     expect(data.ok).toBe(false);
     expect(String(data.error || "")).toContain("Print queue");
@@ -451,6 +451,19 @@ describe("web - Bun Hono", () => {
     expect(data.total).toBe(2);
   });
 
+  test("saved-scan search and pagination cover the complete library", async () => {
+    for (let index = 0; index < 125; index++) await Bun.write(join(tmp,"scans",`page-${String(index).padStart(3,"0")}.pdf`), "%PDF-1.4");
+    const client = createClient(appModule.app);
+    const first = await (await client.request("/api/scans?limit=100&sort=name")).json();
+    expect(first.total).toBe(125); expect(first.scans).toHaveLength(100); expect(first.next_offset).toBe(100);
+    const second = await (await client.request("/api/scans?limit=100&offset=100&sort=name")).json();
+    expect(second.scans).toHaveLength(25); expect(second.next_offset).toBeNull(); expect(second.scans[0].name).toBe("page-100.pdf");
+    const found = await (await client.request("/api/scans?q=PAGE-124&limit=1")).json();
+    expect(found.total).toBe(125); expect(found.matched).toBe(1); expect(found.scans[0].name).toBe("page-124.pdf");
+    expect(found.storage).toMatchObject({total:125,max:100,policy:"keep-all",full:true});
+    for (const query of ["offset=-1","offset=1.2","sort=bad"]) expect((await client.request(`/api/scans?${query}`)).status).toBe(400);
+  });
+
   test("JSON null is rejected as a bad request instead of crashing", async () => {
     const client = createClient(appModule.app);
     const csrf = await getCsrf(client, appModule.app);
@@ -459,6 +472,18 @@ describe("web - Bun Hono", () => {
     });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("Expected a JSON object");
+  });
+
+  test("renaming cannot create a filename the download validator rejects", async () => {
+    await Bun.write(join(tmp, "scans", "original.pdf"), "%PDF-1.4");
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const response = await client.request("/api/scans/original.pdf/rename", {
+      method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+      body: JSON.stringify({ name: "notes..final.pdf" }),
+    });
+    expect(response.status).toBe(400);
+    expect(existsSync(join(tmp, "scans", "original.pdf"))).toBe(true);
   });
 
   test("cancelling a queued scan prevents its scheduled execution", async () => {
@@ -508,6 +533,16 @@ describe("web - Bun Hono", () => {
       await Bun.sleep(10);
       expect(existsSync(join(tmp, ".scanner.lock"))).toBe(false);
     } finally { finish([{ ok: false, stdout: "", stderr: "scan_cancelled", returncode: 130 }, null]); warm.mockRestore(); scan.mockRestore(); appModule._resetScanJobsForTest(); }
+  });
+
+  test("saved-scan storage failures are reported instead of appearing empty", async () => {
+    rmSync(join(tmp, "scans"), { recursive: true, force: true });
+    const logging = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await createClient(appModule.app).request("/api/scans");
+      expect(response.status).toBe(503);
+      expect((await response.json()).error).toContain("temporarily unavailable");
+    } finally { logging.mockRestore(); }
   });
 
   test("history storage failures return a retryable error instead of an empty list", async () => {

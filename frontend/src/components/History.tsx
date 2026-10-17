@@ -6,7 +6,7 @@ import type { HistoryItem } from "../lib/api";
 import { s as ui, Card, EmptyState, safeLabel } from "./ui";
 
 const s = stylex.create({
-  searchWrap: { position: "relative", flex: 1 },
+  searchWrap: { position: "relative", flex: 1, minWidth: 0 },
   searchIcon: { position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", opacity: 0.5, pointerEvents: "none" },
   tableWrap: { overflowX: "auto", margin: "0 -20px", padding: "0 20px" },
   table: { width: "100%", borderCollapse: "collapse", fontSize: "13px", minWidth: "560px" },

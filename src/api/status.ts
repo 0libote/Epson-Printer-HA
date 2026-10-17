@@ -1,4 +1,5 @@
 import { createStatusSnapshot } from "../system/status-snapshot.ts";
+import type { ScanStorage } from "../scanning/library.ts";
 import { join } from "node:path";
 import { buildInfo } from "../system/build-info.ts";
 import type { Hono } from "hono";
@@ -14,6 +15,7 @@ export function registerStatusApi(app: Hono, deps: {
  printerDeviceService: ReturnType<typeof createPrinterDeviceService>;
  recovery?: () => unknown;
  scannerBusy?: () => boolean;
+ scanStorage?: () => ScanStorage;
  dataDir?: () => string;
  csrf: (c: any, body: any) => boolean;
  readBody: (c: any) => Promise<any>;
@@ -37,6 +39,7 @@ export function registerStatusApi(app: Hono, deps: {
    scanner: { ok: false, state: "unknown", detail: "Checking scanner in the background…", backend: null, device: null, open_source: false } as Awaited<ReturnType<typeof scannerStatus>>,
    queue: [] as Awaited<ReturnType<typeof cachedListJobs>>,
    device: { state: "unknown" as string, backend: "standard", rawState: "unknown", warnings: [] as string[] },
+   scan_storage: { total:0, reserved:0, max:limits().scans, policy:"keep-all", available_bytes:-1, full:false } as ScanStorage,
    capabilities: { backend: "standard", capabilities: { inkLevels: true, pageCount: false, nozzleCheck: false, headCleaning: false }, maintenance: { state: "unsupported", action: null as string | null } },
   }),
   loaders: {
@@ -56,6 +59,7 @@ export function registerStatusApi(app: Hono, deps: {
     if (deps.scannerBusy?.()) return { ...snapshot.read().values.scanner, ok: true, state: "scanning", detail: "A scan is in progress" };
     return currentPrinterIp() ? scannerStatus(currentPrinterIp()) : { ok: false, state: "setup_required", detail: "", backend: null, device: null, open_source: false };
    },
+   scan_storage: async (): Promise<ScanStorage> => deps.scanStorage?.() ?? {total:0,reserved:0,max:limits().scans,policy:"keep-all",available_bytes:-1,full:false},
    queue: () => currentPrinterIp() ? cachedListJobs(currentPrinterName()) : Promise.resolve([]),
    device: () => printerDeviceService.status(currentPrinterIp(), currentPrinterName()),
    capabilities: () => printerDeviceService.capabilities(currentPrinterIp()),
@@ -76,7 +80,7 @@ export function registerStatusApi(app: Hono, deps: {
    recent_prints: (() => { try { return listPrintHistory(10); } catch { return []; } })(), scans,
    ink: printerIp ? values.ink : null,
    printer_network: printerIp ? printerNetworkHint(printerIp, localIPv4s(), values.reachable) : null,
-   max_upload_mb: limits().upload, max_scan_files: limits().scans,
+   max_upload_mb: limits().upload, max_scan_files: limits().scans, scan_storage: values.scan_storage,
   });
  }
  app.get("/api/status", async c => {
@@ -156,7 +160,10 @@ app.get("/api/health", async(c)=>{
 });
 
 
- return { reset() { snapshot.stop(); snapshot.invalidate(); }, invalidate: snapshot.invalidate, refresh: () => snapshot.background(true), start() {
+ return { refreshScanStorage() {
+  if (!deps.scanStorage) return;
+  try { snapshot.set("scan_storage", deps.scanStorage()); } catch { snapshot.failed("scan_storage"); }
+ }, reset() { snapshot.stop(); snapshot.invalidate(); }, invalidate: snapshot.invalidate, refresh: () => snapshot.background(true), start() {
   snapshot.background(true);
   const timer = setInterval(() => snapshot.background(), 5000); timer.unref?.();
   return () => { clearInterval(timer); snapshot.stop(); };

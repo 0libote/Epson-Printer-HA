@@ -1,15 +1,43 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { useEffect, useMemo, useState } from "react";
-import { Check, Download, Pencil, Search, Trash2, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  Check,
+  Download,
+  FileStack,
+  ScanLine,
+  Pencil,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import { CombineScans } from "./CombineScans";
 import { useToast } from "./Toast";
-import { deleteScan, renameScan, type ScanItem } from "../lib/api";
+import {
+  deleteScan,
+  renameScan,
+  type ScanItem,
+  type ScanSort,
+  type ScanStorage,
+} from "../lib/api";
 import { s as ui, Card, EmptyState } from "./ui";
 
 const s = stylex.create({
-  toolbar: { display: "flex", gap: "8px", marginBottom: "4px", flexWrap: "wrap" },
-  searchWrap: { position: "relative", flex: "1 1 200px" },
-  searchIcon: { position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", opacity: 0.5, pointerEvents: "none" },
+  toolbar: {
+    display: "flex",
+    gap: "8px",
+    marginBottom: "4px",
+    flexWrap: "wrap",
+  },
+  searchWrap: { position: "relative", flex: "1 1 160px", minWidth: 0 },
+  searchIcon: {
+    position: "absolute",
+    left: "11px",
+    top: "50%",
+    transform: "translateY(-50%)",
+    opacity: 0.5,
+    pointerEvents: "none",
+  },
   searchInput: { paddingLeft: "32px" },
   sort: { width: "auto", flexShrink: 0 },
   list: { display: "flex", flexDirection: "column" },
@@ -49,8 +77,25 @@ const s = stylex.create({
     color: "inherit",
     cursor: "pointer",
   },
-  name: { fontFamily: vars.fontSans, fontSize: "13.5px", fontWeight: 550, display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  meta: { fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary, display: "flex", gap: "6px", marginTop: "3px", alignItems: "center" },
+  name: {
+    fontFamily: vars.fontSans,
+    fontSize: "13.5px",
+    fontWeight: 550,
+    display: "block",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  meta: {
+    fontFamily: vars.fontMono,
+    fontSize: "11px",
+    color: vars.textTertiary,
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "4px",
+    marginTop: "3px",
+    alignItems: "center",
+  },
   badge: {
     textTransform: "uppercase",
     borderWidth: "1px",
@@ -75,9 +120,16 @@ const s = stylex.create({
     cursor: "pointer",
   },
   iconBtnDanger: { color: vars.bad },
-  renameRow: { minWidth: 0, flex: 1, display: "flex", gap: "6px", alignItems: "center" },
+  renameRow: {
+    minWidth: 0,
+    flex: 1,
+    display: "flex",
+    gap: "6px",
+    alignItems: "center",
+  },
   bulkBar: {
     display: "flex",
+    flexWrap: "wrap",
     alignItems: "center",
     gap: "10px",
     padding: "8px 4px",
@@ -85,13 +137,17 @@ const s = stylex.create({
     fontSize: "12.5px",
     color: vars.textSecondary,
   },
-  count: { fontFamily: vars.fontMono, fontSize: "11.5px", color: vars.textTertiary },
+  count: {
+    fontFamily: vars.fontMono,
+    fontSize: "11.5px",
+    color: vars.textTertiary,
+  },
 });
 
 const FALLBACK_IMG =
   "data:image/svg+xml," +
   encodeURIComponent(
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#8a8e96' stroke-width='1.5'><rect x='3' y='3' width='18' height='18' rx='2'/><circle cx='8.5' cy='8.5' r='1.5'/><path d='M21 15l-5-5L5 21'/></svg>`
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='#8a8e96' stroke-width='1.5'><rect x='3' y='3' width='18' height='18' rx='2'/><circle cx='8.5' cy='8.5' r='1.5'/><path d='M21 15l-5-5L5 21'/></svg>`,
   );
 
 function relTime(mtimeMs: number, now: number): string {
@@ -108,43 +164,69 @@ function relTime(mtimeMs: number, now: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-export function Library({ scans, total, max, now, loading, onChanged, onPreview }: {
+export function Library({
+  scans,
+  total,
+  max,
+  storage,
+  now,
+  loading,
+  onChanged,
+  onPreview,
+  filter,
+  onFilter,
+  sort,
+  onSort,
+  matched,
+  hasMore,
+  loadingMore,
+  searching,
+  onLoadMore,
+}: {
   scans: ScanItem[];
   total: number;
   max: number;
+  storage?: ScanStorage;
+  filter: string;
+  onFilter: (value: string) => void;
+  sort: ScanSort;
+  onSort: (value: ScanSort) => void;
+  matched: number;
+  hasMore: boolean;
+  loadingMore: boolean;
+  searching: boolean;
+  onLoadMore: () => void;
   now: number;
   loading: boolean;
   onChanged: () => void;
   onPreview: (scan: ScanItem) => void;
 }) {
   const { push } = useToast();
-  const [filter, setFilter] = useState("");
-  const [sort, setSort] = useState<"newest" | "oldest" | "name" | "size">("newest");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [busy, setBusy] = useState(false);
+  const [combineFiles, setCombineFiles] = useState<string[] | null>(null);
   useEffect(() => {
-    setSelected(previous => new Set([...previous].filter(name => scans.some(scan => scan.name === name))));
+    setSelected(
+      (previous) =>
+        new Set(
+          [...previous].filter((name) =>
+            scans.some((scan) => scan.name === name),
+          ),
+        ),
+    );
   }, [scans]);
 
-
-  const visible = useMemo(() => {
-    let out = scans;
-    if (filter.trim()) {
-      const q = filter.toLowerCase();
-      out = out.filter((x) => x.name.toLowerCase().includes(q));
-    }
-    const sorted = [...out];
-    if (sort === "newest") sorted.sort((a, b) => b.mtimeMs - a.mtimeMs);
-    else if (sort === "oldest") sorted.sort((a, b) => a.mtimeMs - b.mtimeMs);
-    else if (sort === "name") sorted.sort((a, b) => a.name.localeCompare(b.name));
-    else sorted.sort((a, b) => b.size - a.size);
-    return sorted;
-  }, [scans, filter, sort]);
+  const visible = scans;
 
   const toggle = (name: string) => {
-    setSelected((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(name)) n.delete(name);
+      else n.add(name);
+      return n;
+    });
   };
 
   const remove = async (name: string) => {
@@ -154,11 +236,21 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
     try {
       await deleteScan(name);
       push({ kind: "success", title: "Deleted", desc: name });
-      setSelected((prev) => { const n = new Set(prev); n.delete(name); return n; });
+      setSelected((prev) => {
+        const n = new Set(prev);
+        n.delete(name);
+        return n;
+      });
       onChanged();
     } catch (err: any) {
-      push({ kind: "error", title: "Couldn't delete", desc: String(err.message || err).slice(0, 220) });
-    } finally { setBusy(false); }
+      push({
+        kind: "error",
+        title: "Couldn't delete",
+        desc: String(err.message || err).slice(0, 220),
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const bulkDelete = async () => {
@@ -170,8 +262,13 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
     setBusy(false);
     const ok = results.filter((r) => r.status === "fulfilled").length;
     const fail = results.length - ok;
-    push({ kind: fail ? "error" : "success", title: fail ? `Deleted ${ok}, ${fail} failed` : `Deleted ${ok} scans` });
-    setSelected(new Set(names.filter((_, i) => results[i].status === "rejected")));
+    push({
+      kind: fail ? "error" : "success",
+      title: fail ? `Deleted ${ok}, ${fail} failed` : `Deleted ${ok} scans`,
+    });
+    setSelected(
+      new Set(names.filter((_, i) => results[i].status === "rejected")),
+    );
     onChanged();
   };
 
@@ -183,139 +280,323 @@ export function Library({ scans, total, max, now, loading, onChanged, onPreview 
     setBusy(true);
     try {
       const res = await renameScan(oldName, v);
-      push({ kind: "success", title: "Renamed", desc: `${oldName} → ${res.name || v}` });
+      push({
+        kind: "success",
+        title: "Renamed",
+        desc: `${oldName} → ${res.name || v}`,
+      });
       setRenaming(null);
       setRenameValue("");
       onChanged();
     } catch (err: any) {
-      push({ kind: "error", title: "Rename failed", desc: String(err.message || err).slice(0, 220) });
-    } finally { setBusy(false); }
+      push({
+        kind: "error",
+        title: "Rename failed",
+        desc: String(err.message || err).slice(0, 220),
+      });
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <Card>
-      <div {...stylex.props(ui.sectionHead)}>
-        <h2 {...stylex.props(ui.sectionTitle)}>Scans</h2>
-        <span {...stylex.props(s.count)}>{total}/{max}</span>
+    <>
+      <div className="library-intro">
+        <span>YOUR PAPER, DIGITISED</span>
+        <p>
+          Keep a single page, or select several scans to bring them together in
+          one PDF.
+        </p>
+        <a href="#scan">
+          Scan a new page <ScanLine size={14} />
+        </a>
       </div>
-
-      <div {...stylex.props(s.toolbar)}>
-        <div {...stylex.props(s.searchWrap)}>
-          <Search size={14} {...stylex.props(s.searchIcon)} />
-          <input
-            {...stylex.props(ui.input, s.searchInput)}
-            placeholder="Filter by name…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            aria-label="Filter scans by name"
-          />
+      <Card>
+        <div {...stylex.props(ui.sectionHead)}>
+          <h2 {...stylex.props(ui.sectionTitle)}>Scans</h2>
+          <span {...stylex.props(s.count)}>
+            {total}/{max}
+          </span>
         </div>
-        <select {...stylex.props(ui.select, s.sort)} value={sort} onChange={(e) => setSort(e.target.value as any)} aria-label="Sort scans">
-          <option value="newest">Newest</option>
-          <option value="oldest">Oldest</option>
-          <option value="name">Name</option>
-          <option value="size">Size</option>
-        </select>
-      </div>
 
-      {selected.size > 0 ? (
-        <div {...stylex.props(s.bulkBar)}>
-          <span>{selected.size} selected</span>
-          <button {...stylex.props(ui.buttonQuiet, ui.buttonDanger)} disabled={busy} onClick={bulkDelete}>
-            <Trash2 size={13} /> Delete selected
-          </button>
-          <button {...stylex.props(ui.buttonQuiet)} onClick={() => setSelected(new Set())}>Clear</button>
-        </div>
-      ) : null}
-
-      {loading ? (
-        <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
-          {[0, 1, 2].map((i) => <div key={i} {...stylex.props(ui.skeleton)} style={{ height: 60 }} />)}
-        </div>
-      ) : visible.length === 0 ? (
-        <EmptyState
-          title={scans.length === 0 ? "No scans yet" : "No matches"}
-          body={scans.length === 0 ? "Your scans will appear here once you scan something." : "Try a different filter."}
-        />
-      ) : (
-        <div {...stylex.props(s.list)}>
-          {visible.map((scan) => (
-            <div key={scan.name} {...stylex.props(s.row)}>
-              <input
-                type="checkbox"
-                checked={selected.has(scan.name)}
-                onChange={() => toggle(scan.name)}
-                aria-label={`Select ${scan.name}`}
-                style={{ width: 16, height: 16, accentColor: vars.accent as string }}
-              />
-              <button
-                type="button"
-                {...stylex.props(s.thumb)}
-                onClick={() => onPreview(scan)}
-                aria-label={`Preview ${scan.name}`}
-                title="Preview"
-              >
-                {scan.ext === ".pdf" ? (
-                  <span style={{ fontFamily: vars.fontMono as string, fontSize: 10, fontWeight: 600, color: vars.bad as string }}>PDF</span>
-                ) : (
-                  <img
-                    src={`/api/scans/${encodeURIComponent(scan.name)}/thumb`}
-                    alt=""
-                    width={52}
-                    height={52}
-                    {...stylex.props(s.thumbImg)}
-                    loading="lazy"
-                    onError={(e) => { const img = e.target as HTMLImageElement; img.onerror = null; img.src = FALLBACK_IMG; }}
-                  />
-                )}
-              </button>
-              {renaming === scan.name ? (
-                <span {...stylex.props(s.renameRow)}>
-                  <input
-                    {...stylex.props(ui.input)}
-                    value={renameValue}
-                    onChange={(e) => setRenameValue(e.target.value)}
-                    autoFocus
-                    placeholder={scan.name.replace(/\.[^.]+$/, "")}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") doRename(scan.name);
-                      if (e.key === "Escape") { setRenaming(null); setRenameValue(""); }
-                    }}
-                    aria-label="New name"
-                  />
-                  <button {...stylex.props(s.iconBtn)} disabled={busy} onClick={() => doRename(scan.name)} aria-label="Confirm rename"><Check size={14} /></button>
-                  <button {...stylex.props(s.iconBtn)} onClick={() => { setRenaming(null); setRenameValue(""); }} aria-label="Cancel rename"><X size={14} /></button>
-                </span>
-              ) : (
-                <button type="button" {...stylex.props(s.nameBtn)} onClick={() => onPreview(scan)} title={scan.mtimeIso}>
-                  <span {...stylex.props(s.name)}>{scan.name}</span>
-                  <span {...stylex.props(s.meta)}>
-                    <span>{scan.sizeDisplay}</span><span>·</span>
-                    <span title={scan.mtimeIso}>{relTime(scan.mtimeMs, now)}</span><span>·</span>
-                    <span {...stylex.props(s.badge)}>{scan.ext.slice(1)}</span>
-                  </span>
-                </button>
-              )}
-              <span {...stylex.props(s.actions)}>
-                <a href={`/scans/${encodeURIComponent(scan.name)}`} {...stylex.props(s.iconBtn)} style={{ textDecoration: "none" }} title="Download" aria-label={`Download ${scan.name}`}>
-                  <Download size={14} />
-                </a>
-                <button
-                  {...stylex.props(s.iconBtn)}
-                  onClick={() => { setRenaming(scan.name); setRenameValue(scan.name.replace(/\.[^.]+$/, "")); }}
-                  title="Rename"
-                  aria-label={`Rename ${scan.name}`}
-                >
-                  <Pencil size={13} />
-                </button>
-                <button {...stylex.props(s.iconBtn, s.iconBtnDanger)} disabled={busy} onClick={() => remove(scan.name)} title="Delete" aria-label={`Delete ${scan.name}`}>
-                  <Trash2 size={14} />
-                </button>
+        {storage ? (
+          <div className="storage-summary" role="status">
+            <div>
+              <strong>
+                {storage.total} saved scans · Limit {storage.max}
+              </strong>
+              <span>
+                {storage.policy === "delete-oldest"
+                  ? "Automatic deletion is enabled for new scans."
+                  : "Your saved documents are kept until you delete them."}
               </span>
             </div>
-          ))}
+            {storage.available_bytes >= 0 ? (
+              <small>
+                {formatStorage(storage.available_bytes)} free on hub
+              </small>
+            ) : null}
+            {storage.full ? (
+              <p>
+                Download and delete unneeded files to make room. PDF assembly
+                always keeps your originals.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {searching ? (
+          <p className="section-loading" role="status">
+            Searching saved scans…
+          </p>
+        ) : null}
+        <div {...stylex.props(s.toolbar)}>
+          <div {...stylex.props(s.searchWrap)}>
+            <Search size={14} {...stylex.props(s.searchIcon)} />
+            <input
+              {...stylex.props(ui.input, s.searchInput)}
+              placeholder="Filter by name…"
+              value={filter}
+              onChange={(e) => onFilter(e.target.value)}
+              aria-label="Filter scans by name"
+            />
+          </div>
+          <select
+            {...stylex.props(ui.select, s.sort)}
+            value={sort}
+            onChange={(e) => onSort(e.target.value as ScanSort)}
+            aria-label="Sort scans"
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="name">Name</option>
+            <option value="size">Size</option>
+          </select>
         </div>
-      )}
-    </Card>
+
+        {selected.size > 0 ? (
+          <div {...stylex.props(s.bulkBar)}>
+            <span>{selected.size} selected</span>
+            <button
+              {...stylex.props(ui.buttonQuiet)}
+              disabled={busy || selected.size < 2 || selected.size > 50}
+              onClick={() =>
+                setCombineFiles(
+                  scans
+                    .filter((scan) => selected.has(scan.name))
+                    .map((scan) => scan.name),
+                )
+              }
+            >
+              <FileStack size={14} /> Combine into PDF
+            </button>
+            <button
+              {...stylex.props(ui.buttonQuiet, ui.buttonDanger)}
+              disabled={busy}
+              onClick={bulkDelete}
+            >
+              <Trash2 size={13} /> Delete selected
+            </button>
+            <button
+              {...stylex.props(ui.buttonQuiet)}
+              onClick={() => setSelected(new Set())}
+            >
+              Clear
+            </button>
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div style={{ display: "grid", gap: 8, padding: "12px 0" }}>
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                {...stylex.props(ui.skeleton)}
+                style={{ height: 60 }}
+              />
+            ))}
+          </div>
+        ) : visible.length === 0 ? (
+          <EmptyState
+            title={total === 0 ? "No scans yet" : "No matches"}
+            body={
+              total === 0
+                ? "Your scans will appear here once you scan something."
+                : "Try a different filter."
+            }
+          />
+        ) : (
+          <div {...stylex.props(s.list)}>
+            {visible.map((scan) => (
+              <div key={scan.name} {...stylex.props(s.row)}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(scan.name)}
+                  onChange={() => toggle(scan.name)}
+                  aria-label={`Select ${scan.name}`}
+                  style={{
+                    width: 16,
+                    height: 16,
+                    accentColor: vars.accent as string,
+                  }}
+                />
+                <button
+                  type="button"
+                  {...stylex.props(s.thumb)}
+                  onClick={() => onPreview(scan)}
+                  aria-label={`Preview ${scan.name}`}
+                  title="Preview"
+                >
+                  {scan.ext === ".pdf" ? (
+                    <span
+                      style={{
+                        fontFamily: vars.fontMono as string,
+                        fontSize: 10,
+                        fontWeight: 600,
+                        color: vars.bad as string,
+                      }}
+                    >
+                      PDF
+                    </span>
+                  ) : (
+                    <img
+                      src={`/api/scans/${encodeURIComponent(scan.name)}/thumb`}
+                      alt=""
+                      width={52}
+                      height={52}
+                      {...stylex.props(s.thumbImg)}
+                      loading="lazy"
+                      onError={(e) => {
+                        const img = e.target as HTMLImageElement;
+                        img.onerror = null;
+                        img.src = FALLBACK_IMG;
+                      }}
+                    />
+                  )}
+                </button>
+                {renaming === scan.name ? (
+                  <span {...stylex.props(s.renameRow)}>
+                    <input
+                      {...stylex.props(ui.input)}
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      autoFocus
+                      placeholder={scan.name.replace(/\.[^.]+$/, "")}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") doRename(scan.name);
+                        if (e.key === "Escape") {
+                          setRenaming(null);
+                          setRenameValue("");
+                        }
+                      }}
+                      aria-label="New name"
+                    />
+                    <button
+                      {...stylex.props(s.iconBtn)}
+                      disabled={busy}
+                      onClick={() => doRename(scan.name)}
+                      aria-label="Confirm rename"
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      {...stylex.props(s.iconBtn)}
+                      onClick={() => {
+                        setRenaming(null);
+                        setRenameValue("");
+                      }}
+                      aria-label="Cancel rename"
+                    >
+                      <X size={14} />
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    {...stylex.props(s.nameBtn)}
+                    onClick={() => onPreview(scan)}
+                    title={scan.mtimeIso}
+                  >
+                    <span {...stylex.props(s.name)}>{scan.name}</span>
+                    <span {...stylex.props(s.meta)}>
+                      <span>{scan.sizeDisplay}</span>
+                      <span>·</span>
+                      <span title={scan.mtimeIso}>
+                        {relTime(scan.mtimeMs, now)}
+                      </span>
+                      <span>·</span>
+                      <span {...stylex.props(s.badge)}>
+                        {scan.ext.slice(1)}
+                      </span>
+                    </span>
+                  </button>
+                )}
+                <span {...stylex.props(s.actions)}>
+                  <a
+                    href={`/scans/${encodeURIComponent(scan.name)}`}
+                    {...stylex.props(s.iconBtn)}
+                    style={{ textDecoration: "none" }}
+                    title="Download"
+                    aria-label={`Download ${scan.name}`}
+                  >
+                    <Download size={14} />
+                  </a>
+                  <button
+                    {...stylex.props(s.iconBtn)}
+                    onClick={() => {
+                      setRenaming(scan.name);
+                      setRenameValue(scan.name.replace(/\.[^.]+$/, ""));
+                    }}
+                    title="Rename"
+                    aria-label={`Rename ${scan.name}`}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    {...stylex.props(s.iconBtn, s.iconBtnDanger)}
+                    disabled={busy}
+                    onClick={() => remove(scan.name)}
+                    title="Delete"
+                    aria-label={`Delete ${scan.name}`}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {hasMore ? (
+          <div className="load-more-scans">
+            <p>
+              Showing {scans.length} of {matched}{" "}
+              {filter ? "matching scans" : "scans"}
+            </p>
+            <button
+              {...stylex.props(ui.buttonQuiet)}
+              disabled={loadingMore}
+              onClick={onLoadMore}
+            >
+              {loadingMore ? "Loading…" : "Load more scans"}
+            </button>
+          </div>
+        ) : null}
+      </Card>
+      {combineFiles ? (
+        <CombineScans
+          files={combineFiles}
+          onClose={() => setCombineFiles(null)}
+          onCreated={() => {
+            setSelected(new Set());
+            onChanged();
+          }}
+        />
+      ) : null}
+    </>
   );
+}
+
+function formatStorage(bytes: number) {
+  return bytes >= 1024 ** 3
+    ? `${(bytes / 1024 ** 3).toFixed(1)} GB`
+    : `${Math.floor(bytes / 1024 ** 2)} MB`;
 }

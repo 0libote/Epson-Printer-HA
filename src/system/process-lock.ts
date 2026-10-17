@@ -20,18 +20,9 @@ function removeOperationLockFs(lockPath: string): void {
 async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise<{ acquired: boolean; result?: T }> {
   const lockPath = join(dataDir(), `.${name}.lock`);
   const staleMs = operationLockStaleMs(name);
-  const heldAt = operationLocks.get(name);
-  if (heldAt !== undefined) {
-    if (Date.now() - heldAt.acquiredAt > staleMs) {
-      // Previous holder hung/crashed without reaching finally (e.g. a
-      // scanimage promise that never settled). Reap it so one stuck scan
-      // can't block everything until container restart.
-      operationLocks.delete(name);
-      removeOperationLockFs(lockPath);
-    } else {
-      return { acquired: false };
-    }
-  }
+  // An in-memory holder is a live promise. Age alone cannot prove its
+  // subprocess exited; overlapping hardware operations is never safe.
+  if (operationLocks.has(name)) return { acquired: false };
   try {
     mkdirSync(lockPath);
   } catch {

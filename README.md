@@ -32,6 +32,68 @@ If you open the dashboard through a reverse proxy or a hostname that client devi
 
 Useful `.env` controls include `WEB_USERNAME`/`WEB_PASSWORD` for dashboard authentication, `SESSION_COOKIE_SECURE=true` when the dashboard is served exclusively through HTTPS, `HISTORY_RETENTION_DAYS` (default `90`), `MAX_SCAN_FILES` (default `100`), and `MAX_UPLOAD_MB` (default `128`). History polling defaults to five seconds for active jobs and 60 seconds for completed-job reconciliation; tune `HISTORY_POLL_SECONDS` and `HISTORY_COMPLETED_POLL_SECONDS` only if needed. Setting history retention to `0` disables age-based deletion. Ink levels are read over SNMP with community `public` by default; set `SNMP_COMMUNITY` if the printer uses a different community string.
 
+## Everyday use
+
+The workspace has separate **Print a document** and **Scan a page** tabs. File
+selections, scan progress and completion panels survive switching dashboard
+sections. Light and dark themes work on desktop and mobile without external fonts.
+
+Printing accepts PDF, PNG, JPEG and plain text. Choose A4 or US Letter, copies,
+colour or black and white, portrait/landscape, and fit-to-page or actual size.
+PDFs also support page ranges such as `1-3, 5`. Jobs are single-sided; multiple
+copies are collated. Preview PDF/image files before uploading. Paper size and
+colour preferences stay in the browser; document files do not go into browser
+storage. A successful submission displays the CUPS job ID and means **queued**;
+use the queue and history to check progress. These layout options use
+[CUPS standard print options](https://www.cups.org/doc/options.html).
+
+The dashboard assigns a unique submission ID to each print attempt. The hub keeps
+bounded, metadata-only receipts in `/data/print-submissions.sqlite3` for 24 hours.
+Retrying the same submission after a connection failure returns its receipt
+instead of printing twice. A server restart during an unconfirmed submission
+requires checking the queue/history before intentionally creating a new attempt.
+This protection applies to clients supplying `submission_id`; older API/form
+clients remain compatible. It does not replay jobs automatically or guarantee
+physical output. Keep the data volume across updates.
+
+When CUPS pauses printing, fix the printer's paper/error condition and use
+**Resume printing** in the workspace. This resumes the existing queue without
+uploading the document again. Failed queue checks are shown as unavailable or
+last known, rather than an empty queue.
+
+A bounded `/data/scan-jobs.json` journal keeps the latest 50 scan records for up
+to 24 hours. Browser reloads reconnect to the same scan; temporary connection
+failures keep the recovery ID and offer **Reconnect to scan**. Dashboard scan
+submissions carry a unique ID, so retrying an unacknowledged request returns the
+same retained job instead of acquiring the page again. A hub restart marks active
+scans interrupted and never replays them automatically. Completed results remain
+recoverable, with renamed or removed files reflected in their download links.
+
+A completed scan has a direct download link and stays in **Saved scans**. For a
+multi-page document, scan each page, select the saved PDFs/images, choose
+**Combine into PDF**, put the files in order, and name the result. The hub keeps
+the originals and refuses to overwrite an existing filename. Assembly is limited
+to 50 files, 100 pages and 128 MB total input/output; at the saved-scan limit,
+download and delete unneeded scans before creating another PDF.
+
+New scans now pause when `MAX_SCAN_FILES` is reached. **Saved documents are kept
+by default**, including files already above a newly lowered limit. The workspace
+shows capacity and available disk space, and refuses new scans below 32 MB free.
+Accepted scans reserve their slot so a concurrent PDF cannot consume it.
+
+This changes the previous automatic-deletion default. To deliberately restore
+rotation, set `SCAN_RETENTION_POLICY=delete-oldest` and recreate the hub. That
+mode deletes older scans only after a new scan is saved; the UI displays its
+policy. PDF assembly always preserves originals and requires an unused slot.
+Failed or cancelled acquisitions do not remove existing documents.
+
+Saved scans are paginated, with search and sorting across the complete library.
+Use **Load more scans** to browse beyond the first 100; a search can find files
+that have not been loaded into the browser.
+
+See the [household deployment checks](docs/HOUSEHOLD_ACCEPTANCE.md) for the
+remaining physical-printer verification before relying on an updated build.
+
 ## ZimaOS
 
 Use `compose.zimaos.yml`. ZimaOS custom-app import does not reliably build remote Git contexts, so the ZimaOS compose intentionally pulls the published GHCR images instead.
@@ -167,8 +229,8 @@ have separate timestamps and failure backoff; an offline printer retains its
 last-known ink readings. Active scans suppress background scanner discovery.
 Hardware operations are never automatically replayed.
 
-The dashboard uses a forest-green desktop sidebar and a floating mobile navigation
-bar, with distinct print/scan workflows, compact ink tiles and light/dark themes.
+The dashboard uses a dark desktop sidebar and a mobile navigation bar, with a
+focused print/scan workspace, compact supplies panel and light/dark themes.
 Fonts use local system fallbacks; no Google Fonts requests are needed.
 
 History, saved scans and Advanced diagnostics load when opened. Idle browser
@@ -241,7 +303,13 @@ This is intended for a trusted LAN. Do not port-forward the dashboard, CUPS, or 
 
 ## Status
 
-Household-ready printing has been verified against a physical XP-2200 over IPP. The dashboard and Compose stack are covered by unit, configuration and container smoke tests. The scanner service provisions Epson's required network plug-in automatically; a physical scan is the final integration check.
+The dashboard, printer/scanner adapters, restart recovery and document storage
+have automated coverage. CI includes Compose and container smoke checks. Changes
+in a local checkout still require Docker validation and physical printer/scanner
+acceptance before daily use; unit tests and browser fixtures do not establish
+hardware compatibility. See [the deployment checks](docs/HOUSEHOLD_ACCEPTANCE.md).
+The scanner service provisions Epson's required network plug-in automatically
+when the appropriate licence setting is enabled.
 
 ## Why this exists
 
@@ -251,7 +319,9 @@ Because installing a manufacturer connectivity suite on every computer just to p
 
 Install Bun 1.4.3, then run `bun install --frozen-lockfile` and `bun run dev:all`.
 Open `http://localhost:5173` for the dashboard; Vite proxies API and form requests
-(including network-sharing settings) to the backend on port 8080. Set `APP_DATA`
+(including network-sharing settings) to the backend on `WEB_PORT` (default 8080).
+For example, `WEB_PORT=18080 APP_DATA=/tmp/epson-hub bun run dev:all` avoids
+conflicts when another local service already uses port 8080. Set `APP_DATA`
 to a writable directory when running outside Docker. CUPS, SANE and the Epson
 driver are provided by the container; local development alone does not install them.
 
@@ -260,8 +330,8 @@ submitting changes. The tests include frontend request handling and real PNG/JPG
 conversion using a fixture scanner process. `scripts/smoke-test.sh IMAGE` checks the
 container's CUPS filter chain and SANE test backend without a physical printer.
 
-Dashboard sections can be bookmarked with `#overview`, `#scans`, `#history` and
-`#settings`. Print selections and running scans survive section changes; a scan's
+Dashboard sections can be bookmarked with `#overview`, `#scan`, `#scans`,
+`#history` and `#settings`. Print selections and running scans survive section changes; a scan's
 progress can also resume after reloading the same browser tab. Completed scans live
 in **Saved scans**. Cancellation waits for the running scanner operation to stop
 before another job can acquire the scanner.

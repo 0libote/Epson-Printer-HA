@@ -14,9 +14,11 @@ export type ScanItem = {
   mtimeIso: string;
   ext: string;
 };
-export type ScansResponse = { scans: ScanItem[]; total: number; limit: number; max: number };
+export type ScanStorage = { total: number; reserved: number; max: number; policy: "keep-all" | "delete-oldest"; available_bytes: number; full: boolean };
+export type ScanSort = "newest" | "oldest" | "name" | "size";
+export type ScansResponse = { scans: ScanItem[]; total: number; limit: number; max: number; matched?: number; offset?: number; next_offset?: number | null; storage?: ScanStorage };
 export type ScanJobResponse = { ok: boolean; jobId: string; state: string; pollUrl: string; message?: string };
-export type ScanJobStatus = { ok: boolean; job: { id: string; state: string; dpi: number; mode: string; fmt: string; createdAt: number; startedAt?: number; finishedAt?: number; elapsed: number; progress: string; resultName?: string; error?: string } };
+export type ScanJobStatus = { ok: boolean; job: { id: string; state: string; dpi: number; mode: string; fmt: string; createdAt: number; startedAt?: number; finishedAt?: number; elapsed: number; progress: string; resultName?: string; resultAvailable?: boolean; error?: string } };
 
 export type InkCartridge = {
   key: "black" | "cyan" | "magenta" | "yellow";
@@ -61,6 +63,7 @@ export type StatusResponse = {
   } | null;
   max_upload_mb?: number;
   max_scan_files?: number;
+  scan_storage?: ScanStorage;
 };
 
 export type HistoryItem = {
@@ -77,6 +80,7 @@ export type HistoryItem = {
 };
 
 export type HistoryResponse = { history: HistoryItem[] };
+export type PrintResponse = { ok: boolean; message?: string; job_id?: string; replayed?: boolean };
 
 /** Mirrors the server's validateIPv4 so typos fail fast in the UI.
  *  The server always re-validates — this is convenience, not security. */
@@ -134,10 +138,10 @@ async function readJson<T>(res: Response): Promise<T> {
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
       const j = await res.json().catch(() => ({} as any));
-      throw new Error((j as any).error || (j as any).message || `${res.status} ${res.statusText}`);
+      throw Object.assign(new Error((j as any).error || (j as any).message || `${res.status} ${res.statusText}`), { status: res.status, retrySafe: (j as any).retry_safe === true });
     }
     const txt = await res.text().catch(() => "");
-    throw new Error(txt.slice(0, 200).replace(/<[^>]*>/g, "").trim() || `${res.status} ${res.statusText}`);
+    throw Object.assign(new Error(txt.slice(0, 200).replace(/<[^>]*>/g, "").trim() || `${res.status} ${res.statusText}`), { status: res.status });
   }
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("application/json")) {
@@ -237,7 +241,9 @@ function formInit(form: FormData, token: string): RequestInit {
 
 export async function postPrint(form: FormData) {
   const csrf = await addCsrf(form);
-  return formRequest(csrfAwareFetch("/print", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+  const result = await readJson<PrintResponse>(await csrfAwareFetch("/print", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+  if (result.ok !== true) throw new Error(result.message || "The server did not confirm the print submission.");
+  return result;
 }
 export async function postScan(form: FormData) {
   const csrf = await addCsrf(form);
@@ -289,17 +295,31 @@ export async function deleteScan(name: string): Promise<void> {
   return data;
 }
 
-// — scan library helpers —
-export async function fetchScans(limit = 100): Promise<ScansResponse> {
-  return readJson<ScansResponse>(await fetch(`/api/scans?limit=${limit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+export async function combineScans(files: string[], name: string): Promise<{ ok: boolean; name: string; pages: number }> {
+  const csrf = await ensureCsrf();
+  const init = (token: string): RequestInit => ({
+    method: "POST", credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": token, Accept: "application/json" },
+    body: JSON.stringify({ files, name }),
+  });
+  return readJson(await csrfAwareFetch("/api/scans/combine", init(csrf), () => init(cachedCsrf || csrf)));
 }
-export async function startScanJob(opts: { dpi: string; mode: string; format: string; force?: boolean }): Promise<ScanJobResponse> {
+
+// — scan library helpers —
+export async function fetchScans(limit = 100, offset = 0, search = "", sort: ScanSort = "newest"): Promise<ScansResponse> {
+  const query = new URLSearchParams({limit: String(limit)});
+  if(offset) query.set("offset", String(offset));
+  if(search) query.set("q", search);
+  if(sort !== "newest") query.set("sort", sort);
+  return readJson<ScansResponse>(await fetch(`/api/scans?${query}`, { signal: AbortSignal.timeout(10000), credentials: "same-origin", headers: { Accept: "application/json" } }));
+}
+export async function startScanJob(opts: { dpi: string; mode: string; format: string; force?: boolean; submissionId?: string }): Promise<ScanJobResponse> {
   const csrf = await ensureCsrf();
   const makeInit = (token: string): RequestInit => ({
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": token, Accept: "application/json" },
-    body: JSON.stringify({ dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, force: opts.force ? true : undefined, _csrf_token: token }),
+    body: JSON.stringify({ submission_id: opts.submissionId, dpi: Number.parseInt(opts.dpi, 10), mode: opts.mode, format: opts.format, force: opts.force ? true : undefined, _csrf_token: token }),
   });
   const res = await csrfAwareFetch("/api/scan", makeInit(csrf), () => makeInit(cachedCsrf || csrf));
   const ct = res.headers.get("content-type") || "";
@@ -315,7 +335,7 @@ export async function startScanJob(opts: { dpi: string; mode: string; format: st
 }
 export async function pollScanJob(jobId: string): Promise<ScanJobStatus["job"]> {
   if (!/^[a-f0-9]{12}$/.test(jobId)) throw new Error("Invalid scan job id");
-  const data = await readJson<ScanJobStatus>(await fetch(`/api/scan/jobs/${jobId}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+  const data = await readJson<ScanJobStatus>(await fetch(`/api/scan/jobs/${jobId}`, { signal: AbortSignal.timeout(8000), credentials: "same-origin", headers: { Accept: "application/json" } }));
   return data.job;
 }
 export async function cancelScanJob(jobId: string): Promise<void> {
@@ -348,6 +368,11 @@ export async function runMaintenance(action: "nozzle-check" | "head-clean") {
 export async function recoverPrinter(): Promise<RecoveryStatus> {
  const csrf = await ensureCsrf();
  return readJson(await csrfAwareFetch("/api/printer/recover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
+}
+
+export async function resumePrintQueue(): Promise<{ ok: boolean; message: string }> {
+ const csrf = await ensureCsrf();
+ return readJson(await csrfAwareFetch("/api/printer/queue/resume", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));
 }
 
 export async function refreshStatus(): Promise<StatusResponse> {

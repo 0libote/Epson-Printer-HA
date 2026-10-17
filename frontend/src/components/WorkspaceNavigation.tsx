@@ -1,7 +1,7 @@
 import { ArrowUpRight, FolderOpen, History, LayoutGrid, Printer, Settings, ShieldCheck } from "lucide-react";
 export type WorkspaceView = "overview" | "scans" | "history" | "settings";
 const views = [
- { id: "overview", label: "Print & scan", icon: LayoutGrid },
+ { id: "overview", label: "Workspace", icon: LayoutGrid },
  { id: "scans", label: "Saved scans", icon: FolderOpen },
  { id: "history", label: "Print history", icon: History },
  { id: "settings", label: "Settings", icon: Settings },
@@ -10,8 +10,8 @@ export function WorkspaceNavigation({ view, onView, displayName, build, scanCoun
  view: WorkspaceView; onView: (view: WorkspaceView) => void; displayName: string; build?: number; scanCount?: number; historyCount?: number;
 }) {
  return <aside className="workspace-sidebar">
-  <a href="#overview" className="workspace-brand"><span className="workspace-mark"><Printer size={23} strokeWidth={1.7} /></span><span>Print Room<small>A little less paperwork.</small></span></a>
-  <div className="workspace-nav-caption">YOUR WORKSPACE</div>
+  <a href="#overview" className="workspace-brand"><span className="workspace-mark"><Printer size={23} strokeWidth={1.7} /></span><span>Print Room<small>Your home print companion.</small></span></a>
+  <div className="workspace-nav-caption">MAKE SOMETHING HAPPEN</div>
   <nav aria-label="Sections" className="workspace-navigation">{views.map(({ id, label, icon: Icon }) => {
    const count = id === "scans" ? scanCount : id === "history" ? historyCount : undefined;
    return <button key={id} onClick={() => onView(id)} aria-current={view === id ? "page" : undefined}>
@@ -20,7 +20,7 @@ export function WorkspaceNavigation({ view, onView, displayName, build, scanCoun
   })}</nav>
   <div className="workspace-sidebar-bottom">
    <a href="#settings" className="workspace-device"><span className="workspace-device-icon"><Printer size={21} /></span><strong>{displayName}</strong><span>Manage your printer <ArrowUpRight size={13} /></span></a>
-   <p><ShieldCheck size={14} /> Private. Right at home.</p><small>{build ? `Build ${build}` : "Local printer workspace"}</small>
+   <p><ShieldCheck size={14} /> Made for your home network.</p><small>{build ? `Build ${build}` : "Local printer workspace"}</small>
   </div>
  </aside>;
 }

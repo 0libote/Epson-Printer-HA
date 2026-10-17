@@ -4,27 +4,20 @@ import { Droplet, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { fetchInk, type InkStatus } from "../lib/api";
 import { useToast } from "./Toast";
-import { s as ui, Card, CardHeader, StatusDot } from "./ui";
+import { s as ui, CardHeader, StatusDot } from "./ui";
 
 const s = stylex.create({
-  grid: { display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: "14px", "@media (max-width: 600px)": { gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px" } },
-  row: { display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px", padding: "18px", borderRadius: vars.radiusMd, backgroundColor: vars.bg, borderWidth: "1px", borderStyle: "solid", borderColor: vars.line },
-  dot: { width: "10px", height: "10px", borderRadius: vars.radiusFull, flexShrink: 0 },
-  nameWrap: { flex: 1, minWidth: 0 },
-  name: { fontSize: "13px", fontWeight: 600, color: vars.text },
-  sub: { fontSize: "11px", color: vars.textTertiary, marginTop: "2px" },
-  bar: { order: 4, width: "100%", height: "6px", borderRadius: vars.radiusFull, backgroundColor: vars.line, overflow: "hidden", marginTop: "4px" },
+  grid: { display: "grid", gridTemplateColumns: "1fr", gap: "12px", "@media (max-width: 600px)": { gridTemplateColumns: "1fr", gap: "12px" } },
+  row: { display: "grid", gridTemplateColumns: "10px 1fr auto", alignItems: "center", gap: "8px 10px" },
+  dot: { width: "9px", height: "9px", borderRadius: vars.radiusFull },
+  nameWrap: { minWidth: 0 },
+  name: { fontSize: "13px", fontWeight: 500, color: vars.text },
+  sub: { display: "none" },
+  bar: { gridColumn: "2 / 4", height: "5px", borderRadius: vars.radiusFull, backgroundColor: vars.line, overflow: "hidden" },
   fill: { display: "block", height: "100%", borderRadius: vars.radiusFull },
-  pct: { order: 3, width: "100%", fontSize: "30px", fontWeight: 600, letterSpacing: "-0.05em", color: vars.text, marginTop: "6px" },
+  pct: { gridColumn: "3", gridRow: "1", fontSize: "12px", fontWeight: 600, color: vars.textSecondary },
   refresh: { marginLeft: "auto" },
 });
-
-function toneFor(state: string): "good" | "warn" | "bad" | "idle" {
-  if (state === "ok") return "good";
-  if (state === "low") return "warn";
-  if (state === "empty") return "bad";
-  return "idle";
-}
 
 export function InkLevels({ initial, stale = false }: { initial?: InkStatus | null; stale?: boolean }) {
   const [manual, setManual] = useState<InkStatus | null>(null);
@@ -54,10 +47,10 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
     : "Checking printer supplies…";
 
   return (
-    <Card>
+    <div className="supplies-panel">
       <CardHeader
-        icon={<Droplet size={18} />}
-        title="Ink & supplies"
+        icon={<Droplet size={16} />}
+        title="Ink levels"
         sub={subtitle}
         tileBg={vars.accentSoft as string}
         tileColor={vars.accent as string}
@@ -80,7 +73,7 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
                 <div {...stylex.props(s.name)}>{c.name}</div>
                 <div {...stylex.props(s.sub)}>{c.state === "unknown" ? "unknown" : c.state}</div>
               </div>
-              <div {...stylex.props(s.bar)} role="progressbar" aria-valuenow={c.level ?? undefined} aria-valuetext={c.level == null ? "Unknown" : `${c.level}%`} aria-valuemin={0} aria-valuemax={100} aria-label={`${c.name} ink`}>
+              <div {...stylex.props(s.bar)} title={c.state === "low" ? "Ink is low" : c.state === "empty" ? "Cartridge is empty" : undefined} role="progressbar" aria-valuenow={c.level ?? undefined} aria-valuetext={c.level == null ? "Unknown" : `${c.level}%`} aria-valuemin={0} aria-valuemax={100} aria-label={`${c.name} ink`}>
                 <span
                   {...stylex.props(s.fill)}
                   style={{
@@ -90,14 +83,14 @@ export function InkLevels({ initial, stale = false }: { initial?: InkStatus | nu
                   }}
                 />
               </div>
-              <span {...stylex.props(s.pct)}>{c.level == null ? "—" : `${c.level}%`}</span>
-              <StatusDot tone={toneFor(c.state)} />
+              <span {...stylex.props(s.pct)}>{c.level == null ? "Unknown" : `${c.level}%${c.state === "low" ? " · Low" : c.state === "empty" ? " · Empty" : ""}`}</span>
+
             </div>
           ))}
         </div>
       )}
       <style>{`.spin{animation:spin 1.2s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </Card>
+    </div>
   );
 }
 
