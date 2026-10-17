@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 
 export const s = stylex.create({
   card: {
+    minWidth: 0,
     backgroundColor: vars.panel,
     borderWidth: "1px",
     borderStyle: "solid",

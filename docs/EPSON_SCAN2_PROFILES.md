@@ -92,6 +92,13 @@ not fake full capability support. Malformed profiles stop service startup with a
 explicit error. Restart the sidecar after updating profiles. Use rediscovery in
 Settings to invalidate the main application's capability cache.
 
+If contact is lost after an Epson job starts, the hub keeps that job's ownership
+guard even when devices are rediscovered. A cancellation acknowledgement alone
+does not release it. Another acquisition, including a SANE fallback, is refused
+until the sidecar confirms that job is done, failed, cancelled, or expired. Check
+the sidecar connection before retrying; a retry never resumes or repeats that
+uncertain acquisition automatically.
+
 ## Rollback and acceptance
 
 Set `EPSON_SCANNER_MODE=legacy` and recreate the sidecar to restore saned. This

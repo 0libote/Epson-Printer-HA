@@ -1,5 +1,17 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { fetchStatus, fetchHistory, fetchHealth, fetchScans, fetchInk, type StatusResponse } from "../lib/api";
+import { useEffect, useState } from "react";
+import {
+  useInfiniteQuery,
+  useQuery,
+} from "@tanstack/react-query";
+import {
+  fetchStatus,
+  fetchHistory,
+  fetchHealth,
+  fetchScans,
+  fetchInk,
+  type StatusResponse,
+  type ScanSort,
+} from "../lib/api";
 
 export function useStatus(enabled = true) {
   return useQuery({
@@ -38,10 +50,22 @@ export function useHistory(limit = 100, enabled = true) {
   });
 }
 
-export function useScans(limit = 100, enabled = true) {
-  return useQuery({
-    queryKey: ["scans", limit],
-    queryFn: () => fetchScans(limit),
+export function useScans(
+  limit = 100,
+  enabled = true,
+  search = "",
+  sort: ScanSort = "newest",
+) {
+  const [debounced, setDebounced] = useState(search);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(search), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const query = useInfiniteQuery({
+    queryKey: ["scans", limit, debounced, sort],
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => fetchScans(limit, pageParam, debounced, sort),
+    getNextPageParam: (page) => page.next_offset ?? undefined,
     enabled,
     refetchInterval: 15000,
     refetchIntervalInBackground: false,
@@ -50,6 +74,17 @@ export function useScans(limit = 100, enabled = true) {
     gcTime: 5 * 60 * 1000,
     retry: 1,
   });
+  const first = query.data?.pages[0];
+  const unique = new Map(
+    query.data?.pages
+      .flatMap((page) => page.scans)
+      .map((scan) => [scan.name, scan]) ?? [],
+  );
+  return {
+    ...query,
+    isSearching: search !== debounced,
+    data: first ? { ...first, scans: [...unique.values()] } : undefined,
+  };
 }
 
 export function useHealth() {

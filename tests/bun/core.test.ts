@@ -23,7 +23,9 @@ describe("core", () => {
       "lp", "-U", "epson", "-d", "Home_Epson_XP2200",
       "-t", "example.pdf", "-n", "2", "-o",
     ]);
-    expect(args.slice(-3)).toEqual(["-o", "Ink=MONO", "/tmp/example.pdf"]);
+    expect(args).toContain("Ink=MONO");
+    expect(args).toContain("sides=one-sided");
+    expect(args.at(-1)).toBe("/tmp/example.pdf");
     mockRun.mockRestore();
   });
 

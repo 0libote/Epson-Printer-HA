@@ -3,8 +3,8 @@ import { vars } from "../styles/tokens.stylex";
 import { useState } from "react";
 import { Ban, Loader2, WifiOff } from "lucide-react";
 import { useToast } from "./Toast";
-import { cancelPrintJob } from "../lib/api";
-import { s as ui, Card, CardHeader, StatusDot, safeLabel } from "./ui";
+import { cancelPrintJob, resumePrintQueue } from "../lib/api";
+import { s as ui, Card, StatusDot, safeLabel } from "./ui";
 
 export type QueueJob = { id: string; owner: string; size: string; raw: string };
 
@@ -103,38 +103,15 @@ export type PrinterNetwork = {
   hint: string;
 } | null;
 
-export function PrinterUnreachableBanner({ network, queuedJobs, recoveryMessage }: { network: PrinterNetwork; queuedJobs: number; recoveryMessage?: string }) {
-  const wrongNetwork = network?.sameSubnet === false;
-  const hint = recoveryMessage || network?.hint || "The printer is not responding on the network. Check it is powered on with solid Wi-Fi, then verify its address in Settings.";
-  return (
-    <Card>
-      <div role="alert" aria-live="assertive">
-        <CardHeader
-          icon={<WifiOff size={18} />}
-          title={wrongNetwork ? "Printer looks like it's on the wrong network" : "Printer isn't responding"}
-          sub={hint}
-          tileBg={vars.warnSoft as string}
-          tileColor={vars.warn as string}
-        />
-        <div {...stylex.props(ui.statusRow)}>
-          <StatusDot tone="bad" />
-          <span>
-            {queuedJobs > 0
-              ? `${queuedJobs} ${queuedJobs === 1 ? "job is" : "jobs are"} waiting in the queue and will print once the printer is back.`
-              : "New jobs will wait in the queue until the printer is back."}{" "}
-            <a
-              href="#settings"
-              onClick={() => { window.location.hash = "settings"; }}
-              style={{ color: vars.accent as string, fontWeight: 600 }}
-            >
-              Find and reconnect in Settings
-            </a>
-            .
-          </span>
-        </div>
-      </div>
-    </Card>
-  );
+export function PrinterUnreachableBanner({ network, queuedJobs, recoveryMessage }: Readonly<{ network: PrinterNetwork; queuedJobs: number; recoveryMessage?: string }>) {
+  const hint = recoveryMessage || network?.hint;
+  const waitingJobs = queuedJobs === 1 ? "queued job will wait" : "queued jobs will wait";
+  const queueMessage = queuedJobs > 0 ? ` ${queuedJobs} ${waitingJobs} until it reconnects.` : "";
+  return <div className="connection-notice"><WifiOff size={18} /><div>
+    <output><strong>Waiting for your printer</strong><span className="connection-summary">Turn it on and check its Wi-Fi connection.{queueMessage}</span></output>
+    <a href="#settings">Find and reconnect in Settings</a>
+    {hint ? <details><summary>Connection details</summary><p>{hint}</p></details> : null}
+  </div></div>;
 }
 
 export function Queue({ jobs, onChanged }: { jobs: QueueJob[]; onChanged: () => void }) {
@@ -181,3 +158,15 @@ export function Queue({ jobs, onChanged }: { jobs: QueueJob[]; onChanged: () => 
   );
 }
 
+
+export function QueueAttention({ onChanged }: Readonly<{ onChanged: () => void }>) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const resume = async () => {
+    setBusy(true); setError("");
+    try { await resumePrintQueue(); onChanged(); }
+    catch (error) { setError((error as Error).message || "Could not resume the queue."); }
+    finally { setBusy(false); }
+  };
+  return <div className="queue-attention" role="alert"><div><strong>Printing is paused</strong><p>Check the paper tray and clear any printer error, then resume your waiting jobs.</p>{error ? <p>{error}</p> : null}</div><button {...stylex.props(ui.buttonQuiet)} type="button" disabled={busy} onClick={resume}>{busy ? <Loader2 size={14} className="spin" /> : null}{busy ? "Resuming…" : "Resume printing"}</button></div>;
+}

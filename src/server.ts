@@ -1,5 +1,5 @@
 import { buildInfo } from "./system/build-info.ts";
-import app, { MAX_UPLOAD_MB, deviceRecovery, dashboardStatus } from "./app.ts";
+import app, { MAX_UPLOAD_MB, deviceRecovery, dashboardStatus, shutdownScans } from "./app.ts";
 import { main as historyMain } from "./history_worker.ts";
 
 const port = Number.parseInt(process.env.WEB_PORT || "8080", 10);
@@ -41,14 +41,14 @@ if (import.meta.main) {
   });
   console.log(`[server] Listening on http://0.0.0.0:${port}`);
 
-  // Graceful shutdown: supervisord/docker send SIGTERM. Stop accepting new
-  // connections immediately, then exit — in-flight /print and /api/scan jobs
-  // finish their current subprocess await (or hit their own timeouts) instead
-  // of being SIGKILLed mid-upload and leaking workdirs/locks.
+  // Stop accepting scans, record cancellation and stop their acquisition
+  // processes before draining HTTP requests. CUPS keeps accepted print jobs;
+  // interrupted scan metadata explains the restart without replaying hardware.
   let _shuttingDown = false;
   const shutdown = (sig: string) => {
     if (_shuttingDown) return;
     _shuttingDown = true;
+    shutdownScans();
     stopRecovery();
     stopStatus();
     console.log(`[server] Received ${sig}, draining…`);

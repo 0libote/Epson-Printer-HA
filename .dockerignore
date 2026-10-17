@@ -9,7 +9,7 @@ data
 epson-driver
 node_modules
 public
-tests/bun
+tests
 compose*.yml
 README.md
 SECURITY.md

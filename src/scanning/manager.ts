@@ -59,6 +59,7 @@ export function createScannerManager(sane: ReturnType<typeof createSaneService>,
  }
  async function scan(ip: string, outputDir: string, options: ScanOptions): Promise<ScanResult> {
   if (options.control?.isCancelled()) return [commandResult(false, "", "scan_cancelled", 130), null];
+  if (!(await epson.canAcquire(ip))) return [commandResult(false, "", "The previous Epson scan has not confirmed it stopped. Check the scanner connection before trying again.", 1), null];
   const backend = await select(ip, options);
   if (!backend) return [commandResult(false, "", "No scanner supports these settings", 2), null];
   active.set(ip, backend.id);

@@ -2,6 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import stylex from "@stylexjs/unplugin";
 
+const apiTarget = `http://127.0.0.1:${process.env.WEB_PORT || "8080"}`;
+
 export default defineConfig({
   root: "frontend",
   plugins: [
@@ -33,13 +35,13 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": { target: "http://localhost:8080", changeOrigin: true },
-      "/scans": { target: "http://localhost:8080", changeOrigin: true },
-      "/client-settings": { target: "http://localhost:8080", changeOrigin: true },
-      "/setup": { target: "http://localhost:8080", changeOrigin: true },
-      "/print": { target: "http://localhost:8080", changeOrigin: true },
-      "/scan": { target: "http://localhost:8080", changeOrigin: true },
-      "/jobs": { target: "http://localhost:8080", changeOrigin: true },
+      "/api": { target: apiTarget, changeOrigin: true },
+      "/scans": { target: apiTarget, changeOrigin: true },
+      "/client-settings": { target: apiTarget, changeOrigin: true },
+      "/setup": { target: apiTarget, changeOrigin: true },
+      "/print": { target: apiTarget, changeOrigin: true },
+      "/scan": { target: apiTarget, changeOrigin: true },
+      "/jobs": { target: apiTarget, changeOrigin: true },
     },
   },
 });

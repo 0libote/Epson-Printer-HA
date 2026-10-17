@@ -10,6 +10,11 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { join, basename, extname } from "node:path";
 import { mkdirSync, readdirSync, statSync, unlinkSync, rmSync, linkSync, renameSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { registerPrintingApi } from "./api/printing.ts";
+import { createScanLibrary, scanRetentionPolicy, ScanStorageError, type ScanReservation } from "./scanning/library.ts";
+import { createScanJobStore, isActiveScan, type ScanJob } from "./scanning/jobs.ts";
+export type { ScanJob, ScanJobState } from "./scanning/jobs.ts";
+import { registerLibraryApi } from "./api/library.ts";
 import {
   onStatusInvalidated,
   cupsBackend,
@@ -48,6 +53,9 @@ export let DEFAULT_DISPLAY_NAME = "Home Epson XP-2200";
 export let DEFAULT_SHARE_PRINTER = true;
 export let MAX_UPLOAD_MB = Math.max(1, parsePositiveInt(process.env.MAX_UPLOAD_MB, 128));
 export let MAX_SCAN_FILES = Math.max(1, parsePositiveInt(process.env.MAX_SCAN_FILES, 100));
+export const SCAN_RETENTION_POLICY = scanRetentionPolicy(process.env.SCAN_RETENTION_POLICY);
+const scanLibrary = createScanLibrary({ directory: () => SCAN_DIR, limit: () => MAX_SCAN_FILES, policy: SCAN_RETENTION_POLICY });
+const scanReservations = new Map<string, ScanReservation>();
 export let CLIENT_HOST_RAW = (process.env.CLIENT_HOST || "").trim();
 // CLIENT_HOST is shown to phones/computers in the generated IPP instructions,
 // so it must be a bare host — never "host:port" (which would render as
@@ -79,6 +87,9 @@ export function _setAppDirForTest(dir: string) {
   dashboardStatus?.reset();
   _settingsCache = null;
   _recentScansCache = null;
+  scanLibrary.invalidate();
+  for (const reservation of scanReservations.values()) reservation.release();
+  scanReservations.clear();
   APP_DIR = dir;
   SCAN_DIR = join(dir, "scans");
   SETTINGS_FILE = join(dir, "settings.json");
@@ -284,26 +295,9 @@ function formatRelativeTime(mtimeMs:number):string{
   const d=new Date(mtimeMs); const pad=(n:number)=>String(n).padStart(2,"0");
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-function pruneScans(): void {
-  try {
-    const files = readdirSync(SCAN_DIR)
-      .filter((f) => !f.startsWith("."))
-      .map((f) => {
-        const p = join(SCAN_DIR, f);
-        try {
-          const st = statSync(p);
-          if (!st.isFile()) return null;
-          return { p, mtime: st.mtimeMs, isFile: true };
-        } catch { return null; }
-      })
-      .filter(Boolean) as Array<{ p: string; mtime: number; isFile: boolean }>;
-    const sorted = files.sort((a, b) => b.mtime - a.mtime);
-    for (const stale of sorted.slice(MAX_SCAN_FILES)) {
-      try { unlinkSync(stale.p); } catch {}
-      // also clean thumb cache if present
-      try { unlinkSync(join(SCAN_DIR, `.thumb-${basename(stale.p)}.webp`)); } catch {}
-    }
-  } catch {}
+function scanLibraryChanged() {
+  _recentScansCache = null; scanLibrary.invalidate();
+  dashboardStatus.refreshScanStorage();
 }
 export function currentPrinterName(): string {
   const v = String(savedSettingsSync().printer_name ?? DEFAULT_PRINTER_NAME).trim();
@@ -330,38 +324,20 @@ function recentScans(limit=10):Array<{name:string;path:string}>{
   const now = Date.now();
   if (_recentScansCache && now - _recentScansCache.at < 5000) return _recentScansCache.value.slice(0, limit);
   try{
-    const entries=readdirSync(SCAN_DIR).filter(f=>!f.startsWith(".")).map(f=>{
-      const p=join(SCAN_DIR,f);
-      try{ const st=statSync(p); return st.isFile() ? { p, mtime: st.mtimeMs } : null; }catch{return null;}
-    }).filter(Boolean) as Array<{p:string;mtime:number}>;
-    entries.sort((a,b)=>b.mtime - a.mtime);
-    const out=entries.map(e=>({name:basename(e.p), path:e.p}));
+    const out=scanLibrary.entries().map(file=>({name:file.name, path:file.path}));
     _recentScansCache={ at: now, value: out };
     return out.slice(0,limit);
   }catch{return [];}
 }
 export type ScanMeta = { name:string; path:string; size:number; sizeDisplay:string; mtime:number; mtimeMs:number; mtimeRel:string; mtimeIso:string; ext:string; dpiHint?:string };
 function listScansDetailed(limit=100):ScanMeta[]{
-  try{
-    const files=readdirSync(SCAN_DIR)
-      .filter(f=>!f.startsWith(".") && !f.startsWith(".thumb-"))
-      .map(f=>{
-        const p=join(SCAN_DIR,f);
-        try{
-          const st=statSync(p); if(!st.isFile()) return null;
-          const ext=extname(f).toLowerCase();
-          if(![".pdf",".png",".jpg",".jpeg",".webp"].includes(ext)) return null;
-          return { name:f, path:p, size:st.size, mtimeMs:st.mtimeMs, mtime:Math.floor(st.mtimeMs/1000) };
-        }catch{return null;}
-      }).filter(Boolean) as Array<{name:string;path:string;size:number;mtimeMs:number;mtime:number}>;
-    files.sort((a,b)=>b.mtimeMs - a.mtimeMs);
+    const files=scanLibrary.entries().map(file => ({...file, mtime:Math.floor(file.mtimeMs/1000)}));
     const slice=files.slice(0, Math.max(1,limit));
     return slice.map(f=>{
       const d=new Date(f.mtimeMs); const pad=(n:number)=>String(n).padStart(2,"0");
       const iso=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
       return { name:f.name, path:f.path, size:f.size, sizeDisplay:formatBytes(f.size), mtime:f.mtime, mtimeMs:f.mtimeMs, mtimeRel:formatRelativeTime(f.mtimeMs), mtimeIso:iso, ext:extname(f.name).toLowerCase() };
     });
-  }catch{return [];}
 }
 function validateScanFilename(name:string):string{
   const safe=basename(name).trim();
@@ -389,43 +365,65 @@ function sanitizeRename(name:string, originalExt:string):string{
   const final=base+originalExt;
   if(final.length>150) throw new Error("Filename too long");
   if(final.startsWith(".")) throw new Error("Invalid filename");
-  return final;
+  return validateScanFilename(final);
 }
 
-// ── async scan job queue (in-memory, single active due to hardware) ──
-export type ScanJobState = "queued"|"scanning"|"converting"|"done"|"error"|"cancelled";
-export interface ScanJob {
-  id:string; state:ScanJobState; printerIp:string; dpi:number; mode:string; fmt:string;
-  createdAt:number; startedAt?:number; finishedAt?:number; cancelRequested:boolean; cancelProcess?:()=>void;
-  resultName?:string; resultPath?:string; error?:string; progress:string;
-}
-const scanJobs = new Map<string, ScanJob>();
+// Scan acquisition stays serialized; only bounded metadata survives restarts.
+const scanJobStore = createScanJobStore(() => APP_DIR);
+let scanJobs = scanJobStore.getJobs();
+let acceptingScans = true;
 let activeScanJobId: string | null = null;
 
-export function _getScanJobsForTest(){ return scanJobs; }
-export function _resetScanJobsForTest(){ scanJobs.clear(); activeScanJobId=null; operationLocks.delete("scanner"); }
+export function _getScanJobsForTest(){ scanJobs = scanJobStore.getJobs(); return scanJobs; }
+export function _resetScanJobsForTest(){ scanJobs = scanJobStore.getJobs(); scanJobs.clear(); activeScanJobId=null; acceptingScans=true; operationLocks.delete("scanner"); }
 // A scan (incl. 600dpi retry + conversion) takes at most ~6-7 min. Anything
 // active longer than this is hung/crashed — reap it so one stuck job doesn't
 // block all future scans with "already in progress" forever.
 export const SCAN_JOB_STALE_MS = 8 * 60 * 1000;
 function isScanJobActive(j: ScanJob): boolean {
-  return j.state === "queued" || j.state === "scanning" || j.state === "converting";
+  return isActiveScan(j);
+}
+function timeOutScanJob(job: ScanJob, now: number) {
+  job.cancelRequested = true;
+  try { job.cancelProcess?.(); } catch {}
+  job.error = "Scan timed out. Check the printer before trying again.";
+  if (activeScanJobId === job.id) {
+    // Retain ownership until the acquisition promise/process has settled.
+    job.progress = "Stopping timed-out scan";
+  } else {
+    job.state = "error"; job.progress = "Failed"; job.finishedAt = now;
+  }
+}
+function finishCancelledScan(job: ScanJob) {
+  job.state = job.error ? "error" : "cancelled";
+  job.error ||= "Scan cancelled.";
+  job.progress = job.state === "error" ? "Failed" : "Cancelled";
+  job.finishedAt = Date.now();
+}
+function scanControl(job: ScanJob) {
+  return {
+    isCancelled: () => job.cancelRequested,
+    registerProcess: (process: { kill: () => void }) => {
+      job.cancelProcess = () => { try { process.kill(); } catch {} };
+      if (job.cancelRequested) job.cancelProcess();
+    },
+    clearProcess: () => { job.cancelProcess = undefined; },
+    setProgress: (progress: string) => {
+      job.state = "converting"; job.progress = progress; scanJobStore.checkpoint();
+    },
+  };
 }
 function reapStaleScanJobs(): void {
+  scanJobs = scanJobStore.getJobs();
   const now = Date.now();
-  for (const j of scanJobs.values()) {
-    if (!isScanJobActive(j)) continue;
-    const age = now - (j.startedAt ?? j.createdAt);
-    if (age > SCAN_JOB_STALE_MS) {
-      j.cancelRequested = true;
-      try { j.cancelProcess?.(); } catch {}
-      j.cancelProcess = undefined;
-      j.state = "error";
-      j.error = "Scan timed out and was cleared. Please try again.";
-      j.progress = "Failed";
-      j.finishedAt = now;
-    }
+  let changed = false;
+  for (const job of scanJobs.values()) {
+    if (!isScanJobActive(job) || job.cancelRequested) continue;
+    if (now - (job.startedAt ?? job.createdAt) <= SCAN_JOB_STALE_MS) continue;
+    timeOutScanJob(job, now);
+    changed = true;
   }
+  if (changed) scanJobStore.checkpoint();
   // activeScanJobId must never point at a finished/missing job, or every new
   // scan would be rejected as "already in progress".
   if (activeScanJobId) {
@@ -451,6 +449,7 @@ function scannerLockPath(): string {
   return join(APP_DIR, ".scanner.lock");
 }
 function clearStaleScannerFsLock(): void {
+  if (activeScanJobId || operationLocks.has("scanner")) return;
   const lockPath = scannerLockPath();
   try {
     const st = statSync(lockPath);
@@ -459,19 +458,25 @@ function clearStaleScannerFsLock(): void {
     }
   } catch {}
 }
-function createScanJob(printerIp:string, dpi:number, mode:string, fmt:string):ScanJob{
+function createScanJob(printerIp:string, dpi:number, mode:string, fmt:string, requestKey?:string):ScanJob{
+  scanJobs = scanJobStore.getJobs();
   const id=randomBytes(6).toString("hex");
-  const job:ScanJob={ id, state:"queued", printerIp, dpi, mode, fmt, createdAt:Date.now(), cancelRequested:false, progress:"Queued" };
+  const job:ScanJob={ id, state:"queued", printerIp, dpi, mode, fmt, createdAt:Date.now(), cancelRequested:false, progress:"Queued", requestKey };
   scanJobs.set(id, job);
-  // prune old done/error jobs older than 10 min to avoid leak
-  const cutoff=Date.now()-10*60*1000;
-  for(const [k,j] of scanJobs){ if((j.state==="done"||j.state==="error"||j.state==="cancelled") && (j.finishedAt||0) < cutoff) scanJobs.delete(k); }
-  if(scanJobs.size>50){
-    // keep most recent 50
-    const sorted=[...scanJobs.values()].sort((a,b)=>b.createdAt-a.createdAt);
-    for(const j of sorted.slice(50)) scanJobs.delete(j.id);
-  }
+  try { scanJobStore.save(); } catch (error) { scanJobs.delete(id); throw error; }
   return job;
+}
+export function shutdownScans() {
+  acceptingScans = false;
+  scanJobs = scanJobStore.getJobs();
+  for (const job of scanJobs.values()) {
+    if (!isScanJobActive(job)) continue;
+    job.cancelRequested = true;
+    job.progress = "Stopping for a hub restart";
+    try { job.cancelProcess?.(); } catch {}
+    if (job.state === "queued") { job.state = "cancelled"; job.error = "Scan stopped because the hub is restarting."; job.finishedAt = Date.now(); }
+  }
+  scanJobStore.checkpoint();
 }
 async function executeScanJob(job:ScanJob){
   if (job.cancelRequested || job.state !== "queued") return;
@@ -480,29 +485,25 @@ async function executeScanJob(job:ScanJob){
   }
   activeScanJobId=job.id;
   job.state="scanning"; job.startedAt=Date.now(); job.progress="Contacting scanner";
+  scanJobStore.checkpoint();
   try {
     // warm cache first for speed
     await warmDeviceCache(job.printerIp).catch(()=>{});
     if (job.cancelRequested) {
-      job.state="cancelled"; job.error="Scan cancelled."; job.progress="Cancelled"; job.finishedAt=Date.now();
+      finishCancelledScan(job);
       return;
     }
     const lock=await withOperationLock("scanner", async()=>{
-      job.progress="Scanning the document";
-      const [result, path]=await scanDocument(job.printerIp, SCAN_DIR, {dpi:job.dpi, mode:job.mode, fmt:job.fmt, control:{
-        isCancelled:()=>job.cancelRequested,
-        registerProcess:(process)=>{ job.cancelProcess=()=>{ try{ process.kill(); }catch{} }; },
-        clearProcess:()=>{ job.cancelProcess=undefined; },
-        setProgress:(progress)=>{ job.state="converting"; job.progress=progress; },
-      }});
+      job.progress="Scanning the document"; scanJobStore.checkpoint();
+      const [result, path]=await scanDocument(job.printerIp, SCAN_DIR, {dpi:job.dpi, mode:job.mode, fmt:job.fmt, control:scanControl(job)});
       clearStatusCaches();
       if(job.cancelRequested || result.stderr === "scan_cancelled"){
-        job.state="cancelled"; job.error="Scan cancelled."; job.progress="Cancelled"; job.finishedAt=Date.now();
+        finishCancelledScan(job);
         return result;
       }
       if(result.ok && path){
-        _recentScansCache = null;
-        pruneScans();
+        scanReservations.get(job.id)?.commit(basename(path));
+        scanLibraryChanged();
         job.state="done"; job.resultPath=path; job.resultName=basename(path); job.progress="Done"; job.finishedAt=Date.now();
         // clear thumb cache for new file
       } else {
@@ -514,13 +515,14 @@ async function executeScanJob(job:ScanJob){
       job.state="error"; job.error="A scan is already in progress. Wait for it to finish before starting another."; job.finishedAt=Date.now();
     }
   } catch(e:any){
-    job.state=job.cancelRequested ? "cancelled" : "error";
-    job.error=job.cancelRequested ? "Scan cancelled." : truncateErrorText(String(e?.message||e)) || "Scan failed.";
-    job.progress=job.cancelRequested ? "Cancelled" : "Failed";
+    job.state=job.cancelRequested && !job.error ? "cancelled" : "error";
+    job.error ||= job.cancelRequested ? "Scan cancelled." : truncateErrorText(String(e?.message||e)) || "Scan failed.";
+    job.progress=job.state === "cancelled" ? "Cancelled" : "Failed";
     job.finishedAt=Date.now();
   } finally {
     job.cancelProcess=undefined;
     if(activeScanJobId===job.id) activeScanJobId=null;
+    scanJobStore.checkpoint();
   }
 }
 function clientSetup(printerName:string, hostHeader:string){
@@ -793,92 +795,19 @@ app.post("/client-settings", async(c)=>{
   return c.redirect("/",302);
 });
 
-app.post("/print", async(c)=>{
-  const auth=requireAuth(c);
-  if(auth) return auth;
-  if(!currentPrinterIp()){
-    const msg="Set up the printer first.";
-    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
-  const body:any=await c.req.parseBody();
-  if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
-  const file=body["file"] as File|undefined;
-  if(!file||!(file instanceof File)||!file.name){
-    const msg="Choose a file first.";
-    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
-  const name=secureFilename(file.name);
-  const suffix=extname(name).toLowerCase();
-  if(![".pdf",".png",".jpg",".jpeg",".txt"].includes(suffix)){
-    const msg="Supported files: PDF, PNG, JPG and TXT.";
-    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
-  let copies=1;
-  try{ copies=Number.parseInt(String(body["copies"]||"1"),10); if(!(copies>=1 && copies<=99) || Number.isNaN(copies)) throw new Error(); }catch{
-    const msg="Copies must be a whole number between 1 and 99.";
-    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
-  const grayscale=body["grayscale"]==="on";
-  if(file.size> MAX_UPLOAD_MB*1024*1024){
-    const msg=`That file is too large. The limit is ${MAX_UPLOAD_MB} MB.`;
-    if(wantsJson(c)) return c.json({ ok:false, error: msg }, 413);
-    setFlash(c,"error",msg); return c.redirect("/",302);
-  }
-  // Fail fast with an actionable message when the CUPS queue is missing or
-  // disabled instead of surfacing a cryptic `lp` stderr after upload.
-  // (Checked after file validation so invalid files still get the precise
-  // validation error, and oversized/field errors above take precedence.)
-  const queueName=currentPrinterName();
-  const uploadDir=join(APP_DIR,"uploads");
-  mkdirSync(uploadDir,{recursive:true});
-  const workDir=join(uploadDir,`print-${randomBytes(6).toString("hex")}`);
-  mkdirSync(workDir,{recursive:true});
-  const target=join(workDir,name);
-  let printOk=false; let printMsg=""; let validationFailed=false;
-  try{
-    // single buffered read: validate magic bytes before touching disk (halves memory/disk IO)
-    const buf=await file.arrayBuffer();
-    const err=validateUploadBuffer(buf, file.size, suffix);
-    if(err){
-      validationFailed=true;
-      if(wantsJson(c)) { printOk=false; printMsg=err; }
-      else { setFlash(c,"error",err); return c.redirect("/",302); }
-    } else {
-      try {
-        const queueStatus=await cupsPrinterStatus(queueName);
-        if(!queueStatus.ok){
-          const msg=`Print queue '${queueName}' is not ready (${queueStatus.detail || queueStatus.state}). Re-save the printer settings, then try again.`;
-          if(wantsJson(c)) { printOk=false; printMsg=msg; }
-          else { setFlash(c,"error",msg); return c.redirect("/",302); }
-        }
-      } catch { /* fall through to lp and report its error */ }
-      if(!printMsg){
-        await Bun.write(target, buf);
-        const locked = await withOperationLock("device", () => submitPrint(queueName, target, {copies, grayscale, title:name}));
-        const result = locked.acquired ? locked.result! : { ok:false, stdout:"", stderr:"Printer maintenance is running. Try again when it completes.", returncode:1 };
-        clearStatusCaches();
-        // lp sometimes reports errors on stdout; never return a bare "Print failed."
-        const detail=truncateErrorText(result.stderr || result.stdout || "");
-        printOk=result.ok; printMsg=result.ok?"File added to the print queue.":(detail||"Print failed.");
-        if(!result.ok) console.error(`[print] lp failed queue=${queueName} file=${name} copies=${copies}: ${detail || `exit ${result.returncode}`}`);
-        if(!wantsJson(c)) setFlash(c, result.ok?"success":"error", printMsg);
-      }
-    }
-  } finally { try{ rmSync(workDir, { recursive: true, force: true }); }catch{} }
-  if(wantsJson(c)){
-    if(!printOk && validationFailed) return c.json({ ok:false, error: printMsg }, 400);
-    return c.json({ ok: printOk, message: printMsg, error: printOk?undefined:printMsg }, printOk?200:500);
-  }
-  return c.redirect("/",302);
+registerPrintingApi(app, {
+  auth: requireAuth, ip: currentPrinterIp, queue: currentPrinterName, dataDir: () => APP_DIR,
+  uploadLimit: () => MAX_UPLOAD_MB, csrf: isCsrfValid, readBody: readMutationBody, wantsJson, flash: setFlash,
+  filename: secureFilename, validateUpload: validateUploadBuffer,
+  queueStatus: (...args) => cupsPrinterStatus(...args), submit: (...args) => submitPrint(...args),
+  resume: queue => cupsBackend.resumeQueue(queue),
+  lock: action => withOperationLock("device", action), invalidate: clearStatusCaches,
 });
 
 app.post("/scan", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
+  if (!acceptingScans) return c.json({ok:false,error:"The hub is restarting. Try again shortly."},503);
   const printerIp=currentPrinterIp();
   if(!printerIp){
     const msg="Set up the printer first.";
@@ -893,14 +822,27 @@ app.post("/scan", async(c)=>{
     if(wantsJson(c)) return c.json({ ok:false, error: msg }, 400);
     setFlash(c,"error",msg); return c.redirect("/",302);
   }
+  if (findActiveScanJob()) {
+    const error="A scan is already in progress. Wait for it to finish before starting another.";
+    if(wantsJson(c)) return c.json({ok:false,error},409);
+    setFlash(c,"error",error); return c.redirect("/",302);
+  }
   let scanOk=false; let scanMsg=""; let scanPath:string|null=null;
-  const lock=await withOperationLock("scanner", async()=>{
+  let reservation: ScanReservation;
+  try { reservation = scanLibrary.reserve(true); }
+  catch (error) {
+    const message=error instanceof ScanStorageError ? error.message : "Scan storage is unavailable.";
+    if(wantsJson(c)) return c.json({ok:false,error:message}, error instanceof ScanStorageError ? error.status : 503);
+    setFlash(c,"error",message); return c.redirect("/",302);
+  }
+  let lock;
+  try { lock=await withOperationLock("scanner", async()=>{
     const [result, path]=await scanDocument(printerIp, SCAN_DIR, {dpi, mode:String((body as any)["mode"]||"Color"), fmt:String((body as any)["format"]||"pdf")});
     clearStatusCaches();
     scanPath=path;
-    if(result.ok && path){ pruneScans(); scanOk=true; scanMsg=truncateErrorText(result.stderr)||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
+    if(result.ok && path){ reservation.commit(basename(path)); scanOk=true; scanMsg=truncateErrorText(result.stderr)||`Scan saved as ${basename(path)}.`; if(!wantsJson(c)) setFlash(c,"success", scanMsg); }
     else { scanOk=false; scanMsg=truncateErrorText(result.stderr)||"Scan failed."; if(!wantsJson(c)) setFlash(c,"error", scanMsg); }
-  });
+  }); } finally { reservation.release(); scanLibraryChanged(); }
   if(!lock.acquired){
     const msg="A scan is already in progress. Wait for it to finish before starting another.";
     if(wantsJson(c)) return c.json({ ok:false, error: msg }, 409);
@@ -946,6 +888,14 @@ app.get("/scans/:filename", async(c)=>{
 });
 
 // ── new scan library API ──
+registerLibraryApi(app, {
+  auth: requireAuth, csrf: isCsrfValid, readBody: readMutationBody,
+  directory: () => SCAN_DIR, outputName: sanitizeRename,
+  reserve: () => scanLibrary.reserve(),
+  lock: action => withOperationLock("scan-library", action),
+  invalidate: scanLibraryChanged,
+});
+
 app.get("/api/scans", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
@@ -953,8 +903,27 @@ app.get("/api/scans", async(c)=>{
   try{limit=Number.parseInt(c.req.query("limit")||"100",10);}catch{limit=100;}
   if(Number.isNaN(limit)) limit=100;
   limit=Math.max(1, Math.min(limit, 500));
-  const allScans = listScansDetailed(Number.MAX_SAFE_INTEGER);
-  return c.json({ scans: allScans.slice(0, limit), total: allScans.length, limit, max: MAX_SCAN_FILES });
+  try {
+    const allScans = listScansDetailed(Number.MAX_SAFE_INTEGER);
+    const search = (c.req.query("q") || "").slice(0, 200).trim().toLowerCase();
+    const sort = c.req.query("sort") || "newest";
+    const filtered = allScans.filter(scan => !search || scan.name.toLowerCase().includes(search));
+    const order = (a: ScanMeta,b: ScanMeta) => a.name.localeCompare(b.name);
+    if (sort === "oldest") filtered.sort((a,b) => a.mtimeMs-b.mtimeMs || order(a,b));
+    else if (sort === "name") filtered.sort(order);
+    else if (sort === "size") filtered.sort((a,b) => b.size-a.size || order(a,b));
+    else if (sort !== "newest") return c.json({ok:false,error:"Invalid scan sort order."},400);
+    const offsetText = c.req.query("offset") || "0";
+    if (!/^\d+$/.test(offsetText) || !Number.isSafeInteger(Number(offsetText))) return c.json({ok:false,error:"Invalid scan offset."},400);
+    const offset = Number(offsetText);
+    const page = filtered.slice(offset, offset + limit);
+    return c.json({ scans: page, total: allScans.length, matched: filtered.length, limit, offset,
+      next_offset: offset + page.length < filtered.length ? offset + page.length : null,
+      max: MAX_SCAN_FILES, storage: scanLibrary.usage() });
+  } catch (error) {
+    console.error("[scans] Could not read saved scans", error);
+    return c.json({ok:false,error:"Saved scans are temporarily unavailable. Check the hub's data volume and try again."},503);
+  }
 });
 
 app.get("/api/scans/:filename/thumb", async(c)=>{
@@ -1023,7 +992,7 @@ app.delete("/api/scans/:filename", async(c)=>{
     return c.json({ok:false, error:String(e)},500);
   }
   try{ unlinkSync(join(SCAN_DIR, `.thumb-${safe}.webp`)); }catch{}
-  _recentScansCache = null;
+  scanLibraryChanged();
   return c.json({ok:true, message:`Deleted ${safe}`});
 });
 
@@ -1061,7 +1030,8 @@ app.post("/api/scans/:filename/rename", async(c)=>{
     if(e?.code === "ENOENT") return c.json({ok:false, error:"File not found"},404);
     return c.json({ok:false, error:String(e)},500);
   }
-  _recentScansCache = null;
+  scanLibraryChanged();
+  scanJobStore.renameResult(safe, newSafe);
   return c.json({ok:true, name:newSafe, oldName:safe});
 });
 
@@ -1084,6 +1054,7 @@ app.post("/scans/:filename/delete", async(c)=>{
     if(wantsJson(c)) return c.json({ok:false, error:msg},500);
     setFlash(c,"error",msg); return c.redirect("/",302);
   }
+  scanLibraryChanged();
   const msg=`Deleted ${safe}`;
   if(wantsJson(c)) return c.json({ok:true, message:msg});
   setFlash(c,"success",msg); return c.redirect("/",302);
@@ -1125,6 +1096,8 @@ app.post("/scans/:filename/rename", async(c)=>{
     if(wantsJson(c)) return c.json({ok:false, error:msg},500);
     setFlash(c,"error",msg); return c.redirect("/",302);
   }
+  scanJobStore.renameResult(safe, newSafe);
+  scanLibraryChanged();
   const msg=`Renamed to ${newSafe}`;
   if(wantsJson(c)) return c.json({ok:true, name:newSafe});
   setFlash(c,"success",msg); return c.redirect("/",302);
@@ -1134,6 +1107,7 @@ app.post("/scans/:filename/rename", async(c)=>{
 app.post("/api/scan", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
+  if (!acceptingScans) return c.json({ok:false, error:"The hub is restarting. Try again shortly."},503);
   const printerIp=currentPrinterIp();
   if(!printerIp){
     const msg="Set up the printer first.";
@@ -1158,6 +1132,16 @@ app.post("/api/scan", async(c)=>{
   }
   if(!["Color","Gray","Lineart"].includes(mode)) return c.json({ ok:false, error:"Invalid scan mode" }, 400);
   fmt=fmt.toLowerCase(); if(!["pdf","png","jpg","jpeg"].includes(fmt)) return c.json({ ok:false, error:"Invalid scan format" }, 400);
+  const requestKey = String(body.submission_id ?? "");
+  if (requestKey && !/^[A-Za-z0-9_-]{16,80}$/.test(requestKey)) return c.json({ok:false,error:"Invalid submission ID."},400);
+  scanJobs = scanJobStore.getJobs();
+  if (requestKey) {
+    const previous = [...scanJobs.values()].find(job => job.requestKey === requestKey);
+    if (previous) {
+      if (previous.printerIp !== printerIp || previous.dpi !== dpi || previous.mode !== mode || previous.fmt !== fmt) return c.json({ok:false,error:"This submission ID belongs to a scan with different settings."},409);
+      return c.json({ok:true,jobId:previous.id,state:previous.state,replayed:true,pollUrl:`/api/scan/jobs/${previous.id}`},202);
+    }
+  }
   // Drop hung jobs (see SCAN_JOB_STALE_MS) and clear a dangling activeScanJobId
   // so one crashed scan can't block everything forever.
   reapStaleScanJobs();
@@ -1173,18 +1157,34 @@ app.post("/api/scan", async(c)=>{
       blocker.finishedAt = Date.now();
       blocker = null;
     }
+    scanJobStore.checkpoint();
     // Running jobs retain the hardware lock until their process exits.
   }
   if(blocker){
     const elapsedS = Math.floor((Date.now() - (blocker.startedAt ?? blocker.createdAt)) / 1000);
     return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another.", jobId:blocker.id, state:blocker.state, elapsed:elapsedS }, 409);
   }
+  // A synchronous scan owns the same device even without an async job ID.
+  if (operationLocks.has("scanner")) return c.json({ok:false,error:"A scan is already in progress. Wait for it to finish before starting another."},409);
   // also check filesystem lock for legacy sync jobs
   const lockPath=scannerLockPath();
-  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { removeOperationLockFs(lockPath); _clearOperationLockForTest("scanner"); } }catch{}
-  const job=createScanJob(printerIp, dpi, mode, fmt);
-  // fire and forget
-  setTimeout(()=>{ executeScanJob(job).catch(()=>{}); }, 10);
+  try{ const st=statSync(lockPath); if(Date.now()-st.mtimeMs < SCAN_JOB_STALE_MS){ return c.json({ ok:false, error:"A scan is already in progress. Wait for it to finish before starting another." }, 409);} else { removeOperationLockFs(lockPath); } }catch{}
+  let job: ScanJob;
+  let reservation: ScanReservation | undefined;
+  try {
+    reservation = scanLibrary.reserve(true);
+    job=createScanJob(printerIp, dpi, mode, fmt, requestKey || undefined);
+    scanReservations.set(job.id, reservation);
+    dashboardStatus.refreshScanStorage();
+  } catch (error) {
+    reservation?.release();
+    if (error instanceof ScanStorageError) return c.json({ok:false,error:error.message},error.status);
+    return c.json({ok:false,error:"Scan storage is unavailable. Check the hub's data volume before trying again."},503);
+  }
+  setTimeout(async () => {
+    try { await executeScanJob(job); }
+    finally { scanReservations.delete(job.id); reservation?.release(); scanLibraryChanged(); }
+  }, 10);
   return c.json({ ok:true, jobId:job.id, state:job.state, message:"Scan queued", pollUrl:`/api/scan/jobs/${job.id}` }, 202);
 });
 app.get("/api/scan/jobs/:id", async(c)=>{
@@ -1194,14 +1194,14 @@ app.get("/api/scan/jobs/:id", async(c)=>{
   reapStaleScanJobs();
   const job=scanJobs.get(id);
   if(!job) return c.json({ ok:false, error:"Job not found" },404);
-  const elapsed= job.startedAt ? Math.floor(( (job.finishedAt||Date.now()) - job.startedAt)/1000) : 0;
-  return c.json({ ok:true, job:{ id:job.id, state:job.state, dpi:job.dpi, mode:job.mode, fmt:job.fmt, createdAt:job.createdAt, startedAt:job.startedAt, finishedAt:job.finishedAt, elapsed, progress:job.progress, resultName:job.resultName, error:job.error } });
+  return c.json({ ok:true, job:scanJobStore.publicJob(job) });
 });
 app.post("/api/scan/jobs/:id/cancel", async(c)=>{
   const auth=requireAuth(c);
   if(auth) return auth;
   const body=await readMutationBody(c);
   if(!isCsrfValid(c, body)) return c.text("Invalid or missing CSRF token",400);
+  scanJobs = scanJobStore.getJobs();
   const job=scanJobs.get(c.req.param("id"));
   if(!job) return c.json({ok:false,error:"Job not found"},404);
   if(["done","error","cancelled"].includes(job.state)) return c.json({ok:true,job:{id:job.id,state:job.state}});
@@ -1213,6 +1213,7 @@ app.post("/api/scan/jobs/:id/cancel", async(c)=>{
     job.error="Scan cancelled.";
     job.finishedAt=Date.now();
   }
+  scanJobStore.checkpoint();
   return c.json({ok:true,job:{id:job.id,state:job.state}});
 });
 app.get("/api/scan/jobs", async(c)=>{
@@ -1220,7 +1221,7 @@ app.get("/api/scan/jobs", async(c)=>{
   if(auth) return auth;
   reapStaleScanJobs();
   const jobs=[...scanJobs.values()].sort((a,b)=>b.createdAt-a.createdAt).slice(0,20);
-  return c.json({ jobs: jobs.map(j=>({ id:j.id, state:j.state, dpi:j.dpi, mode:j.mode, fmt:j.fmt, createdAt:j.createdAt, startedAt:j.startedAt, finishedAt:j.finishedAt, progress:j.progress, resultName:j.resultName, error:j.error })) });
+  return c.json({ jobs: jobs.map(scanJobStore.publicJob) });
 });
 // Recovery: cancel any stuck/active scan jobs + clear stale locks (fs + memory).
 // Lets the UI offer "cancel stuck scan" instead of 409-looping forever. This is
@@ -1248,6 +1249,7 @@ app.post("/api/scan/cancel-all", async(c)=>{
   if (!operationLocks.has("scanner") && !findActiveScanJob()) {
     removeOperationLockFs(scannerLockPath());
   }
+  scanJobStore.checkpoint();
   return c.json({ ok:true, cancelled });
 });
 
@@ -1293,7 +1295,7 @@ registerDeviceApi(app, { auth: requireAuth, ip: currentPrinterIp, queue: current
  scanner: scannerManager, printer: printerDeviceService, csrf: isCsrfValid, readBody: readMutationBody, recovery: deviceRecovery.status });
 
 export const dashboardStatus = registerStatusApi(app, { requireAuth, currentPrinterIp, currentPrinterName, currentDisplayName,
- clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService, recovery: deviceRecovery.status, dataDir: () => APP_DIR, scannerBusy: () => !!findActiveScanJob() || operationLocks.has("scanner"), csrf: isCsrfValid, readBody: readMutationBody,
+ clientSetup, networkSharingEnabledSync, recentScans, printerDeviceService, recovery: deviceRecovery.status, dataDir: () => APP_DIR, scanStorage: () => scanLibrary.usage(), scannerBusy: () => !!findActiveScanJob() || operationLocks.has("scanner"), csrf: isCsrfValid, readBody: readMutationBody,
  limits: () => ({ upload: MAX_UPLOAD_MB, scans: MAX_SCAN_FILES }) });
 
 onStatusInvalidated(() => dashboardStatus.invalidate());

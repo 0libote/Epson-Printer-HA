@@ -44,6 +44,8 @@ jobs:
           docker compose -f compose.zimaos.yml config -q
       - name: Run tests (bun:test - Bun 1.4.3)
         run: bun test --timeout 10000
+      - name: Run scanner sidecar unit tests
+        run: python3 -m unittest discover -s tests/python -v
 
   docker:
     runs-on: ubuntu-latest

@@ -1,222 +1,306 @@
 import * as stylex from "@stylexjs/stylex";
-import { vars } from "../styles/tokens.stylex";
 import { useRef, useState } from "react";
-import { FileText, Loader2, Printer, Upload, X } from "lucide-react";
-import { useToast } from "./Toast";
-import { postPrint } from "../lib/api";
-import { s as ui, Card, CardHeader, ProgressBar } from "./ui";
+import { ArrowRight, Image, Loader2, Printer } from "lucide-react";
+import { postPrint, type PrintResponse } from "../lib/api";
+import { createSubmissionId } from "../lib/submission-id";
+import { s as ui, ProgressBar } from "./ui";
+import { OperationResult } from "./OperationResult";
+import { PrintFilePicker, PRINT_FILE_TYPES } from "./PrintFilePicker";
 
-const FALLBACK_MAX_MB = 128;
-
-const s = stylex.create({
-  drop: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    flexDirection: "column",
-    minHeight: "158px",
-    justifyContent: "center",
-    padding: "24px 16px",
-    borderRadius: vars.radiusMd,
-    borderWidth: "1.5px",
-    borderStyle: "dashed",
-    borderColor: vars.lineStrong,
-    backgroundColor: vars.accentSoft,
-    cursor: "pointer",
-    width: "100%",
-    textAlign: "center",
-    transition: "border-color .15s, background-color .15s",
-  },
-  dropActive: { borderColor: vars.accent, backgroundColor: vars.accentSoft },
-  dropIcon: {
-    width: "44px",
-    height: "44px",
-    borderRadius: "10px",
-    backgroundColor: vars.panel,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: vars.line,
-    display: "grid",
-    placeItems: "center",
-    color: vars.textSecondary,
-    flexShrink: 0,
-  },
-  dropText: { fontFamily: vars.fontSans, fontSize: "13.5px", fontWeight: 550, color: vars.text },
-  dropHint: { fontFamily: vars.fontSans, fontSize: "12px", color: vars.textTertiary, marginTop: "2px" },
-  fileInput: { position: "absolute", width: "1px", height: "1px", opacity: 0, pointerEvents: "none" },
-  row: { display: "flex", gap: "12px", marginTop: "14px" },
-  check: { display: "flex", alignItems: "center", gap: "8px", fontFamily: vars.fontSans, fontSize: "13.5px", color: vars.textSecondary, cursor: "pointer", marginTop: "14px" },
-  chosen: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    marginTop: "12px",
-    padding: "10px 8px 10px 12px",
-    borderRadius: vars.radiusSm,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: vars.line,
-    backgroundColor: vars.panel,
-    fontFamily: vars.fontSans,
-    fontSize: "13px",
-    color: vars.text,
-  },
-  chosenName: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
-  chosenMeta: { fontFamily: vars.fontMono, fontSize: "11.5px", color: vars.textTertiary, flexShrink: 0 },
-  iconBtn: {
-    borderWidth: 0,
-    borderStyle: "none",
-    backgroundColor: "transparent",
-    color: vars.textTertiary,
-    cursor: "pointer",
-    padding: "6px",
-    borderRadius: "6px",
-    display: "grid",
-    placeItems: "center",
-  },
-  stage: { fontFamily: vars.fontSans, fontSize: "12.5px", color: vars.textSecondary, marginTop: "10px" },
-});
-
-const ACCEPT = [".pdf", ".png", ".jpg", ".jpeg", ".txt"];
-
-function formatFileSize(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+const defaults = {
+  copies: "1",
+  grayscale: false,
+  paper: "A4",
+  orientation: "portrait",
+  scaling: "fit",
+  pages: "",
+};
+type Options = typeof defaults;
+function savedOptions(): Options {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem("print-room-options") || "null",
+    );
+    if (saved && ["A4", "Letter"].includes(saved.paper))
+      return {
+        ...defaults,
+        paper: saved.paper,
+        grayscale: saved.grayscale === true,
+      };
+  } catch {}
+  return defaults;
 }
 
-export function PrintCard({ onPrinted, maxMb }: { onPrinted: () => void; maxMb?: number }) {
-  const { push } = useToast();
-  const maxMbEffective = typeof maxMb === "number" && Number.isFinite(maxMb) && maxMb >= 1 ? Math.floor(maxMb) : FALLBACK_MAX_MB;
+function printOptionValue(key: string, value: string | boolean) {
+  if (key === "grayscale") return value ? "on" : "off";
+  return String(value);
+}
+
+export function PrintCard({
+  onPrinted,
+  maxMb,
+  offline = false,
+}: Readonly<{
+  onPrinted: () => void;
+  maxMb?: number;
+  offline?: boolean;
+}>) {
+  const max = maxMb && Number.isFinite(maxMb) && maxMb >= 1 ? maxMb : 128;
   const [file, setFile] = useState<File | null>(null);
-  const [dragOver, setDragOver] = useState(false);
-  const [copiesText, setCopiesText] = useState("1");
-  const [grayscale, setGrayscale] = useState(false);
+  const [options, setOptions] = useState<Options>(savedOptions);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
-  const dragDepth = useRef(0);
-
-  const copies = Number(copiesText);
-
-  const pick = (f: File | null) => {
-    if (busy) return;
-    setError(null);
-    if (!f) { setFile(null); return; }
-    const ext = "." + (f.name.split(".").pop() || "").toLowerCase();
-    if (!ACCEPT.includes(ext)) { setError("Supported files: PDF, PNG, JPG and TXT."); setFile(null); return; }
-    if (f.size === 0) { setError("The selected file is empty."); setFile(null); return; }
-    if (f.size > maxMbEffective * 1024 * 1024) { setError(`That file is too large. The limit is ${maxMbEffective} MB.`); setFile(null); return; }
-    setFile(f);
+  const [error, setError] = useState("");
+  const [receipt, setReceipt] = useState<
+    (PrintResponse & { name: string }) | null
+  >(null);
+  const submissionId = useRef<string | null>(null);
+  const submitting = useRef(false);
+  const isPdf = file?.name.toLowerCase().endsWith(".pdf");
+  const change = <K extends keyof Options>(key: K, value: Options[K]) => {
+    setOptions((previous) => ({ ...previous, [key]: value }));
+    submissionId.current = null;
+    setError("");
   };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (!file) { setError("Choose a file first."); return; }
-    if (!/^\d+$/.test(copiesText.trim()) || !Number.isInteger(copies) || copies < 1 || copies > 99) {
-      setError("Copies must be a whole number between 1 and 99.");
+  const pick = (picked: File | null) => {
+    if (submitting.current || !picked) return;
+    setError("");
+    const ext = "." + picked.name.split(".").pop()?.toLowerCase();
+    if (!PRINT_FILE_TYPES.includes(ext)) {
+      setError("Choose a PDF, PNG, JPG or plain text file.");
       return;
     }
+    if (!picked.size) {
+      setError("That file is empty. Choose another document.");
+      return;
+    }
+    if (picked.size > max * 1024 * 1024) {
+      setError(`Choose a file smaller than ${max} MB.`);
+      return;
+    }
+    setFile(picked);
+    setReceipt(null);
+    setOptions((previous) => ({ ...previous, pages: "" }));
+    submissionId.current = null;
+  };
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!file || submitting.current) return;
+    const copies = Number(options.copies);
+    if (!/^\d+$/.test(options.copies) || copies < 1 || copies > 99) {
+      setError("Choose a whole number of copies from 1 to 99.");
+      return;
+    }
+    if (
+      options.pages &&
+      !/^[1-9]\d*(?:-[1-9]\d*)?(?:\s*,\s*[1-9]\d*(?:-[1-9]\d*)?)*$/.test(
+        options.pages.trim(),
+      )
+    ) {
+      setError("Enter pages like 1-3, 5 or leave blank for all pages.");
+      return;
+    }
+    submitting.current = true;
     setBusy(true);
+    setError("");
+    // The same key survives a failed request. Retrying cannot print twice.
     try {
-      const fd = new FormData();
-      fd.set("file", file);
-      fd.set("copies", String(copies));
-      if (grayscale) fd.set("grayscale", "on");
-      await postPrint(fd);
-      push({ kind: "success", title: "Sent to printer", desc: `${file.name} · ${copies} ${copies === 1 ? "copy" : "copies"}` });
+      submissionId.current ??= createSubmissionId();
+      const form = new FormData();
+      form.set("file", file);
+      form.set("submission_id", submissionId.current);
+      for (const [key, value] of Object.entries(options))
+        form.set(key, printOptionValue(key, value));
+      const result = await postPrint(form);
+      setReceipt({ ...result, name: file.name });
+      try {
+        localStorage.setItem(
+          "print-room-options",
+          JSON.stringify({
+            paper: options.paper,
+            grayscale: options.grayscale,
+          }),
+        );
+      } catch {}
       setFile(null);
-      if (fileRef.current) fileRef.current.value = "";
+      submissionId.current = null;
       onPrinted();
-    } catch (err: any) {
-      const msg = String(err.message || err).slice(0, 260);
-      setError(msg);
-      push({ kind: "error", title: "Print failed", desc: msg.slice(0, 200) });
+    } catch (error) {
+      if ((error as Error & { retrySafe?: boolean }).retrySafe)
+        submissionId.current = null;
+      setError(`${(error as Error).message || "Connection interrupted."}`);
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
 
   return (
-    <Card>
-      <CardHeader
-        icon={<Printer size={18} />}
-        tileBg={vars.accentSoft as string}
-        tileColor={vars.accent as string}
-        title="Print a document"
-        sub="PDF, images or plain text"
-      />
-      <form onSubmit={submit}>
-          <input
-            ref={fileRef}
-            {...stylex.props(s.fileInput)}
-            type="file"
-            disabled={busy}
-            accept={ACCEPT.join(",")}
-            onChange={(e) => pick(e.target.files?.[0] || null)}
-            tabIndex={-1}
-          />
-        <button
-          {...stylex.props(s.drop, dragOver && s.dropActive)}
-          type="button"
-          disabled={busy}
-          aria-label="Choose a file to print"
-          onClick={() => fileRef.current?.click()}
-          onDragEnter={(e) => { e.preventDefault(); dragDepth.current++; setDragOver(true); }}
-          onDragOver={(e) => e.preventDefault()}
-          onDragLeave={() => { dragDepth.current = Math.max(0, dragDepth.current - 1); if (dragDepth.current === 0) setDragOver(false); }}
-          onDrop={(e) => { e.preventDefault(); dragDepth.current = 0; setDragOver(false); const f = e.dataTransfer.files[0]; if (f) pick(f); }}
+    <div className="print-workflow">
+      <div className="workflow-heading">
+        <div>
+          <h2>What would you like to print?</h2>
+          <p>Choose a file. We’ll take care of the rest.</p>
+        </div>
+        <span className="step-label">01 / PRINT</span>
+      </div>
+      {receipt ? (
+        <OperationResult
+          title="Added to your print queue"
+          description={receipt.name}
+          dismissLabel="Dismiss print confirmation"
+          onDismiss={() => setReceipt(null)}
         >
-          <span {...stylex.props(s.dropIcon)}><Upload size={17} /></span>
-          <span>
-            <span {...stylex.props(s.dropText)}>{dragOver ? "Drop it" : "Drop a document here"}</span>
-            <br />
-            <span {...stylex.props(s.dropHint)}>or click to browse · up to {maxMbEffective} MB</span>
-          </span>
-        </button>
-
-        {file ? (
-          <div {...stylex.props(s.chosen)}>
-            <FileText size={15} style={{ flexShrink: 0, color: vars.textTertiary as string }} />
-            <span {...stylex.props(s.chosenName)}>{file.name}</span>
-            <span {...stylex.props(s.chosenMeta)}>{formatFileSize(file.size)}</span>
-            <button type="button" {...stylex.props(s.iconBtn)} disabled={busy} aria-label="Remove file" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ""; }}>
-              <X size={14} />
-            </button>
+          <small>
+            {receipt.job_id ? `Job ${receipt.job_id} · ` : ""}Follow its
+            progress in the queue below.
+          </small>
+          <a href="#history">
+            View print history <ArrowRight size={13} />
+          </a>
+        </OperationResult>
+      ) : null}
+      <form onSubmit={submit}>
+        <PrintFilePicker
+          file={file}
+          max={max}
+          busy={busy}
+          onPick={pick}
+          onError={setError}
+          onRemove={() => {
+            setFile(null);
+            setError("");
+            submissionId.current = null;
+          }}
+        />
+        <fieldset className="print-options" disabled={busy}>
+          <legend className="visually-hidden">Print settings</legend>
+          <div className="option-grid">
+            <label {...stylex.props(ui.fieldLabel)}>
+              <span>Copies</span>
+              <input
+                {...stylex.props(ui.input)}
+                type="number"
+                min={1}
+                max={99}
+                required
+                value={options.copies}
+                onChange={(event) => change("copies", event.target.value)}
+              />
+            </label>
+            <label {...stylex.props(ui.fieldLabel)}>
+              <span>Paper size</span>
+              <select
+                {...stylex.props(ui.select)}
+                value={options.paper}
+                onChange={(event) => change("paper", event.target.value)}
+              >
+                <option value="A4">A4</option>
+                <option value="Letter">US Letter</option>
+              </select>
+            </label>
+            <label {...stylex.props(ui.fieldLabel)}>
+              <span>Colour</span>
+              <select
+                {...stylex.props(ui.select)}
+                value={options.grayscale ? "mono" : "colour"}
+                onChange={(event) =>
+                  change("grayscale", event.target.value === "mono")
+                }
+              >
+                <option value="colour">Full colour</option>
+                <option value="mono">Black & white</option>
+              </select>
+            </label>
+          </div>
+          <details className="more-options">
+            <summary>
+              Layout & page selection <span>Optional</span>
+            </summary>
+            <div className="option-grid">
+              <label {...stylex.props(ui.fieldLabel)}>
+                <span>Orientation</span>
+                <select
+                  {...stylex.props(ui.select)}
+                  value={options.orientation}
+                  onChange={(event) =>
+                    change("orientation", event.target.value)
+                  }
+                >
+                  <option value="portrait">Portrait</option>
+                  <option value="landscape">Landscape</option>
+                </select>
+              </label>
+              <label {...stylex.props(ui.fieldLabel)}>
+                <span>Scaling</span>
+                <select
+                  {...stylex.props(ui.select)}
+                  value={options.scaling}
+                  onChange={(event) => change("scaling", event.target.value)}
+                >
+                  <option value="fit">Fit to page</option>
+                  <option value="actual">Actual size</option>
+                </select>
+              </label>
+              <label {...stylex.props(ui.fieldLabel)}>
+                <span>Pages</span>
+                <input
+                  {...stylex.props(ui.input)}
+                  value={options.pages}
+                  disabled={!isPdf}
+                  placeholder={isPdf ? "All, e.g. 1-3, 5" : "All pages"}
+                  onChange={(event) => change("pages", event.target.value)}
+                  aria-describedby="pages-help"
+                />
+              </label>
+            </div>
+            <p id="pages-help">
+              Page selection is available for PDFs. Printing is single-sided.
+            </p>
+          </details>
+        </fieldset>
+        {offline ? (
+          <p className="inline-notice">
+            The printer is offline. Your document will wait in the queue until
+            it reconnects.
+          </p>
+        ) : null}
+        {error ? (
+          <div {...stylex.props(ui.errorBox)} role="alert">
+            {error}
+            <a href="#history">Check history</a>
           </div>
         ) : null}
-
-        {error ? <div {...stylex.props(ui.errorBox)} style={{ marginTop: 12 }} role="alert">{error}</div> : null}
-
-        <div {...stylex.props(s.row)}>
-          <label {...stylex.props(ui.fieldLabel)} style={{ width: 110 }}>
-            Copies
-            <input
-              {...stylex.props(ui.input)}
-              type="number"
-              disabled={busy}
-              min={1}
-              max={99}
-              value={copiesText}
-              onChange={(e) => setCopiesText(e.target.value)}
-            />
-          </label>
-          <label {...stylex.props(s.check)}>
-            <input type="checkbox" disabled={busy} checked={grayscale} onChange={(e) => setGrayscale(e.target.checked)} style={{ width: 16, height: 16, accentColor: vars.accent as string }} />
-            <span>Black &amp; white</span>
-          </label>
-        </div>
-
-        <div style={{ marginTop: 16 }}>
-          <button {...stylex.props(ui.buttonPrimary, busy && ui.buttonPrimaryDisabled)} type="submit" disabled={busy}>
-            {busy ? <><Loader2 size={16} className="spin" /> Sending…</> : "Print"}
-          </button>
-          {busy ? <div style={{ marginTop: 10 }}><ProgressBar /><p {...stylex.props(s.stage)}>Uploading and queueing…</p></div> : null}
-        </div>
+        <button
+          {...stylex.props(
+            ui.buttonPrimary,
+            (!file || busy) && ui.buttonPrimaryDisabled,
+          )}
+          className={`${stylex.props(ui.buttonPrimary, (!file || busy) && ui.buttonPrimaryDisabled).className} workflow-submit`}
+          type="submit"
+          disabled={!file || busy}
+        >
+          {busy ? (
+            <>
+              <Loader2 size={17} className="spin" /> Sending to your printer…
+            </>
+          ) : (
+            <>
+              <Printer size={17} />{" "}
+              {offline ? "Add to print queue" : "Print document"}
+              <ArrowRight size={16} />
+            </>
+          )}
+        </button>
+        {busy ? (
+          <div className="upload-progress">
+            <ProgressBar />
+            <p>Keep this page open while your file uploads.</p>
+          </div>
+        ) : null}
+        <p className="workflow-footnote">
+          <Image size={13} /> Your file is removed after it leaves the queue.
+        </p>
       </form>
-      <style>{`.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </Card>
+    </div>
   );
 }

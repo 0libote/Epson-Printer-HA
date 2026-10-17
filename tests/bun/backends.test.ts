@@ -109,6 +109,45 @@ test("Epson cancellation sends cancel and waits for settled job", async () => {
  const [result]=await backend.scan("192.0.2.10",temp(),{control:{isCancelled:()=>cancelled,registerProcess:process=>{cancelled=true;process.kill();},clearProcess:()=>{}}});
  expect(requested).toBe(true);expect(result.returncode).toBe(130);
 });
+test("uncertain Epson acquisition blocks fallback until the remote job settles", async () => {
+ const id="d".repeat(32); let phase="lost", starts=0, acquisitions=0, cancels=0;
+ const epson=new EpsonScan2Backend(async path=>{
+  if(path==='/health')return Response.json(health);
+  if(path==='/scan'){starts++;return Response.json({id},{status:202});}
+  if(path.endsWith('/cancel')){cancels++;return Response.json({ok:true});}
+  if(phase==='lost')throw new Error('socket unavailable');
+  return Response.json({state:phase});
+ });
+ const sane=fakeSane([{rank:2,device:"epsonds:test",backend:"SANE"}],async()=>{
+  acquisitions++; return [commandResult(true),null];
+ });
+ const manager=createScannerManager(sane,async()=>commandResult(true,help),epson);
+ expect((await manager.scan('192.0.2.10',temp(),{}))[0].ok).toBe(false);
+ expect(starts).toBe(1);expect(cancels).toBe(1);
+ // Refreshing devices and acknowledging cancellation must not erase ownership.
+ manager.invalidate('192.0.2.10');
+ expect((await manager.scan('192.0.2.10',temp(),{}))[0].ok).toBe(false);
+ phase='scanning';
+ expect((await manager.scan('192.0.2.10',temp(),{}))[0].ok).toBe(false);
+ expect(acquisitions).toBe(0);expect(starts).toBe(1);
+ phase='cancelled';
+ expect((await manager.scan('192.0.2.10',temp(),{}))[0].ok).toBe(true);
+ expect(acquisitions).toBe(1);expect(starts).toBe(1);
+});
+test("only terminal or expired Epson jobs release uncertain ownership", async () => {
+ const id='e'.repeat(32);let phase='lost';
+ const backend=new EpsonScan2Backend(async path=>{
+  if(path==='/health')return Response.json(health);
+  if(path==='/scan')return Response.json({id},{status:202});
+  if(path.endsWith('/cancel'))return Response.json({ok:true});
+  if(phase==='lost')throw new Error('socket unavailable');
+  if(phase==='expired')return Response.json({error:'Not found'},{status:404});
+  return Response.json({state:phase});
+ });
+ await backend.scan('192.0.2.10',temp(),{});
+ phase='unknown';expect(await backend.canAcquire('192.0.2.10')).toBe(false);
+ phase='expired';expect(await backend.canAcquire('192.0.2.10')).toBe(true);
+});
 test("Epson errors and oversized output never publish or expose raw errors", async () => {
  for(const failure of ['error','oversized','crash']) {
   const backend=new EpsonScan2Backend(async path=>{

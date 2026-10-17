@@ -26,7 +26,8 @@ export async function renderIndex(c:any, deps: ViewDependencies):Promise<string>
     reachable=await cachedPrinterReachable(printerIp);
     printer=await cachedCupsPrinterStatus(printerName);
     scanner=await scannerStatus(printerIp);
-    jobs=await cachedListJobs(printerName);
+    try { jobs=await cachedListJobs(printerName); }
+    catch { printer={ok:false, state:"unavailable", detail:"Print queue is temporarily unavailable. Check the CUPS service."}; }
     try{history=listPrintHistory(100);}catch{}
     scans=recentScans(10).map(s=>({name:s.name}));
   } else { try{history=listPrintHistory(100);}catch{} }

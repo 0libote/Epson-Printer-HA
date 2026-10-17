@@ -164,10 +164,10 @@ async function scanDocument(
   const timeoutMsMap: Record<number, number> = { 150: 55_000, 200: 75_000, 300: 110_000, 600: 180_000 };
   const scanTimeout = timeoutMsMap[dpi] ?? 110_000;
 
-  let lastExc: any = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     let proc: any = null;
     let timeoutId: any = null;
+    let receivedImage = false;
     try {
       proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
       opts.control?.registerProcess(proc);
@@ -194,6 +194,7 @@ async function scanDocument(
       if (timeoutId) clearTimeout(timeoutId);
 
       if (exitCode === 0) {
+        receivedImage = true;
         if (opts.control?.isCancelled()) {
           safeUnlink(pngPath);
           return [commandResult(false, "", "scan_cancelled", 130), null];
@@ -236,13 +237,12 @@ async function scanDocument(
         safeUnlink(pngPath);
         return [commandResult(false, "", `Scanner did not respond within ${Math.round(scanTimeout/1000)}s. Check the printer is awake, paper is on glass, then try again.`, 1), null];
       }
-      lastExc = exc;
       safeUnlink(pngPath);
-      if (attempt === 0) {
-        await Bun.sleep(1500);
-        continue;
-      }
-      return [commandResult(false, "", String(exc), 1), null];
+      // An unknown failure may have happened after acquisition. Only the
+      // explicit busy/invalid-device rejection paths above can safely retry.
+      return [commandResult(false, "", receivedImage
+        ? "The scanned page could not be saved. Check the hub's scan storage before trying again."
+        : String(exc), 1), null];
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
       if (proc && proc.exitCode === null) {
