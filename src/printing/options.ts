@@ -7,8 +7,7 @@ export type PrintOptions = {
   pages: string;
 };
 
-function parseCopies(value: unknown): number {
-  const rawCopies = value ?? "1";
+function parseCopies(rawCopies: unknown = "1"): number {
   if (typeof rawCopies !== "string" && typeof rawCopies !== "number")
     throw new Error("Copies must be a whole number between 1 and 99.");
   const copyText = String(rawCopies).trim();
@@ -24,8 +23,7 @@ function parseCopies(value: unknown): number {
   return copies;
 }
 
-function parsePageRanges(value: unknown): string {
-  const rawPages = value ?? "";
+function parsePageRanges(rawPages: unknown = ""): string {
   if (typeof rawPages !== "string")
     throw new Error("Enter page ranges as text, or leave blank for all pages.");
   const pages = rawPages.replace(/\s/g, "");
@@ -62,9 +60,9 @@ export function parsePrintOptions(body: Record<string, unknown>): PrintOptions {
   const scaling = body.scaling ?? "fit";
   if (scaling !== "fit" && scaling !== "actual")
     throw new Error("Choose fit to page or actual size.");
-  const pages = parsePageRanges(body.pages);
+  const pages = parsePageRanges(body.pages ?? undefined);
   return {
-    copies: parseCopies(body.copies),
+    copies: parseCopies(body.copies ?? undefined),
     grayscale: body.grayscale === "on" || body.grayscale === true,
     paper,
     orientation,
