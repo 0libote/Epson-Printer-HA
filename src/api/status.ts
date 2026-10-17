@@ -59,7 +59,7 @@ export function registerStatusApi(app: Hono, deps: {
     if (deps.scannerBusy?.()) return { ...snapshot.read().values.scanner, ok: true, state: "scanning", detail: "A scan is in progress" };
     return currentPrinterIp() ? scannerStatus(currentPrinterIp()) : { ok: false, state: "setup_required", detail: "", backend: null, device: null, open_source: false };
    },
-   scan_storage: async (): Promise<ScanStorage> => deps.scanStorage?.() ?? {total:0,reserved:0,max:limits().scans,policy:"keep-all",available_bytes:-1,full:false},
+   scan_storage: (): Promise<ScanStorage> => Promise.resolve(deps.scanStorage?.() ?? {total:0,reserved:0,max:limits().scans,policy:"keep-all",available_bytes:-1,full:false}),
    queue: () => currentPrinterIp() ? cachedListJobs(currentPrinterName()) : Promise.resolve([]),
    device: () => printerDeviceService.status(currentPrinterIp(), currentPrinterName()),
    capabilities: () => printerDeviceService.capabilities(currentPrinterIp()),

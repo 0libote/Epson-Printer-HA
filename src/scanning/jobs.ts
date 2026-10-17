@@ -43,6 +43,84 @@ const validResultName = (name: unknown): name is string =>
   !/[\\/\x00-\x1f]/.test(name) &&
   /\.(pdf|png|jpe?g)$/i.test(name);
 
+function validJobIdentity(value: any): boolean {
+  return (
+    value &&
+    typeof value === "object" &&
+    typeof value.id === "string" &&
+    /^[a-f0-9]{12}$/.test(value.id) &&
+    ["queued", "scanning", "converting", "done", "error", "cancelled"].includes(
+      value.state,
+    )
+  );
+}
+
+function validJobSettings(value: any, now: number): boolean {
+  return (
+    Number.isFinite(value.createdAt) &&
+    value.createdAt <= now + 60_000 &&
+    now - value.createdAt <= RETENTION_MS &&
+    [150, 200, 300, 600].includes(value.dpi) &&
+    ["Color", "Gray", "Lineart"].includes(value.mode) &&
+    ["pdf", "png", "jpg", "jpeg"].includes(value.fmt) &&
+    typeof value.printerIp === "string" &&
+    value.printerIp.length <= 64
+  );
+}
+
+function restoreOptionalMetadata(job: ScanJob, value: any, now: number) {
+  for (const key of ["startedAt", "finishedAt"] as const) {
+    if (
+      Number.isFinite(value[key]) &&
+      value[key] >= value.createdAt &&
+      value[key] <= now + 60_000
+    )
+      job[key] = value[key];
+  }
+  if (typeof value.error === "string") job.error = value.error.slice(0, 800);
+  if (validResultName(value.resultName)) job.resultName = value.resultName;
+  if (
+    typeof value.requestKey === "string" &&
+    /^[A-Za-z0-9_-]{16,80}$/.test(value.requestKey)
+  )
+    job.requestKey = value.requestKey;
+}
+
+function restoreJob(value: any, now: number): ScanJob | null {
+  if (!validJobIdentity(value) || !validJobSettings(value, now)) return null;
+  const job: ScanJob = {
+    id: value.id,
+    state: value.state,
+    createdAt: value.createdAt,
+    printerIp: value.printerIp,
+    dpi: value.dpi,
+    mode: value.mode,
+    fmt: value.fmt,
+    cancelRequested: value.cancelRequested === true,
+    progress:
+      typeof value.progress === "string" ? value.progress.slice(0, 200) : "",
+  };
+  restoreOptionalMetadata(job, value, now);
+  return job;
+}
+
+function recoverInterruptedJob(job: ScanJob, now: number): boolean {
+  if (isActiveScan(job)) {
+    job.state = "error";
+    job.progress = "Interrupted by a hub restart";
+    job.error =
+      "The hub restarted before this scan finished. Check Saved scans before starting another scan.";
+    job.finishedAt = now;
+    job.cancelRequested = true;
+    return true;
+  }
+  if (job.state === "done" && !job.resultName) {
+    job.state = "error";
+    job.error = "This scan has no saved result. Check Saved scans.";
+  }
+  return false;
+}
+
 /** Metadata only. Restored active jobs become explicit interruptions; hardware
  * work is never automatically replayed from this journal. */
 export function createScanJobStore(directory: () => string, now = Date.now) {
@@ -108,76 +186,9 @@ export function createScanJobStore(directory: () => string, now = Date.now) {
       )
         return;
       for (const value of journal.jobs) {
-        if (
-          !value ||
-          typeof value !== "object" ||
-          typeof value.id !== "string" ||
-          !/^[a-f0-9]{12}$/.test(value.id) ||
-          jobs.has(value.id) ||
-          ![
-            "queued",
-            "scanning",
-            "converting",
-            "done",
-            "error",
-            "cancelled",
-          ].includes(value.state)
-        )
-          continue;
-        if (
-          !Number.isFinite(value.createdAt) ||
-          value.createdAt > now() + 60_000 ||
-          now() - value.createdAt > RETENTION_MS ||
-          ![150, 200, 300, 600].includes(value.dpi) ||
-          !["Color", "Gray", "Lineart"].includes(value.mode) ||
-          !["pdf", "png", "jpg", "jpeg"].includes(value.fmt) ||
-          typeof value.printerIp !== "string" ||
-          value.printerIp.length > 64
-        )
-          continue;
-        const job: ScanJob = {
-          id: value.id,
-          state: value.state,
-          createdAt: value.createdAt,
-          printerIp: value.printerIp,
-          dpi: value.dpi,
-          mode: value.mode,
-          fmt: value.fmt,
-          cancelRequested: value.cancelRequested === true,
-          progress:
-            typeof value.progress === "string"
-              ? value.progress.slice(0, 200)
-              : "",
-        };
-        for (const key of ["startedAt", "finishedAt"] as const)
-          if (
-            Number.isFinite(value[key]) &&
-            value[key] >= value.createdAt &&
-            value[key] <= now() + 60_000
-          )
-            job[key] = value[key];
-        if (typeof value.error === "string")
-          job.error = value.error.slice(0, 800);
-        if (validResultName(value.resultName))
-          job.resultName = value.resultName;
-        if (
-          typeof value.requestKey === "string" &&
-          /^[A-Za-z0-9_-]{16,80}$/.test(value.requestKey)
-        )
-          job.requestKey = value.requestKey;
-        if (isActiveScan(job)) {
-          job.state = "error";
-          job.progress = "Interrupted by a hub restart";
-          job.error =
-            "The hub restarted before this scan finished. Check Saved scans before starting another scan.";
-          job.finishedAt = now();
-          job.cancelRequested = true;
-          recovered = true;
-        }
-        if (job.state === "done" && !job.resultName) {
-          job.state = "error";
-          job.error = "This scan has no saved result. Check Saved scans.";
-        }
+        const job = restoreJob(value, now());
+        if (!job || jobs.has(job.id)) continue;
+        if (recoverInterruptedJob(job, now())) recovered = true;
         jobs.set(job.id, job);
       }
     } catch (error) {

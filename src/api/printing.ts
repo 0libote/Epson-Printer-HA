@@ -107,9 +107,7 @@ export function registerPrintingApi(
       );
     if (file.size > deps.uploadLimit() * 1024 * 1024) {
       const error = `That file is too large. The limit is ${deps.uploadLimit()} MB.`;
-      if (deps.wantsJson(c)) return c.json({ ok: false, error }, 413);
-      deps.flash(c, "error", error);
-      return c.redirect("/", 302);
+      return fail(error, 413);
     }
     const key = String(body.submission_id ?? "");
     if (key && !/^[A-Za-z0-9_-]{16,80}$/.test(key))
@@ -177,8 +175,8 @@ export function registerPrintingApi(
             body: { ok: false, error: detail || "Print failed." },
           };
         }
-        const jobId = result.stdout.match(
-          /request id is ([A-Za-z0-9_.-]+-\d+)/,
+        const jobId = /request id is ([A-Za-z0-9_.-]+-\d+)/.exec(
+          result.stdout,
         )?.[1];
         return {
           status: 200,

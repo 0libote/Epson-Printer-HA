@@ -56,7 +56,7 @@ const { app, shutdownScans, _getScanJobsForTest, SCAN_JOB_STALE_MS } =
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: Number(process.env.SCAN_TEST_PORT || 0),
-  fetch: async (request) => {
+  fetch: (request) => {
     const path = new URL(request.url).pathname;
     if (path === "/__fixture/fail-save") {
       renameSync(

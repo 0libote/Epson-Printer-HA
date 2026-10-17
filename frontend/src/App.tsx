@@ -25,14 +25,12 @@ const sectionInfo = {
  history: { title: "Print history", description: "Your recent documents, with progress and results." },
  settings: { title: "Printer settings", description: "Connect your printer and share it across your home." },
 };
-function SectionLoading() { return <div className="section-loading" role="status">Opening this view…</div>; }
+function SectionLoading() { return <output className="section-loading">Opening this view…</output>; }
 
 const s = stylex.create({
   page: { backgroundColor: vars.bg, color: vars.text, minHeight: "100vh", fontFamily: vars.fontSans },
   main: { maxWidth: "1180px", margin: "0 auto", padding: "38px 40px 48px", "@media (max-width: 1100px)": { padding: "28px 24px 48px" }, "@media (max-width: 600px)": { padding: "24px 16px 120px" } },
-  hero: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", marginBottom: "24px", flexWrap: "wrap" },
   eyebrow: { fontSize: "11px", fontWeight: 650, letterSpacing: "0.12em", color: vars.textTertiary, textTransform: "uppercase", marginBottom: "6px" },
-  heading: { fontSize: "42px", maxWidth: "550px", fontWeight: 650, letterSpacing: "-0.035em", lineHeight: 1.15, "@media (max-width: 600px)": { fontSize: "32px" } },
   intro: { color: vars.textSecondary, fontSize: "14px", marginTop: "8px", lineHeight: 1.5 },
   checking: { color: vars.textSecondary, backgroundColor: vars.accentSoft, padding: "8px 12px", borderRadius: vars.radiusFull, fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" },
   actionGrid: {
@@ -82,6 +80,41 @@ function refreshAll(qc: ReturnType<typeof useQueryClient>) {
     qc.invalidateQueries({ queryKey: ["scans"] }),
     qc.invalidateQueries({ queryKey: ["ink"] }),
   ]);
+}
+
+function statusDescription(disconnected: boolean, pending: boolean, stale: boolean) {
+  if (disconnected) return " · Connection lost; showing last known status";
+  if (pending) return " · Updating in background";
+  return stale ? " · Last known status" : "";
+}
+
+function nextWorkflow(current: "print" | "scan", key: string) {
+  if (key === "Home") return "print";
+  if (key === "End") return "scan";
+  return current === "print" ? "scan" : "print";
+}
+
+function connectionLabel(checked: boolean, stale: boolean, reachable: boolean, queueReady: boolean) {
+  if (!checked) return "Checking connection";
+  if (stale) return "Last known connection";
+  if (!reachable) return "Waiting to reconnect";
+  return queueReady ? "Connected to your network" : "Connected · Queue needs attention";
+}
+
+function EmptyQueue({ failed, checking }: Readonly<{ failed: boolean; checking: boolean }>) {
+  let title = "A clear queue. A fresh start.";
+  let message = "Your print jobs will appear here while they’re waiting or printing.";
+  if (failed) {
+    title = "Print queue temporarily unavailable";
+    message = "The last queue check failed. Refresh status or check the hub in Settings.";
+  } else if (checking) {
+    title = "Checking the print queue";
+    message = "Jobs will appear here once the hub has checked CUPS.";
+  }
+  return <div className="queue-empty"><span className="queue-empty-icon"><ListOrdered size={22} strokeWidth={1.5} /></span>
+    <div><h2>{title}</h2><p>{message}</p></div>
+    <a href="#history">Print history <ArrowRight size={14} /></a>
+  </div>;
 }
 
 export default function App() {
@@ -206,8 +239,8 @@ export default function App() {
       <a className="skip-link" href="#main-content">Skip to content</a>
       <Header printerName={printerName} displayName={displayName} online={reachable} checking={!reachChecked} stale={statusStale || isError} setupNeeded={false} />
       <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-        <div {...stylex.props(s.hero)} className={`${stylex.props(s.hero).className} workspace-hero`}>
-          <div><p {...stylex.props(s.eyebrow)}>{tab === "overview" ? "A LITTLE LESS PAPERWORK" : "YOUR HOME WORKSPACE"}</p><h1 {...stylex.props(s.heading)} className={`${stylex.props(s.heading).className} workspace-title`}>{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
+        <div className="workspace-hero">
+          <div><p {...stylex.props(s.eyebrow)}>{tab === "overview" ? "A LITTLE LESS PAPERWORK" : "YOUR HOME WORKSPACE"}</p><h1 className="workspace-title">{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
           <span className="local-badge"><ShieldCheck size={15} /> On your home network</span>
         </div>
         <StatusStrip
@@ -236,7 +269,7 @@ export default function App() {
                 <div className="workflow-tabs" role="tablist" tabIndex={-1} aria-label="Choose an action" onKeyDown={event => {
                   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
                   event.preventDefault();
-                  const next = event.key === "Home" ? "print" : event.key === "End" ? "scan" : workflow === "print" ? "scan" : "print";
+                  const next = nextWorkflow(workflow, event.key);
                   setWorkflow(next);
                   document.getElementById(`workflow-${next}`)?.focus();
                 }}>
@@ -251,13 +284,13 @@ export default function App() {
                 </div>
               </div>
               <aside className="printer-rail" aria-label="Your printer">
-                <div className="printer-summary"><div className="rail-heading"><span>YOUR PRINTER</span><a href="#settings" aria-label="Manage printer"><ArrowRight size={16} /></a></div><div className="printer-stage"><PrinterIllustration /></div><h2>{displayName}</h2><p><Wifi size={13} /> {printerIp}</p><span className={`connection-label ${reachable && !statusStale ? "is-online" : ""}`}><span />{!reachChecked ? "Checking connection" : statusStale ? "Last known connection" : reachable ? printer.ok && printer.state !== "disabled" ? "Connected to your network" : "Connected · Queue needs attention" : "Waiting to reconnect"}</span></div>
+                <div className="printer-summary"><div className="rail-heading"><span>YOUR PRINTER</span><a href="#settings" aria-label="Manage printer"><ArrowRight size={16} /></a></div><div className="printer-stage"><PrinterIllustration /></div><h2>{displayName}</h2><p><Wifi size={13} /> {printerIp}</p><span className={`connection-label ${reachable && !statusStale ? "is-online" : ""}`}><span />{connectionLabel(reachChecked, statusStale, reachable, !!printer.ok && printer.state !== "disabled")}</span></div>
                 <InkLevels key={printerIp} initial={initialInk} stale={parts?.ink?.stale} />
                 <a className="device-help-link" href="#settings">Connect another device <ArrowRight size={14} /></a>
               </aside>
             </div>
             <div className="queue-area">
-              {queue.length > 0 ? <Queue jobs={queue} onChanged={() => refreshAll(qc)} /> : <div className="queue-empty"><span className="queue-empty-icon"><ListOrdered size={22} strokeWidth={1.5} /></span><div><h2>{parts?.queue?.error ? "Print queue temporarily unavailable" : parts && (!parts.queue?.updated_at || parts.queue.stale) ? "Checking the print queue" : "A clear queue. A fresh start."}</h2><p>{parts?.queue?.error ? "The last queue check failed. Refresh status or check the hub in Settings." : parts && (!parts.queue?.updated_at || parts.queue.stale) ? "Jobs will appear here once the hub has checked CUPS." : "Your print jobs will appear here while they’re waiting or printing."}</p></div><a href="#history">Print history <ArrowRight size={14} /></a></div>}
+              {queue.length > 0 ? <Queue jobs={queue} onChanged={() => refreshAll(qc)} /> : <EmptyQueue failed={!!parts?.queue?.error} checking={!!parts && (!parts.queue?.updated_at || parts.queue.stale)} />}
             </div>
             <div className="home-footnotes"><span><ShieldCheck size={14} /> Files stay on your home network</span><a href="#scans"><FolderOpen size={14} /> Find your saved scans <ArrowRight size={13} /></a></div>
         </section>
@@ -310,7 +343,7 @@ export default function App() {
           <Clock size={12} />
           <span>
             {statusPending ? "Checking devices · " : ""}Status received {new Date(dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            {isError ? " · Connection lost; showing last known status" : statusPending ? " · Updating in background" : statusStale ? " · Last known status" : ""}
+            {statusDescription(isError, statusPending, statusStale)}
           </span>
           <span {...stylex.props(s.refreshBtn)}>
             <button

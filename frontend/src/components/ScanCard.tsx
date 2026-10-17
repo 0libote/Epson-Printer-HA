@@ -3,7 +3,6 @@ import { vars } from "../styles/tokens.stylex";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
-  Check,
   Download,
   FolderOpen,
   Loader2,
@@ -21,6 +20,7 @@ import {
 } from "../lib/api";
 import { s as ui, ProgressBar } from "./ui";
 import { createSubmissionId } from "../lib/submission-id";
+import { OperationResult } from "./OperationResult";
 
 const s = stylex.create({
   grid: {
@@ -62,23 +62,128 @@ const DPI_OPTIONS = [
   { value: "600", label: "Max · 600" },
 ];
 
+const MODE_LABELS: Record<string, string> = {
+  Color: "Colour",
+  Gray: "Grayscale",
+};
+
+function scanStorageState(storage?: ScanStorage) {
+  const full = !!storage?.full && storage.policy !== "delete-oldest";
+  const low =
+    !!storage &&
+    storage.available_bytes >= 0 &&
+    storage.available_bytes < 32 * 1024 * 1024;
+  return { full, low, blocked: full || low };
+}
+
+function ScanFeedback({
+  resultName,
+  onDismiss,
+  error,
+  storage,
+  busy,
+  scannerOk,
+  scannerDetail,
+}: Readonly<{
+  resultName: string | null;
+  onDismiss: () => void;
+  error: string;
+  storage?: ScanStorage;
+  busy: boolean;
+  scannerOk: boolean;
+  scannerDetail?: string;
+}>) {
+  const capacity = scanStorageState(storage);
+  return (
+    <>
+      {resultName ? (
+        <OperationResult
+          title="Your scan is ready"
+          description={resultName}
+          dismissLabel="Dismiss scan result"
+          onDismiss={onDismiss}
+        >
+          <span className="result-actions">
+            <a href={`/scans/${encodeURIComponent(resultName)}`}>
+              <Download size={14} /> Download scan
+            </a>
+            <a href="#scans">
+              <FolderOpen size={14} /> Saved scans
+            </a>
+          </span>
+        </OperationResult>
+      ) : null}
+      {error ? (
+        <div
+          {...stylex.props(ui.errorBox)}
+          role="alert"
+          style={{ marginBottom: 16 }}
+        >
+          {error}
+        </div>
+      ) : null}
+      {capacity.blocked && !busy ? (
+        <div className="scan-storage-alert" role="alert">
+          <strong>
+            {capacity.low
+              ? "The hub is low on storage"
+              : "Your saved scans are full"}
+          </strong>
+          <p>
+            Download and delete unneeded scans before saving another page. Your
+            existing documents are kept.
+          </p>
+          <a href="#scans">
+            Manage saved scans <ArrowRight size={13} />
+          </a>
+        </div>
+      ) : null}
+      {storage?.policy === "delete-oldest" ? (
+        <p className="inline-notice">
+          Automatic deletion is enabled. New scans can remove older saved files.
+        </p>
+      ) : null}
+      {!scannerOk && !busy ? (
+        <div {...stylex.props(s.dormant)}>
+          {scannerDetail ||
+            "Scanner not detected. Check that the printer is awake and connected before trying a scan."}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function availableScanSettings(
+  capabilities: ScannerCapabilities | null | undefined,
+  mode: string,
+) {
+  const supported = capabilities?.verified ? capabilities : null;
+  const modes = supported?.modes ?? ["Color", "Gray", "Lineart"];
+  const resolutions = supported?.resolutions ?? [150, 200, 300, 600];
+  const formats = supported?.formats ?? ["pdf", "png", "jpg"];
+  const modeResolutions = supported?.combinations
+    ? resolutions.filter((value) =>
+        supported.combinations!.some((p) => p.dpi === value && p.mode === mode),
+      )
+    : resolutions;
+  return { supported, modes, modeResolutions, formats };
+}
+
 export function ScanCard({
   scannerOk,
   scannerDetail,
   capabilities,
   storage,
   onScanned,
-}: {
+}: Readonly<{
   scannerOk: boolean;
   scannerDetail?: string;
   capabilities?: ScannerCapabilities | null;
   storage?: ScanStorage;
   onScanned: () => void;
-}) {
+}>) {
   const { push } = useToast();
-  const storageFull = storage?.full && storage.policy !== "delete-oldest";
-  const storageLow = storage && storage.available_bytes >= 0 && storage.available_bytes < 32 * 1024 * 1024;
-  const storageBlocked = !!(storageFull || storageLow);
+  const { blocked: storageBlocked } = scanStorageState(storage);
   const [resultName, setResultName] = useState<string | null>(null);
   const [scanError, setScanError] = useState("");
   const submitting = useRef(false);
@@ -98,15 +203,10 @@ export function ScanCard({
   const onScannedRef = useRef(onScanned);
   onScannedRef.current = onScanned;
 
-  const supported = capabilities?.verified ? capabilities : null;
-  const modes = supported?.modes ?? ["Color", "Gray", "Lineart"];
-  const resolutions = supported?.resolutions ?? [150, 200, 300, 600];
-  const formats = supported?.formats ?? ["pdf", "png", "jpg"];
-  const modeResolutions = supported?.combinations
-    ? resolutions.filter((value) =>
-        supported.combinations!.some((p) => p.dpi === value && p.mode === mode),
-      )
-    : resolutions;
+  const { supported, modes, modeResolutions, formats } = availableScanSettings(
+    capabilities,
+    mode,
+  );
   useEffect(() => {
     if (busy) return;
     if (!modes.includes(mode) && modes.length) setMode(modes[0]);
@@ -338,50 +438,15 @@ export function ScanCard({
         </div>
         <span className="step-label">02 / SCAN</span>
       </div>
-      {resultName ? (
-        <div className="operation-result" role="status">
-          <span className="result-icon">
-            <Check size={20} />
-          </span>
-          <div>
-            <strong>Your scan is ready</strong>
-            <p>{resultName}</p>
-            <div className="result-actions">
-              <a href={`/scans/${encodeURIComponent(resultName)}`}>
-                <Download size={14} /> Download scan
-              </a>
-              <a href="#scans">
-                <FolderOpen size={14} /> Saved scans
-              </a>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Dismiss scan result"
-            onClick={() => setResultName(null)}
-          >
-            <X size={16} />
-          </button>
-        </div>
-      ) : null}
-      {scanError ? (
-        <div
-          {...stylex.props(ui.errorBox)}
-          role="alert"
-          style={{ marginBottom: 16 }}
-        >
-          {scanError}
-        </div>
-      ) : null}
-      {storageBlocked && !busy ? <div className="scan-storage-alert" role="alert"><strong>{storageLow ? "The hub is low on storage" : "Your saved scans are full"}</strong><p>Download and delete unneeded scans before saving another page. Your existing documents are kept.</p><a href="#scans">Manage saved scans <ArrowRight size={13} /></a></div> : null}
-      {storage?.policy === "delete-oldest" ? <p className="inline-notice">Automatic deletion is enabled. New scans can remove older saved files.</p> : null}
-      {!scannerOk && !busy ? (
-        <div {...stylex.props(s.dormant)}>
-          {scannerDetail ||
-            "Scanner not detected. Check that the printer is awake and connected before trying a scan."}
-        </div>
-      ) : null}
+      <ScanFeedback
+        resultName={resultName}
+        onDismiss={() => setResultName(null)}
+        error={scanError}
+        storage={storage}
+        busy={busy}
+        scannerOk={scannerOk}
+        scannerDetail={scannerDetail}
+      />
       <form onSubmit={submit} style={{ marginTop: scannerOk || busy ? 0 : 12 }}>
         <div className="workspace-scan-guide">
           <span className="scan-page-art">
@@ -410,11 +475,7 @@ export function ScanCard({
             >
               {modes.map((value) => (
                 <option key={value} value={value}>
-                  {value === "Color"
-                    ? "Colour"
-                    : value === "Gray"
-                      ? "Grayscale"
-                      : "Black & white"}
+                  {MODE_LABELS[value] ?? "Black & white"}
                 </option>
               ))}
             </select>
@@ -503,10 +564,13 @@ export function ScanCard({
             {...stylex.props(
               ui.buttonPrimary,
               ui.buttonTeal,
-              (busy || blocked || storageBlocked || !scannerOk) && ui.buttonPrimaryDisabled,
+              (busy || blocked || storageBlocked || !scannerOk) &&
+                ui.buttonPrimaryDisabled,
             )}
             type="submit"
-            disabled={busy || clearing || blocked || storageBlocked || !scannerOk}
+            disabled={
+              busy || clearing || blocked || storageBlocked || !scannerOk
+            }
             title={
               !scannerOk && !busy
                 ? "Waiting for the scanner to be detected"

@@ -103,9 +103,15 @@ export type PrinterNetwork = {
   hint: string;
 } | null;
 
-export function PrinterUnreachableBanner({ network, queuedJobs, recoveryMessage }: { network: PrinterNetwork; queuedJobs: number; recoveryMessage?: string }) {
+export function PrinterUnreachableBanner({ network, queuedJobs, recoveryMessage }: Readonly<{ network: PrinterNetwork; queuedJobs: number; recoveryMessage?: string }>) {
   const hint = recoveryMessage || network?.hint;
-  return <div className="connection-notice" role="status"><WifiOff size={18} /><div><strong>Waiting for your printer</strong><p>Turn it on and check its Wi-Fi connection.{queuedJobs > 0 ? ` ${queuedJobs} ${queuedJobs === 1 ? "queued job will wait" : "queued jobs will wait"} until it reconnects.` : ""}</p><a href="#settings">Find and reconnect in Settings</a>{hint ? <details><summary>Connection details</summary><p>{hint}</p></details> : null}</div></div>;
+  const waitingJobs = queuedJobs === 1 ? "queued job will wait" : "queued jobs will wait";
+  const queueMessage = queuedJobs > 0 ? ` ${queuedJobs} ${waitingJobs} until it reconnects.` : "";
+  return <div className="connection-notice"><WifiOff size={18} /><div>
+    <output><strong>Waiting for your printer</strong><span className="connection-summary">Turn it on and check its Wi-Fi connection.{queueMessage}</span></output>
+    <a href="#settings">Find and reconnect in Settings</a>
+    {hint ? <details><summary>Connection details</summary><p>{hint}</p></details> : null}
+  </div></div>;
 }
 
 export function Queue({ jobs, onChanged }: { jobs: QueueJob[]; onChanged: () => void }) {
@@ -153,7 +159,7 @@ export function Queue({ jobs, onChanged }: { jobs: QueueJob[]; onChanged: () => 
 }
 
 
-export function QueueAttention({ onChanged }: { onChanged: () => void }) {
+export function QueueAttention({ onChanged }: Readonly<{ onChanged: () => void }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const resume = async () => {

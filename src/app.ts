@@ -383,25 +383,45 @@ export const SCAN_JOB_STALE_MS = 8 * 60 * 1000;
 function isScanJobActive(j: ScanJob): boolean {
   return isActiveScan(j);
 }
+function timeOutScanJob(job: ScanJob, now: number) {
+  job.cancelRequested = true;
+  try { job.cancelProcess?.(); } catch {}
+  job.error = "Scan timed out. Check the printer before trying again.";
+  if (activeScanJobId === job.id) {
+    // Retain ownership until the acquisition promise/process has settled.
+    job.progress = "Stopping timed-out scan";
+  } else {
+    job.state = "error"; job.progress = "Failed"; job.finishedAt = now;
+  }
+}
+function finishCancelledScan(job: ScanJob) {
+  job.state = job.error ? "error" : "cancelled";
+  job.error ||= "Scan cancelled.";
+  job.progress = job.state === "error" ? "Failed" : "Cancelled";
+  job.finishedAt = Date.now();
+}
+function scanControl(job: ScanJob) {
+  return {
+    isCancelled: () => job.cancelRequested,
+    registerProcess: (process: { kill: () => void }) => {
+      job.cancelProcess = () => { try { process.kill(); } catch {} };
+      if (job.cancelRequested) job.cancelProcess();
+    },
+    clearProcess: () => { job.cancelProcess = undefined; },
+    setProgress: (progress: string) => {
+      job.state = "converting"; job.progress = progress; scanJobStore.checkpoint();
+    },
+  };
+}
 function reapStaleScanJobs(): void {
   scanJobs = scanJobStore.getJobs();
   const now = Date.now();
   let changed = false;
-  for (const j of scanJobs.values()) {
-    if (!isScanJobActive(j)) continue;
-    const age = now - (j.startedAt ?? j.createdAt);
-    if (age > SCAN_JOB_STALE_MS && !j.cancelRequested) {
-      j.cancelRequested = true;
-      try { j.cancelProcess?.(); } catch {}
-      j.error = "Scan timed out. Check the printer before trying again.";
-      if (activeScanJobId === j.id) {
-        // Retain ownership until the acquisition promise/process has settled.
-        j.progress = "Stopping timed-out scan";
-      } else {
-        j.state = "error"; j.progress = "Failed"; j.finishedAt = now;
-      }
-      changed = true;
-    }
+  for (const job of scanJobs.values()) {
+    if (!isScanJobActive(job) || job.cancelRequested) continue;
+    if (now - (job.startedAt ?? job.createdAt) <= SCAN_JOB_STALE_MS) continue;
+    timeOutScanJob(job, now);
+    changed = true;
   }
   if (changed) scanJobStore.checkpoint();
   // activeScanJobId must never point at a finished/missing job, or every new
@@ -470,20 +490,15 @@ async function executeScanJob(job:ScanJob){
     // warm cache first for speed
     await warmDeviceCache(job.printerIp).catch(()=>{});
     if (job.cancelRequested) {
-      job.state=job.error ? "error" : "cancelled"; job.error ||= "Scan cancelled."; job.progress=job.state === "error" ? "Failed" : "Cancelled"; job.finishedAt=Date.now();
+      finishCancelledScan(job);
       return;
     }
     const lock=await withOperationLock("scanner", async()=>{
       job.progress="Scanning the document"; scanJobStore.checkpoint();
-      const [result, path]=await scanDocument(job.printerIp, SCAN_DIR, {dpi:job.dpi, mode:job.mode, fmt:job.fmt, control:{
-        isCancelled:()=>job.cancelRequested,
-        registerProcess:(process)=>{ job.cancelProcess=()=>{ try{ process.kill(); }catch{} }; if (job.cancelRequested) job.cancelProcess(); },
-        clearProcess:()=>{ job.cancelProcess=undefined; },
-        setProgress:(progress)=>{ job.state="converting"; job.progress=progress; scanJobStore.checkpoint(); },
-      }});
+      const [result, path]=await scanDocument(job.printerIp, SCAN_DIR, {dpi:job.dpi, mode:job.mode, fmt:job.fmt, control:scanControl(job)});
       clearStatusCaches();
       if(job.cancelRequested || result.stderr === "scan_cancelled"){
-        job.state=job.error ? "error" : "cancelled"; job.error ||= "Scan cancelled."; job.progress=job.state === "error" ? "Failed" : "Cancelled"; job.finishedAt=Date.now();
+        finishCancelledScan(job);
         return result;
       }
       if(result.ok && path){

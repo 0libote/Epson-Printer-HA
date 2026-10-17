@@ -10,24 +10,25 @@ export type PrintReceipt = {
   retry_safe?: boolean;
 };
 export type SubmissionResult = {
-  status: 200 | 400 | 409 | 500 | 503;
+  status: 200 | 400 | 409 | 413 | 500 | 503;
   body: PrintReceipt;
 };
 const RETENTION_MS = 24 * 60 * 60 * 1000;
+
+function connect(path: string) {
+  const db = new Database(path, { create: true });
+  db.run("PRAGMA busy_timeout = 5000");
+  db.run(`CREATE TABLE IF NOT EXISTS submissions (
+    key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_at INTEGER NOT NULL,
+    result TEXT
+  )`);
+  return db;
+}
 
 /** A durable claim is written BEFORE invoking lp. An interrupted claim is never
  * automatically submitted again, including after a server/container restart. */
 export function createPrintSubmissions(dataDir: () => string) {
   const pending = new Map<string, Promise<SubmissionResult>>();
-  function connect(path: string) {
-    const db = new Database(path, { create: true });
-    db.run("PRAGMA busy_timeout = 5000");
-    db.run(`CREATE TABLE IF NOT EXISTS submissions (
-      key TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, created_at INTEGER NOT NULL,
-      result TEXT
-    )`);
-    return db;
-  }
   return async function submit(
     key: string,
     fingerprint: string,

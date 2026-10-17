@@ -17,11 +17,11 @@ export function CombineScans({
   files: initialFiles,
   onClose,
   onCreated,
-}: {
+}: Readonly<{
   files: string[];
   onClose: () => void;
   onCreated: () => void;
-}) {
+}>) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [files, setFiles] = useState(initialFiles);
   const [name, setName] = useState("Combined scan");
@@ -151,7 +151,7 @@ export function CombineScans({
               ))}
             </ol>
             <label {...stylex.props(ui.fieldLabel)}>
-              Document name
+              <span>Document name</span>
               <input
                 {...stylex.props(ui.input)}
                 aria-label="Document name"

@@ -7,9 +7,11 @@ export type PrintOptions = {
   pages: string;
 };
 
-/** Only explicit, bounded options ever reach CUPS. No command fragments. */
-export function parsePrintOptions(body: Record<string, unknown>): PrintOptions {
-  const copyText = String(body.copies ?? "1").trim();
+function parseCopies(value: unknown): number {
+  const rawCopies = value ?? "1";
+  if (typeof rawCopies !== "string" && typeof rawCopies !== "number")
+    throw new Error("Copies must be a whole number between 1 and 99.");
+  const copyText = String(rawCopies).trim();
   const copies = Number(copyText);
   if (
     !/^\d+$/.test(copyText) ||
@@ -19,16 +21,14 @@ export function parsePrintOptions(body: Record<string, unknown>): PrintOptions {
   ) {
     throw new Error("Copies must be a whole number between 1 and 99.");
   }
-  const paper = String(body.paper ?? "A4");
-  if (paper !== "A4" && paper !== "Letter")
-    throw new Error("Choose A4 or US Letter paper.");
-  const orientation = String(body.orientation ?? "portrait");
-  if (orientation !== "portrait" && orientation !== "landscape")
-    throw new Error("Choose portrait or landscape orientation.");
-  const scaling = String(body.scaling ?? "fit");
-  if (scaling !== "fit" && scaling !== "actual")
-    throw new Error("Choose fit to page or actual size.");
-  const pages = String(body.pages ?? "").replace(/\s/g, "");
+  return copies;
+}
+
+function parsePageRanges(value: unknown): string {
+  const rawPages = value ?? "";
+  if (typeof rawPages !== "string")
+    throw new Error("Enter page ranges as text, or leave blank for all pages.");
+  const pages = rawPages.replace(/\s/g, "");
   if (
     pages.length > 200 ||
     (pages &&
@@ -48,8 +48,23 @@ export function parsePrintOptions(body: Record<string, unknown>): PrintOptions {
   ) {
     throw new Error("Each page range must end on or after its first page.");
   }
+  return pages;
+}
+
+/** Only explicit, bounded options ever reach CUPS. No command fragments. */
+export function parsePrintOptions(body: Record<string, unknown>): PrintOptions {
+  const paper = body.paper ?? "A4";
+  if (paper !== "A4" && paper !== "Letter")
+    throw new Error("Choose A4 or US Letter paper.");
+  const orientation = body.orientation ?? "portrait";
+  if (orientation !== "portrait" && orientation !== "landscape")
+    throw new Error("Choose portrait or landscape orientation.");
+  const scaling = body.scaling ?? "fit";
+  if (scaling !== "fit" && scaling !== "actual")
+    throw new Error("Choose fit to page or actual size.");
+  const pages = parsePageRanges(body.pages);
   return {
-    copies,
+    copies: parseCopies(body.copies),
     grayscale: body.grayscale === "on" || body.grayscale === true,
     paper,
     orientation,

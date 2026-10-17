@@ -65,6 +65,18 @@ test("normalizes permitted print settings and page ranges", () => {
     expect(() => parsePrintOptions(options)).toThrow();
 });
 
+test("print settings reject structured values instead of coercing them to text", () => {
+  for (const [field, value] of Object.entries({
+    copies: ["2"],
+    paper: ["A4"],
+    orientation: ["portrait"],
+    scaling: ["fit"],
+    pages: ["1"],
+  })) {
+    expect(() => parsePrintOptions({ [field]: value })).toThrow();
+  }
+});
+
 test("concurrent retries share one hardware submission", async () => {
   const path = directory();
   const once = createPrintSubmissions(() => path);
