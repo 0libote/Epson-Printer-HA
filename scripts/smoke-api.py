@@ -7,6 +7,7 @@ import base64
 import http.cookiejar
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import time
@@ -17,6 +18,15 @@ import uuid
 
 BASE = "http://127.0.0.1:18080"
 CREDENTIAL = base64.b64encode(b"smoke:smoke-only-password").decode()
+SMOKE_PDF = "smoke.pdf"
+SCAN_API = "/api/scan"
+FIXTURE_ROOT = "/run/epson/smoke"
+
+
+def job_path(job_id):
+    if not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{12}", job_id):
+        raise ValueError("Invalid scan job ID in appliance response")
+    return SCAN_API + "/jobs/" + urllib.parse.quote(job_id, safe="")
 
 
 class Client:
@@ -31,7 +41,9 @@ class Client:
         if encoded is not None or data is not None:
             headers["X-CSRF-Token"] = self.csrf
             headers["Content-Type"] = content_type or "application/json"
-        payload = encoded if encoded is not None else json.dumps(data).encode() if data is not None else None
+        payload = encoded
+        if payload is None and data is not None:
+            payload = json.dumps(data).encode()
         request = urllib.request.Request(self.base + path, data=payload, headers=headers)
         try:
             with self.opener.open(request, timeout=timeout) as response:
@@ -58,12 +70,12 @@ def container_exec(container, *command):
 
 
 def acquisitions(container):
-    return len(container_exec(container, "cat", "/tmp/scanner-acquisitions.log").splitlines())
+    return len(container_exec(container, "cat", FIXTURE_ROOT + "/acquisitions.log").splitlines())
 
 
 def poll_job(client, job_id, state="done", attempts=100):
     for _ in range(attempts):
-        job = client.request(f"/api/scan/jobs/{job_id}")["job"]
+        job = client.request(job_path(job_id))["job"]
         if job["state"] == state:
             return job
         if job["state"] in ("error", "cancelled", "done"):
@@ -95,22 +107,22 @@ def before_restart(container, directory):
     assert status["printer_name"] == "Smoke_Epson", status
     assert status["status_meta"]["cached"] is True, status
 
-    receipt = client.print_document(directory / "smoke.pdf")
+    receipt = client.print_document(directory / SMOKE_PDF)
     assert receipt["ok"] and receipt.get("job_id"), receipt
-    replay = client.print_document(directory / "smoke.pdf")
+    replay = client.print_document(directory / SMOKE_PDF)
     assert replay.get("replayed") and replay["job_id"] == receipt["job_id"], replay
     for _ in range(60):
-        if container_exec(container, "python3", "-c", "from pathlib import Path; print(Path('/tmp/print-output').exists())") == "True":
+        if container_exec(container, "python3", "-c", "from pathlib import Path; print(Path('/run/epson/smoke/print-output').exists())") == "True":
             break
         time.sleep(0.25)
-    assert int(container_exec(container, "python3", "-c", "from pathlib import Path; print(Path('/tmp/print-output').stat().st_size)")) > 0
+    assert int(container_exec(container, "python3", "-c", "from pathlib import Path; print(Path('/run/epson/smoke/print-output').stat().st_size)")) > 0
 
     client.request("/api/scanner/rediscover", {})
     scans = []
     for fmt in ("png", "jpg", "pdf"):
         options = scan_options(fmt)
-        accepted = client.request("/api/scan", options)
-        duplicate = client.request("/api/scan", options)
+        accepted = client.request(SCAN_API, options)
+        duplicate = client.request(SCAN_API, options)
         assert duplicate["jobId"] == accepted["jobId"], (accepted, duplicate)
         job = poll_job(client, accepted["jobId"])
         assert job["resultAvailable"] and job["resultName"].endswith("." + fmt), job
@@ -123,23 +135,23 @@ def before_restart(container, directory):
     assert listed["total"] == 4 and listed["next_offset"] == 1, listed
     found = client.request("/api/scans?" + urllib.parse.urlencode({"q": "Smoke combined"}))
     assert found["matched"] == 1 and found["scans"][0]["name"] == combined["name"], found
-    expect_unauthorized("/scans/" + urllib.parse.quote(names[0]))
+    expect_unauthorized("/scans/" + urllib.parse.quote(names[0], safe=""))
 
     # Verify the built image's native image decoders and PDF assembly output.
     container_exec(container, "python3", "-c", "from PIL import Image; import sys; [Image.open('/data/scans/'+name).verify() for name in sys.argv[1:]]", *names[:2])
     container_exec(container, "/usr/local/bin/bun", "--disallow-code-generation-from-strings", "-e", "import {PDFDocument} from 'pdf-lib'; const pdf=await PDFDocument.load(await Bun.file('/data/scans/Smoke combined.pdf').arrayBuffer()); if(pdf.getPageCount()!==3) throw new Error('Wrong PDF page count');")
 
     # Make cancellation happen while the scanner command is still alive.
-    container_exec(container, "python3", "-c", "from pathlib import Path; Path('/tmp/scanner-smoke-delay').write_text('5')")
-    cancel_job = client.request("/api/scan", {**scan_options("png"), "submission_id": "smoke_cancel_submission_001"})["jobId"]
+    container_exec(container, "python3", "-c", "from pathlib import Path; Path('/run/epson/smoke/delay').write_text('5')")
+    cancel_job = client.request(SCAN_API, {**scan_options("png"), "submission_id": "smoke_cancel_submission_001"})["jobId"]
     for _ in range(50):
         if acquisitions(container) == 4:
             break
         time.sleep(0.05)
     assert acquisitions(container) == 4, "Scanner process did not start for cancellation check"
-    client.request(f"/api/scan/jobs/{cancel_job}/cancel", {})
+    client.request(job_path(cancel_job) + "/cancel", {})
     poll_job(client, cancel_job, state="cancelled")
-    container_exec(container, "rm", "/tmp/scanner-smoke-delay")
+    container_exec(container, "rm", FIXTURE_ROOT + "/delay")
     assert client.request("/api/scans")["total"] == 4, "Cancelled scan left a completed file"
 
     state = {"print_job": receipt["job_id"], "scans": scans, "cancel_job": cancel_job}
@@ -150,14 +162,14 @@ def before_restart(container, directory):
 def after_restart(container, directory):
     state = json.loads((directory / "runtime-state.json").read_text())
     client = Client()
-    receipt = client.print_document(directory / "smoke.pdf")
+    receipt = client.print_document(directory / SMOKE_PDF)
     assert receipt.get("replayed") and receipt["job_id"] == state["print_job"], receipt
     for scan in state["scans"]:
-        job = client.request(f"/api/scan/jobs/{scan['id']}")["job"]
+        job = client.request(job_path(scan['id']))["job"]
         assert job["state"] == "done" and job["resultAvailable"] and job["resultName"] == scan["name"], job
-        replay = client.request("/api/scan", scan["options"])
+        replay = client.request(SCAN_API, scan["options"])
         assert replay["jobId"] == scan["id"] and replay.get("replayed"), replay
-    assert client.request(f"/api/scan/jobs/{state['cancel_job']}")["job"]["state"] == "cancelled"
+    assert client.request(job_path(state['cancel_job']))["job"]["state"] == "cancelled"
     assert acquisitions(container) == 4, "Restart replayed a scanner acquisition"
     assert client.request("/api/scans")["total"] == 4
     jobs = container_exec(container, "lpstat", "-W", "all", "-o", "Smoke_Epson").splitlines()

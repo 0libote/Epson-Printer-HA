@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   useInfiniteQuery,
   useQuery,
-  useQueryClient,
 } from "@tanstack/react-query";
 import {
   fetchStatus,

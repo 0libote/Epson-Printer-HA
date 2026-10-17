@@ -7,6 +7,8 @@ import sys
 import time
 from pathlib import Path
 
+root = Path("/run/epson/smoke")
+root.mkdir(mode=0o700, exist_ok=True)
 args = sys.argv[1:]
 if "-L" in args:
     print("device 'epsonds:net:192.0.2.10' is an Epson container smoke scanner")
@@ -19,9 +21,9 @@ if "--help" not in args:
         if option in args:
             args[args.index(option) + 1] = "10"
     args += ["--depth", "8"]
-    with open("/tmp/scanner-acquisitions.log", "a") as log:
+    with (root / "acquisitions.log").open("a") as log:
         log.write("started\n")
-    delay = Path("/tmp/scanner-smoke-delay")
+    delay = root / "delay"
     if delay.exists():
         time.sleep(float(delay.read_text()))
 os.execv("/usr/bin/scanimage", ["/usr/bin/scanimage", *args])

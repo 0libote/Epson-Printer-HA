@@ -233,7 +233,7 @@ export default function App() {
             ) : null}
             <div className="workbench-grid">
               <div className="workbench-panel">
-                <div className="workflow-tabs" role="tablist" aria-label="Choose an action" onKeyDown={event => {
+                <div className="workflow-tabs" role="tablist" tabIndex={-1} aria-label="Choose an action" onKeyDown={event => {
                   if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
                   event.preventDefault();
                   const next = event.key === "Home" ? "print" : event.key === "End" ? "scan" : workflow === "print" ? "scan" : "print";

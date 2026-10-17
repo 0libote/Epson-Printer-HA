@@ -20,6 +20,7 @@ import {
   cancelAllScans,
 } from "../lib/api";
 import { s as ui, ProgressBar } from "./ui";
+import { createSubmissionId } from "../lib/submission-id";
 
 const s = stylex.create({
   grid: {
@@ -240,9 +241,7 @@ export function ScanCard({
     setElapsed(0);
     setStartedAt(Date.now());
     try {
-      submissionKey.current ??=
-        globalThis.crypto?.randomUUID?.() ||
-        `scan_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      submissionKey.current ??= createSubmissionId();
       const { jobId: id } = await startScanJob({
         dpi,
         mode,

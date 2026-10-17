@@ -141,12 +141,12 @@ async function readJson<T>(res: Response): Promise<T> {
       throw Object.assign(new Error((j as any).error || (j as any).message || `${res.status} ${res.statusText}`), { status: res.status, retrySafe: (j as any).retry_safe === true });
     }
     const txt = await res.text().catch(() => "");
-    throw Object.assign(new Error(txt.slice(0, 200).replace(/<[^>]*>/g, "").trim() || `${res.status} ${res.statusText}`), { status: res.status });
+    throw Object.assign(new Error(txt.slice(0, 200).replace(/<[^<>]*>/g, "").trim() || `${res.status} ${res.statusText}`), { status: res.status });
   }
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("application/json")) {
     const txt = await res.text().catch(() => "");
-    throw new Error(txt.slice(0, 200).replace(/<[^>]*>/g, "").trim() || "Unexpected response from server");
+    throw new Error(txt.slice(0, 200).replace(/<[^<>]*>/g, "").trim() || "Unexpected response from server");
   }
   return res.json() as Promise<T>;
 }

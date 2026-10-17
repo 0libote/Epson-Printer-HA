@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { postPrint, type PrintResponse } from "../lib/api";
+import { createSubmissionId } from "../lib/submission-id";
 import { s as ui, ProgressBar } from "./ui";
 
 const ACCEPT = [".pdf", ".png", ".jpg", ".jpeg", ".txt"];
@@ -123,10 +124,8 @@ export function PrintCard({
     setBusy(true);
     setError("");
     // The same key survives a failed request. Retrying cannot print twice.
-    submissionId.current ??=
-      globalThis.crypto?.randomUUID?.() ||
-      `print_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     try {
+      submissionId.current ??= createSubmissionId();
       const form = new FormData();
       form.set("file", file);
       form.set("submission_id", submissionId.current);
