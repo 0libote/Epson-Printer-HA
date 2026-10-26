@@ -147,6 +147,7 @@ function ScanFeedback({
         <div {...stylex.props(s.dormant)}>
           {scannerDetail ||
             "Scanner not detected. Check that the printer is awake and connected before trying a scan."}
+          <a className="text-link" href="#settings">Check printer connection</a>
         </div>
       ) : null}
     </>
@@ -431,12 +432,7 @@ export function ScanCard({
 
   return (
     <div className="scan-workflow">
-      <div className="workflow-heading">
-        <div>
-          <h2>Scan a page</h2>
-          <p>Save an A4 page as a PDF or image.</p>
-        </div>
-      </div>
+      <div className="workflow-section-heading"><h2>Prepare your page</h2><span>A4 flatbed scanner</span></div>
       <ScanFeedback
         resultName={resultName}
         onDismiss={() => setResultName(null)}
@@ -449,7 +445,7 @@ export function ScanCard({
       <form onSubmit={submit} style={{ marginTop: scannerOk || busy ? 0 : 12 }}>
         <div className="workspace-scan-guide">
           <span className="scan-page-art">
-            <ScanLine size={45} strokeWidth={1.1} />
+            <svg viewBox="0 0 160 118" fill="none" aria-hidden="true"><rect x="12" y="10" width="136" height="94" rx="8" stroke="currentColor" strokeWidth="1.5" /><rect x="22" y="20" width="116" height="74" rx="2" stroke="currentColor" opacity=".3" /><path d="M27 25h43v60H27z" fill="var(--ui-panel)" stroke="var(--ui-accent)" strokeWidth="1.5" /><path d="M36 38h25M36 46h25M36 54h17" stroke="var(--ui-accent)" opacity=".5" /><path d="M19 34V17h17" stroke="var(--ui-accent)" strokeWidth="2.5" strokeLinecap="round" /><circle cx="135" cy="99" r="2" fill="var(--ui-good)" /></svg>
           </span>
           <span>
             <strong>Place your page on the scanner</strong>
@@ -460,7 +456,8 @@ export function ScanCard({
             </small>
           </span>
         </div>
-        <div {...stylex.props(s.grid)}>
+        <h2 className="form-section-title">Scan settings</h2>
+        <div {...stylex.props(s.grid)} className={`${stylex.props(s.grid).className} scan-option-grid`}>
           <label {...stylex.props(ui.fieldLabel)}>
             <span>Colour</span>
             <select
@@ -524,7 +521,7 @@ export function ScanCard({
           </div>
         ) : null}
         <p {...stylex.props(ui.help)} style={{ marginTop: 12 }}>
-          Choose your settings. We’ll save the result to Saved scans.
+          The finished file will appear in Saved scans.
         </p>
         {blocked ? (
           <div {...stylex.props(ui.noteBox)} style={{ marginTop: 12 }}>
@@ -558,7 +555,7 @@ export function ScanCard({
             </div>
           </div>
         ) : null}
-        <div style={{ marginTop: 14 }}>
+        <div className="scan-action-bar">
           <button
             {...stylex.props(
               ui.buttonPrimary,
@@ -583,7 +580,7 @@ export function ScanCard({
               </>
             ) : (
               <>
-                <ScanLine size={17} /> Scan & save <ArrowRight size={16} />
+                <ScanLine size={17} /> Scan and save
               </>
             )}
           </button>

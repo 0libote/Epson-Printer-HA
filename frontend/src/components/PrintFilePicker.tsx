@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FileText, Upload } from "lucide-react";
+import { FileText } from "lucide-react";
 
 export const PRINT_FILE_TYPES = [".pdf", ".png", ".jpg", ".jpeg", ".txt"];
 
@@ -20,7 +20,7 @@ function DocumentDrop({
 }>) {
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
-  let title = file?.name || "Choose a file or drop it here";
+  let title = file?.name || "Drop your document here";
   if (dragOver) title = "Drop your document here";
   return (
     <button
@@ -56,7 +56,7 @@ function DocumentDrop({
         {file ? (
           <FileText size={30} strokeWidth={1.4} />
         ) : (
-          <Upload size={28} strokeWidth={1.4} />
+          <FileText size={35} strokeWidth={1.3} />
         )}
       </span>
       <strong>{title}</strong>
@@ -65,12 +65,12 @@ function DocumentDrop({
           `${(file.size / 1024 / 1024).toFixed(2)} MB · Click to choose a different file`
         ) : (
           <>
-            Or <u>browse files</u> on your device
+            <u>Choose a file</u> from your device
           </>
         )}
       </span>
       <small>
-        PDF, JPG, PNG, TXT <span>·</span> Up to {max} MB
+        Up to {max} MB per document
       </small>
     </button>
   );

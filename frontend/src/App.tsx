@@ -1,370 +1,570 @@
+import { lazy, Suspense, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowUpRight,
+  Clock3,
+  FileText,
+  FolderOpen,
+  Printer,
+  RefreshCw,
+  ScanLine,
+  ShieldAlert,
+} from "lucide-react";
+import { Header } from "./components/Header";
 import { WorkspaceNavigation } from "./components/WorkspaceNavigation";
 import { SectionBoundary } from "./components/SectionBoundary";
-import { Maintenance } from "./components/Maintenance";
-import * as stylex from "@stylexjs/stylex";
-import { vars } from "./styles/tokens.stylex";
-import { useEffect, useState, lazy, Suspense, type CSSProperties } from "react";
-import { ArrowRight, Clock, ListOrdered, Printer, RefreshCw, ScanLine, ShieldAlert, Wifi } from "lucide-react";
-import { useStatus, useHistory, useScans } from "./hooks/useStatus";
-import { useToast } from "./components/Toast";
-import { useQueryClient } from "@tanstack/react-query";
-import { Header } from "./components/Header";
 import { PrintCard } from "./components/PrintCard";
 import { ScanCard } from "./components/ScanCard";
-import { StatusStrip, Queue, QueueAttention, PrinterUnreachableBanner } from "./components/Overview";
+import {
+  Queue,
+  QueueAttention,
+  PrinterUnreachableBanner,
+} from "./components/Overview";
 import { InkLevels } from "./components/InkLevels";
-import { SharingSettings, PrinterAddressSettings, AdvancedDiagnostics } from "./components/Settings";
+import {
+  SharingSettings,
+  PrinterAddressSettings,
+  AdvancedDiagnostics,
+} from "./components/Settings";
+import { Maintenance } from "./components/Maintenance";
+import { useToast } from "./components/Toast";
+import { useStatus, useHistory, useScans } from "./hooks/useStatus";
 import { refreshStatus, type ScanItem, type ScanSort } from "./lib/api";
+import { viewFromHash } from "./lib/navigation";
 
-const Library = lazy(() => import("./components/Library").then(m => ({ default: m.Library })));
-const History = lazy(() => import("./components/History").then(m => ({ default: m.History })));
-const PreviewModal = lazy(() => import("./components/PreviewModal").then(m => ({ default: m.PreviewModal })));
-const sectionInfo = {
- overview: { title: "Print & scan", description: "Send a document to your printer or scan a page." },
- scans: { title: "Saved scans", description: "Preview, download and organise the pages saved on your hub." },
- history: { title: "Print history", description: "Your recent documents, with progress and results." },
- settings: { title: "Printer settings", description: "Connect your printer and share it across your home." },
+const Library = lazy(() =>
+  import("./components/Library").then((m) => ({ default: m.Library })),
+);
+const History = lazy(() =>
+  import("./components/History").then((m) => ({ default: m.History })),
+);
+const PreviewModal = lazy(() =>
+  import("./components/PreviewModal").then((m) => ({
+    default: m.PreviewModal,
+  })),
+);
+const pages = {
+  print: {
+    title: "Print a document",
+    description: "Print PDFs, photos and text files from this device.",
+  },
+  scan: {
+    title: "Scan a page",
+    description: "Save a paper document or photo as a PDF or image.",
+  },
+  scans: {
+    title: "Saved scans",
+    description: "Preview, download and combine the pages saved on this hub.",
+  },
+  history: {
+    title: "Print history",
+    description: "See what was sent to your printer and how it finished.",
+  },
+  settings: {
+    title: "Settings",
+    description:
+      "Manage your printer and connect the other devices in your home.",
+  },
 };
-function SectionLoading() { return <output className="section-loading">Opening this view…</output>; }
-
-const s = stylex.create({
-  page: { backgroundColor: vars.bg, color: vars.text, minHeight: "100vh", fontFamily: vars.fontSans },
-  main: { maxWidth: "1180px", margin: "0 auto", padding: "28px 32px 36px", "@media (max-width: 1100px)": { padding: "28px 24px 48px" }, "@media (max-width: 600px)": { padding: "20px 16px 36px" } },
-  intro: { color: vars.textSecondary, fontSize: "14px", marginTop: "8px", lineHeight: 1.5 },
-  checking: { color: vars.textSecondary, backgroundColor: vars.accentSoft, padding: "8px 12px", borderRadius: vars.radiusFull, fontSize: "12px", display: "flex", alignItems: "center", gap: "6px" },
-  actionGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "20px",
-    marginTop: "20px",
-    "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
-  },
-  stack: { display: "grid", gap: "16px", marginTop: "16px" },
-  liveRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    marginTop: "16px",
-    fontFamily: vars.fontMono,
-    fontSize: "11.5px",
-    color: vars.textTertiary,
-  },
-  refreshBtn: { marginLeft: "auto" },
-  skeleton: { borderRadius: vars.radiusMd, backgroundColor: vars.bgSunken },
-  errorWrap: { maxWidth: "480px", margin: "72px auto 0", padding: "0 20px" },
-  errorTitle: { fontFamily: vars.fontSans, fontSize: "18px", fontWeight: 650, color: vars.text, marginTop: "16px" },
-  errorBody: { fontFamily: vars.fontMono, fontSize: "12px", color: vars.textSecondary, marginTop: "8px", lineHeight: 1.5 },
-  footer: {
-    marginTop: "40px",
-    paddingTop: "16px",
-    borderTopWidth: "1px",
-    borderTopStyle: "solid",
-    borderTopColor: vars.line,
-    fontFamily: vars.fontMono,
-    fontSize: "11px",
-    color: vars.textTertiary,
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "12px",
-    flexWrap: "wrap",
-  },
-});
-
-type Tab = "overview" | "scans" | "history" | "settings";
+function SectionLoading() {
+  return <output className="section-loading">Loading…</output>;
+}
 
 function refreshAll(qc: ReturnType<typeof useQueryClient>) {
-  return Promise.all([
-    qc.invalidateQueries({ queryKey: ["status"] }),
-    qc.invalidateQueries({ queryKey: ["history"] }),
-    qc.invalidateQueries({ queryKey: ["scans"] }),
-    qc.invalidateQueries({ queryKey: ["ink"] }),
-  ]);
+  return Promise.all(
+    ["status", "history", "scans", "ink"].map((key) =>
+      qc.invalidateQueries({ queryKey: [key] }),
+    ),
+  );
 }
 
-function statusDescription(disconnected: boolean, pending: boolean, stale: boolean) {
-  if (disconnected) return " · Connection lost; showing last known status";
-  if (pending) return " · Updating in background";
-  return stale ? " · Last known status" : "";
-}
-
-function nextWorkflow(current: "print" | "scan", key: string) {
-  if (key === "Home") return "print";
-  if (key === "End") return "scan";
-  return current === "print" ? "scan" : "print";
-}
-
-function connectionLabel(checked: boolean, stale: boolean, reachable: boolean, queueReady: boolean) {
-  if (!checked) return "Checking connection";
-  if (stale) return "Last known connection";
-  if (!reachable) return "Waiting to reconnect";
-  return queueReady ? "Connected to your network" : "Connected · Queue needs attention";
-}
-
-function EmptyQueue({ failed, checking }: Readonly<{ failed: boolean; checking: boolean }>) {
-  let title = "Print queue is empty";
-  let message = "Your print jobs will appear here while they’re waiting or printing.";
-  if (failed) {
-    title = "Print queue temporarily unavailable";
-    message = "The last queue check failed. Refresh status or check the hub in Settings.";
-  } else if (checking) {
-    title = "Checking the print queue";
-    message = "Jobs will appear here once the hub has checked the queue.";
-  }
-  return <div className="queue-empty"><span className="queue-empty-icon"><ListOrdered size={22} strokeWidth={1.5} /></span>
-    <div><h2>{title}</h2><p>{message}</p></div>
-    <a href="#history">Print history <ArrowRight size={14} /></a>
-  </div>;
+function EmptyQueue({
+  failed,
+  checking,
+}: {
+  failed: boolean;
+  checking: boolean;
+}) {
+  return (
+    <div className="queue-empty">
+      <span className="empty-queue-mark">
+        <Printer size={23} strokeWidth={1.5} />
+      </span>
+      <strong>
+        {failed
+          ? "Queue unavailable"
+          : checking
+            ? "Checking the queue…"
+            : "Nothing waiting to print"}
+      </strong>
+      <p>
+        {failed
+          ? "Refresh to try again. Your waiting jobs are kept."
+          : checking
+            ? "Your print jobs will appear here."
+            : "Your next document will appear here when you send it."}
+      </p>
+    </div>
+  );
 }
 
 export default function App() {
-  const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useStatus(true);
+  const { data, isLoading, isError, error, refetch, dataUpdatedAt } =
+    useStatus();
   const qc = useQueryClient();
   const { push } = useToast();
-
-  const printerIp = data?.printer_ip || "";
-  const printerName = data?.printer_name || "Home_Epson_XP2200";
-  const displayName = data?.display_name || "Home Epson XP-2200";
-  const reachable = !!data?.reachable;
-  const parts = data?.status_meta?.parts;
-  const reachChecked = !parts || !!parts.reachable?.updated_at;
-  const statusPending = !!data?.status_meta?.refreshing;
-  const statusStale = !!parts?.reachable?.stale;
-  const printer = data?.printer || { ok: false, state: "setup_required", detail: "" };
-  const scanner = data?.scanner || { ok: false, state: "starting", detail: "", backend: null };
-  const queue = data?.queue || [];
-  const networkSharing = !!data?.network_sharing;
-  const initialInk = data?.ink ?? null;
-
-  const host = data?.client_setup?.host || window.location.hostname;
-  const readTab = (): Tab => {
-    const hash = window.location.hash.slice(1);
-    return ["overview", "scans", "history", "settings"].includes(hash) ? hash as Tab : "overview";
-  };
-  const [tab, setTab] = useState<Tab>(readTab);
-  const [workflow, setWorkflow] = useState<"print" | "scan">(window.location.hash === "#scan" ? "scan" : "print");
-  const historyQ = useHistory(100, tab === "history");
-  const history = historyQ.data?.history || [];
+  const [view, setView] = useState(
+    () => viewFromHash(window.location.hash) ?? "print",
+  );
   useEffect(() => {
-    const update = () => { if (window.location.hash === "#scan") { setTab("overview"); setWorkflow("scan"); } else if (["overview", "scans", "history", "settings"].includes(window.location.hash.slice(1))) setTab(readTab()); };
+    const update = () => {
+      const next = viewFromHash(window.location.hash);
+      if (next) setView(next);
+    };
     window.addEventListener("hashchange", update);
     return () => window.removeEventListener("hashchange", update);
   }, []);
 
+  useEffect(() => {
+    document.title = `${pages[view].title} · Print Room`;
+    window.scrollTo(0, 0);
+  }, [view]);
+
+  const printerIp = data?.printer_ip || "";
+  const displayName = data?.display_name || "Epson printer";
+  const parts = data?.status_meta?.parts;
+  const reachChecked = !!data && (!parts || !!parts.reachable?.updated_at);
+  const statusStale = !!parts?.reachable?.stale || isError;
+  const reachable = !!data?.reachable;
+  const queue = data?.queue || [];
+  const scanner = data?.scanner;
   const [refreshing, setRefreshing] = useState(false);
   const [previewScan, setPreviewScan] = useState<ScanItem | null>(null);
+  useEffect(() => setPreviewScan(null), [view]);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
+    const timer = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(timer);
   }, []);
-
+  const historyQ = useHistory(100, view === "history");
   const [scanFilter, setScanFilter] = useState("");
   const [scanSort, setScanSort] = useState<ScanSort>("newest");
-  const scansQ = useScans(100, !!printerIp && tab === "scans", scanFilter, scanSort);
-  const scans: ScanItem[] = (scansQ.data?.scans as ScanItem[]) || [];
-  const scansTotal = scansQ.data?.total ?? scans.length;
-  const scansMax = scansQ.data?.max ?? 100;
-
-  // keep preview in sync if the file is renamed/deleted underneath
-  useEffect(() => {
-    if (previewScan && !scans.some((x) => x.name === previewScan.name)) setPreviewScan(null);
-  }, [scans, previewScan]);
-
-  if (isLoading) {
-    return (
-      <div {...stylex.props(s.page)}>
-        <Header printerName={printerName} displayName={displayName} online={false} checking setupNeeded={false} />
-        <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-          <div {...stylex.props(s.skeleton)} className={`${stylex.props(s.skeleton).className} loading-placeholder`} style={{ height: 86 }} />
-          <div {...stylex.props(s.actionGrid)}>
-            <div {...stylex.props(s.skeleton)} className={`${stylex.props(s.skeleton).className} loading-placeholder`} style={{ height: 320 }} />
-            <div {...stylex.props(s.skeleton)} className={`${stylex.props(s.skeleton).className} loading-placeholder`} style={{ height: 320 }} />
-          </div>
-          <p className="section-loading" role="status">Loading printer status…</p>
-        </main>
-      </div>
-    );
-  }
-
-  if (isError && !data) {
-    const msg = (error as any)?.message || "";
-    const isAuth = msg.includes("401") || msg.toLowerCase().includes("authentication");
-    return (
-      <div {...stylex.props(s.page)}>
-        <Header printerName={printerName} displayName={displayName} online={false} checking setupNeeded={false} />
-        <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-          <div {...stylex.props(s.errorWrap)}>
-            <ShieldAlert size={28} style={{ color: vars.bad as string }} />
-            <h1 {...stylex.props(s.errorTitle)}>{isAuth ? "Authentication required" : "Couldn't reach Print Room"}</h1>
-            <p {...stylex.props(s.errorBody)}>{isAuth ? "Check WEB_USERNAME / WEB_PASSWORD." : msg || "The server isn't responding."}</p>
-            <div style={{ marginTop: 18 }}>
-              <button
-                onClick={() => refetch()}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 8, minHeight: 40, padding: "0 18px",
-                  borderRadius: 8, border: "1px solid transparent", backgroundColor: vars.accent as string,
-                  color: vars.onAccent as string, fontSize: 14, fontWeight: 600, cursor: "pointer",
-                }}
-              >
-                <RefreshCw size={15} /> Retry
-              </button>
-            </div>
-          </div>
-        </main>
-      </div>
-    );
-  }
-
-  if (!printerIp) {
-    return (
-      <div {...stylex.props(s.page)}>
-        <Header printerName={printerName} displayName={displayName} online={false} setupNeeded />
-        <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-          <div className="setup-intro"><h1>Connect your printer</h1><p>Turn on your Epson and connect it to the same network as this hub.</p></div>
-          <PrinterAddressSettings printerIp="" recovery={data?.recovery} onSaved={() => refreshAll(qc)} />
-          <footer {...stylex.props(s.footer)}>
-            <span>Print Room · Epson XP-2200</span>
-            <span>{data?.build_number ? `Build ${data.build_number} · ` : ""}Local network only</span>
-          </footer>
-        </main>
-      </div>
-    );
-  }
-
+  const scansQ = useScans(
+    100,
+    !!printerIp && view === "scans",
+    scanFilter,
+    scanSort,
+  );
+  const scans = scansQ.data?.scans || [];
+  const change = () => refreshAll(qc);
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      qc.setQueryData(["status"], await refreshStatus());
+      await change();
+    } catch {
+      push({
+        kind: "error",
+        title: "Could not refresh",
+        desc: "Showing the last known status. Try again shortly.",
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  const configured = !!printerIp;
+  const workspace = view === "print" || view === "scan";
+  const queueChecking =
+    !!parts && (!parts.queue?.updated_at || parts.queue.stale);
+  const scannerChecking =
+    !!parts && (!parts.scanner?.updated_at || parts.scanner.stale);
 
   return (
-    <div {...stylex.props(s.page)} className={`${stylex.props(s.page).className} workspace`} style={{ "--ui-on-accent": vars.onAccent, "--ui-bg": vars.bg, "--ui-panel": vars.panel, "--ui-sunken": vars.bgSunken, "--ui-text": vars.text, "--ui-muted": vars.textSecondary, "--ui-line": vars.line, "--ui-accent": vars.accent, "--ui-soft": vars.accentSoft, "--ui-border-strong": vars.lineStrong, "--ui-good": vars.good, "--ui-good-soft": vars.goodSoft, "--ui-scan": vars.teal, "--ui-scan-soft": vars.tealSoft } as CSSProperties}>
-      <a className="skip-link" href="#main-content">Skip to content</a>
-      <Header printerName={printerName} displayName={displayName} online={reachable} checking={!reachChecked} stale={statusStale || isError} setupNeeded={false} />
-      <WorkspaceNavigation view={tab} onView={view => { window.location.hash = view; setTab(view); }} />
-      <main tabIndex={-1} id="main-content" {...stylex.props(s.main)}>
-        <div className="workspace-hero">
-          <div><h1 className="workspace-title">{sectionInfo[tab].title}</h1><p {...stylex.props(s.intro)}>{sectionInfo[tab].description}</p></div>
-        </div>
-        <StatusStrip
-          printerChecking={!reachChecked || statusStale || !!parts?.device?.stale || !!parts?.printer?.stale}
-          scannerChecking={!!parts && (!parts.scanner?.updated_at || parts.scanner.stale)}
-          queueChecking={!!parts && (!parts.queue?.updated_at || parts.queue.stale)}
-          printerOk={reachable && !!printer.ok}
-          printerState={data?.device?.state || printer.state}
-          printerDetail={`${displayName} · ${printerIp}`}
-          scannerOk={!!scanner.ok}
-          scannerState={scanner.state}
-          scannerDetail={scanner.detail || (scanner.ok ? "Ready" : scanner.state.replaceAll("_", " "))}
+    <div className={`app-shell ${!configured ? "is-setup" : ""}`}>
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      {configured ? (
+        <WorkspaceNavigation
+          view={view}
+          displayName={displayName}
+          printerIp={printerIp}
           queueCount={queue.length}
+          build={data?.build_number}
         />
-
-
-        <section hidden={tab !== "overview"} aria-label="Print and scan">
-            {printer.state === "disabled" ? <QueueAttention onChanged={() => refreshAll(qc)} /> : null}
-            {printerIp && reachChecked && !reachable && !statusStale ? (
-              <div {...stylex.props(s.stack)}>
-                <PrinterUnreachableBanner recoveryMessage={data?.recovery?.message} network={data?.printer_network ?? null} queuedJobs={queue.length} />
-              </div>
-            ) : null}
-            <div className="workbench-grid">
-              <div className="workbench-panel">
-                <div className="workflow-tabs" role="tablist" tabIndex={-1} aria-label="Choose an action" onKeyDown={event => {
-                  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-                  event.preventDefault();
-                  const next = nextWorkflow(workflow, event.key);
-                  setWorkflow(next);
-                  document.getElementById(`workflow-${next}`)?.focus();
-                }}>
-                  <button id="workflow-print" role="tab" aria-selected={workflow === "print"} aria-controls="print-panel" tabIndex={workflow === "print" ? 0 : -1} onClick={() => setWorkflow("print")}><Printer size={17} /> Print a document</button>
-                  <button id="workflow-scan" role="tab" aria-selected={workflow === "scan"} aria-controls="scan-panel" tabIndex={workflow === "scan" ? 0 : -1} onClick={() => setWorkflow("scan")}><ScanLine size={17} /> Scan a page</button>
-                </div>
-                <div id="print-panel" role="tabpanel" aria-labelledby="workflow-print" hidden={workflow !== "print"}>
-                  <PrintCard onPrinted={() => refreshAll(qc)} maxMb={data?.max_upload_mb} offline={reachChecked && !statusStale && !reachable} />
-                </div>
-                <div id="scan-panel" role="tabpanel" aria-labelledby="workflow-scan" hidden={workflow !== "scan"}>
-                  <ScanCard scannerOk={!!scanner.ok} scannerDetail={scanner.detail} capabilities={data?.scanner.capabilities} storage={data?.scan_storage} onScanned={() => refreshAll(qc)} />
-                </div>
-              </div>
-              <aside className="printer-rail" aria-label="Your printer">
-                <div className="printer-summary"><h2>{displayName}</h2><p><Wifi size={14} /> {printerIp}</p><p className={`connection-label ${reachable && !statusStale ? "is-online" : ""}`}><span />{connectionLabel(reachChecked, statusStale, reachable, !!printer.ok && printer.state !== "disabled")}</p></div>
-                <InkLevels key={printerIp} initial={initialInk} stale={parts?.ink?.stale} />
-                <a className="device-help-link" href="#settings">Connect another device <ArrowRight size={14} /></a>
-              </aside>
-            </div>
-            <div className="queue-area">
-              {queue.length > 0 ? <Queue jobs={queue} onChanged={() => refreshAll(qc)} /> : <EmptyQueue failed={!!parts?.queue?.error} checking={!!parts && (!parts.queue?.updated_at || parts.queue.stale)} />}
-            </div>
-        </section>
-
-        {tab === "scans" ? (
-          <div {...stylex.props(s.stack)}>
-            {scansQ.isError ? <p role="alert">Couldn’t load saved scans: {scansQ.error.message} <button onClick={() => scansQ.refetch()}>Retry</button></p> : null}
-            {!scansQ.isError || scansQ.data ? <SectionBoundary key={tab}><Suspense fallback={<SectionLoading />}><Library
-              scans={scans}
-              total={scansTotal}
-              max={scansMax}
-              storage={scansQ.data?.storage}
-              filter={scanFilter} onFilter={setScanFilter} sort={scanSort} onSort={setScanSort}
-              matched={scansQ.data?.matched ?? scansTotal}
-              hasMore={scansQ.hasNextPage} loadingMore={scansQ.isFetchingNextPage}
-              searching={scansQ.isSearching}
-              onLoadMore={() => scansQ.fetchNextPage()}
-              now={now}
-              loading={scansQ.isLoading}
-              onChanged={() => refreshAll(qc)}
-              onPreview={setPreviewScan}
-            /></Suspense></SectionBoundary> : null}
-          </div>
-        ) : null}
-
-        {tab === "history" ? (
-          <div {...stylex.props(s.stack)}>
-            {historyQ.isError ? <p role="alert">Couldn’t load print history: {historyQ.error.message} <button onClick={() => historyQ.refetch()}>Retry</button></p> : null}
-            {!historyQ.isError && historyQ.isLoading ? <output>Loading print history…</output> : null}
-            {!historyQ.isError && !historyQ.isLoading ? <SectionBoundary key={tab}><Suspense fallback={<SectionLoading />}><History items={history} /></Suspense></SectionBoundary> : null}
-          </div>
-        ) : null}
-
-        {tab === "settings" ? (
-          <div {...stylex.props(s.stack)}>
-            <PrinterAddressSettings recovery={data?.recovery} printerIp={printerIp} onSaved={() => refreshAll(qc)} />
-            <SharingSettings
-              displayName={displayName}
-              printerName={printerName}
-              sharing={networkSharing}
-              host={host}
-              onSaved={() => refreshAll(qc)}
-            />
-            <Maintenance capabilities={data?.printer_capabilities} onChanged={() => refreshAll(qc)} />
-            <AdvancedDiagnostics onChanged={() => refreshAll(qc)} />
-          </div>
-        ) : null}
-
-        <div {...stylex.props(s.liveRow)}>
-          <Clock size={12} />
-          <span>
-            {statusPending ? "Checking devices · " : ""}Status received {new Date(dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            {statusDescription(isError, statusPending, statusStale)}
-          </span>
-          <span {...stylex.props(s.refreshBtn)}>
+      ) : null}
+      <div className="app-body">
+        <Header
+          online={reachable}
+          checking={!reachChecked}
+          stale={statusStale}
+          setupNeeded={!!data && !configured}
+        >
+          {configured ? (
             <button
+              className="icon-button refresh-button"
+              type="button"
+              onClick={refresh}
               disabled={refreshing}
-              onClick={async () => { setRefreshing(true); try { qc.setQueryData(["status"], await refreshStatus()); await refreshAll(qc); } catch { push({ kind: "error", title: "Could not refresh status", desc: "Showing the last known status. Try again shortly." }); } finally { setRefreshing(false); } }}
-              aria-label="Refresh all data"
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8,
-                border: `1px solid ${vars.line}`, background: "transparent",
-                color: vars.textSecondary as string, fontSize: 12, cursor: "pointer",
-              }}
+              aria-label="Refresh status"
+              title="Refresh status"
             >
-              <RefreshCw size={12} className={refreshing ? "spin" : undefined} /> {refreshing ? "Updating…" : "Refresh status"}
+              <RefreshCw
+                size={17}
+                className={refreshing ? "spin" : undefined}
+              />
             </button>
-          </span>
-        </div>
-
-        <footer {...stylex.props(s.footer)}>
-          <span>Print Room</span>
-          <span>{data?.build_number ? `Build ${data.build_number} · ` : ""}Local network only</span>
-        </footer>
-      </main>
-
-      {previewScan ? <SectionBoundary key={tab}><Suspense fallback={<SectionLoading />}><PreviewModal scan={previewScan} onClose={() => setPreviewScan(null)} /></Suspense></SectionBoundary> : null}
+          ) : null}
+        </Header>
+        <main className="app-main" id="main-content" tabIndex={-1}>
+          {isLoading ? (
+            <div className="opening-state">
+              <div className="opening-mark">
+                <Printer size={25} />
+              </div>
+              <h1>Connecting to your printer</h1>
+              <p>Loading your workspace…</p>
+              <div className="loading-placeholder opening-skeleton" />
+            </div>
+          ) : null}
+          {isError && !data ? (
+            <section className="error-state" role="alert">
+              <ShieldAlert size={30} />
+              <h1>Can’t reach your print hub</h1>
+              <p>{error?.message || "Check your connection and try again."}</p>
+              <button
+                className="button-solid"
+                type="button"
+                onClick={() => refetch()}
+              >
+                <RefreshCw size={16} /> Try again
+              </button>
+            </section>
+          ) : null}
+          {data && !configured ? (
+            <div className="setup-page">
+              <div className="page-heading">
+                <span className="setup-symbol">
+                  <Printer size={28} />
+                </span>
+                <h1>Let’s connect your printer</h1>
+                <p>
+                  Turn on your Epson and connect it to the same network as this
+                  hub. You only need to do this once.
+                </p>
+              </div>
+              <PrinterAddressSettings
+                printerIp=""
+                recovery={data.recovery}
+                onSaved={change}
+              />
+            </div>
+          ) : null}
+          {configured ? (
+            <>
+              <div className="page-heading">
+                <div>
+                  <h1>{pages[view].title}</h1>
+                  <p>{pages[view].description}</p>
+                </div>
+                {view === "scans" ? (
+                  <a className="button-solid" href="#scan">
+                    <ScanLine size={17} /> New scan
+                  </a>
+                ) : null}
+                {view === "history" ? (
+                  <a className="button-secondary" href="#print">
+                    <Printer size={16} /> Print a document
+                  </a>
+                ) : null}
+              </div>
+              {isError ? (
+                <div className="connection-notice" role="status">
+                  <ShieldAlert size={18} />
+                  <div>
+                    <strong>The hub connection was interrupted</strong>
+                    <p>
+                      Showing the last known information. Refresh to reconnect.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {workspace && data?.printer.state === "disabled" ? (
+                <QueueAttention onChanged={change} />
+              ) : null}
+              {workspace && reachChecked && !reachable && !statusStale ? (
+                <PrinterUnreachableBanner
+                  recoveryMessage={data?.recovery?.message}
+                  network={data?.printer_network ?? null}
+                  queuedJobs={queue.length}
+                />
+              ) : null}
+              <div className="task-layout" hidden={!workspace}>
+                <div className="task-main">
+                  <section
+                    hidden={view !== "print"}
+                    aria-label="Print a document"
+                  >
+                    <PrintCard
+                      onPrinted={change}
+                      maxMb={data?.max_upload_mb}
+                      offline={reachChecked && !statusStale && !reachable}
+                    />
+                  </section>
+                  <section hidden={view !== "scan"} aria-label="Scan a page">
+                    <ScanCard
+                      scannerOk={!!scanner?.ok}
+                      scannerDetail={scanner?.detail}
+                      capabilities={scanner?.capabilities}
+                      storage={data?.scan_storage}
+                      onScanned={change}
+                    />
+                  </section>
+                </div>
+                <aside
+                  className="workspace-context"
+                  aria-label="Printer information"
+                >
+                  <section className="device-status-panel">
+                    <div className="context-heading">
+                      <h2>Your printer</h2>
+                      <a
+                        href="#settings"
+                        className="icon-button"
+                        aria-label="Printer settings"
+                        title="Printer settings"
+                      >
+                        <ArrowUpRight size={17} />
+                      </a>
+                    </div>
+                    <div className="device-status-row">
+                      <Printer size={16} />
+                      <span>Printing</span>
+                      <strong
+                        className={
+                          reachable && data?.printer.ok && !statusStale
+                            ? "text-good"
+                            : ""
+                        }
+                      >
+                        {!reachChecked
+                          ? "Checking"
+                          : statusStale
+                            ? "Last known"
+                            : !reachable
+                              ? "Offline"
+                              : data?.printer.state === "disabled"
+                                ? "Paused"
+                                : data?.printer.state === "printing"
+                                  ? "Printing"
+                                  : data?.printer.ok
+                                    ? "Ready"
+                                    : "Needs attention"}
+                      </strong>
+                    </div>
+                    <div className="device-status-row">
+                      <ScanLine size={16} />
+                      <span>Scanner</span>
+                      <strong
+                        className={
+                          scanner?.ok && !scannerChecking ? "text-good" : ""
+                        }
+                      >
+                        {scannerChecking
+                          ? "Checking"
+                          : scanner?.state === "scanning"
+                            ? "Scanning"
+                            : scanner?.ok
+                              ? "Ready"
+                              : "Unavailable"}
+                      </strong>
+                    </div>
+                    <InkLevels
+                      key={printerIp}
+                      initial={data?.ink}
+                      stale={parts?.ink?.stale}
+                    />
+                  </section>
+                  <section
+                    className="queue-panel"
+                    hidden={view !== "print"}
+                    aria-label="Print queue"
+                  >
+                    <div className="context-heading">
+                      <h2>Print queue</h2>
+                      <span className="count-badge">
+                        {queueChecking ? "…" : queue.length}
+                      </span>
+                    </div>
+                    {queue.length ? (
+                      <Queue jobs={queue} onChanged={change} />
+                    ) : (
+                      <EmptyQueue
+                        failed={!!parts?.queue?.error}
+                        checking={queueChecking}
+                      />
+                    )}
+                    <a className="context-link" href="#history">
+                      <Clock3 size={15} /> View print history
+                      <ArrowUpRight size={15} />
+                    </a>
+                  </section>
+                  <section
+                    className="scan-destination"
+                    hidden={view !== "scan"}
+                  >
+                    <span className="destination-icon">
+                      <FolderOpen size={21} strokeWidth={1.6} />
+                    </span>
+                    <h2>Everything in one place</h2>
+                    <p>
+                      Finished scans are saved on your hub. Download a single
+                      page, or combine several into one PDF.
+                    </p>
+                    <a className="context-link" href="#scans">
+                      Open saved scans
+                      <ArrowUpRight size={15} />
+                    </a>
+                    {data?.scan_storage ? (
+                      <div className="capacity-meter">
+                        <span>
+                          <strong>{data.scan_storage.total}</strong> of{" "}
+                          {data.scan_storage.max} scans saved
+                        </span>
+                        <meter
+                          min={0}
+                          max={data.scan_storage.max}
+                          value={data.scan_storage.total}
+                          aria-label="Saved scan capacity"
+                        />
+                      </div>
+                    ) : null}
+                  </section>
+                </aside>
+              </div>
+              {view === "scans" ? (
+                <SectionBoundary>
+                  <Suspense fallback={<SectionLoading />}>
+                    {scansQ.isError ? (
+                      <div className="inline-error" role="alert">
+                        <p>Couldn’t load saved scans. {scansQ.error.message}</p>
+                        <button
+                          className="button-secondary"
+                          onClick={() => scansQ.refetch()}
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    ) : null}
+                    {!scansQ.isError || scansQ.data ? (
+                      <Library
+                        scans={scans}
+                        total={scansQ.data?.total ?? scans.length}
+                        max={scansQ.data?.max ?? 100}
+                        storage={scansQ.data?.storage}
+                        filter={scanFilter}
+                        onFilter={setScanFilter}
+                        sort={scanSort}
+                        onSort={setScanSort}
+                        matched={scansQ.data?.matched ?? scans.length}
+                        hasMore={scansQ.hasNextPage}
+                        loadingMore={scansQ.isFetchingNextPage}
+                        searching={scansQ.isSearching}
+                        onLoadMore={() => scansQ.fetchNextPage()}
+                        now={now}
+                        loading={scansQ.isLoading}
+                        onChanged={change}
+                        onPreview={setPreviewScan}
+                      />
+                    ) : null}
+                  </Suspense>
+                </SectionBoundary>
+              ) : null}
+              {view === "history" ? (
+                <SectionBoundary>
+                  <Suspense fallback={<SectionLoading />}>
+                    {historyQ.isError ? (
+                      <div className="inline-error" role="alert">
+                        <p>
+                          Couldn’t load print history. {historyQ.error.message}
+                        </p>
+                        <button
+                          className="button-secondary"
+                          onClick={() => historyQ.refetch()}
+                        >
+                          Try again
+                        </button>
+                      </div>
+                    ) : null}
+                    {historyQ.isLoading ? (
+                      <SectionLoading />
+                    ) : historyQ.data ? (
+                      <History items={historyQ.data.history} />
+                    ) : null}
+                  </Suspense>
+                </SectionBoundary>
+              ) : null}
+              {view === "settings" ? (
+                <div className="settings-grid">
+                  <div className="settings-connection">
+                    <PrinterAddressSettings
+                      printerIp={printerIp}
+                      recovery={data?.recovery}
+                      onSaved={change}
+                    />
+                    <div className="settings-support">
+                      <FileText size={18} />
+                      <div>
+                        <strong>Everything stays at home</strong>
+                        <p>
+                          Your files and printer are managed on this hub.
+                          There’s no cloud account to set up.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <SharingSettings
+                    displayName={displayName}
+                    printerName={data?.printer_name || "Home_Epson_XP2200"}
+                    sharing={!!data?.network_sharing}
+                    host={data?.client_setup?.host || window.location.hostname}
+                    onSaved={change}
+                  />
+                  <div className="settings-advanced">
+                    <Maintenance
+                      capabilities={data?.printer_capabilities}
+                      onChanged={change}
+                    />
+                    <AdvancedDiagnostics onChanged={change} />
+                  </div>
+                </div>
+              ) : null}
+              <footer className="workspace-footer">
+                <span>
+                  <span className="local-dot" /> Your files stay on your home
+                  network
+                </span>
+                <span>
+                  {isError
+                    ? "Connection interrupted"
+                    : `Status updated ${new Date(dataUpdatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`}
+                  {refreshing ? " · Refreshing…" : ""}
+                </span>
+              </footer>
+            </>
+          ) : null}
+        </main>
+      </div>
+      {previewScan ? (
+        <SectionBoundary>
+          <Suspense fallback={<SectionLoading />}>
+            <PreviewModal
+              scan={previewScan}
+              onClose={() => setPreviewScan(null)}
+            />
+          </Suspense>
+        </SectionBoundary>
+      ) : null}
     </div>
   );
 }

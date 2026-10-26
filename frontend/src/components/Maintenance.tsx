@@ -11,9 +11,9 @@ export function Maintenance({ capabilities: caps, onChanged }: { capabilities?: 
   catch { setMessage("Maintenance failed. Check the printer and try again."); }
   finally { setRunning(false); }
  };
- return <Card><h2>Maintenance</h2>
-  {caps.nozzleCheck ? <button disabled={running} onClick={() => run("nozzle-check")}>Nozzle Check</button> : null}
-  {caps.headCleaning ? <button disabled={running} onClick={() => run("head-clean")}>Head Cleaning</button> : null}
+ return <Card className="maintenance-card"><h2>Maintenance</h2>
+  {caps.nozzleCheck ? <button className="button-secondary" disabled={running} onClick={() => run("nozzle-check")}>Nozzle check</button> : null}
+  {caps.headCleaning ? <button className="button-secondary" disabled={running} onClick={() => run("head-clean")}>Head cleaning</button> : null}
   <p role="status">{message || "Available"}</p>
  </Card>;
 }

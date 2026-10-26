@@ -5,7 +5,6 @@ import {
   Check,
   Download,
   FileStack,
-  ScanLine,
   Pencil,
   Search,
   Trash2,
@@ -25,7 +24,7 @@ import { s as ui, Card, EmptyState } from "./ui";
 const s = stylex.create({
   toolbar: {
     display: "flex",
-    gap: "8px",
+    gap: "12px",
     marginBottom: "4px",
     flexWrap: "wrap",
   },
@@ -45,7 +44,7 @@ const s = stylex.create({
     display: "flex",
     alignItems: "center",
     gap: "12px",
-    padding: "10px 4px",
+    padding: "16px 0",
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
     borderBottomColor: vars.line,
@@ -56,7 +55,7 @@ const s = stylex.create({
     },
   },
   thumb: {
-    width: "52px",
+    width: "42px",
     height: "52px",
     borderRadius: vars.radiusSm,
     overflow: "hidden",
@@ -85,7 +84,7 @@ const s = stylex.create({
   },
   name: {
     fontFamily: vars.fontSans,
-    fontSize: "13.5px",
+    fontSize: "14px",
     fontWeight: 550,
     display: "block",
     overflow: "hidden",
@@ -93,8 +92,8 @@ const s = stylex.create({
     whiteSpace: "nowrap",
   },
   meta: {
-    fontFamily: vars.fontMono,
-    fontSize: "11px",
+    fontFamily: vars.fontSans,
+    fontSize: "12px",
     color: vars.textTertiary,
     display: "flex",
     flexWrap: "wrap",
@@ -109,7 +108,7 @@ const s = stylex.create({
     borderColor: vars.line,
     borderRadius: "4px",
     padding: "0 4px",
-    fontSize: "9.5px",
+    fontSize: "10px",
   },
   actions: {
     display: "flex",
@@ -121,8 +120,8 @@ const s = stylex.create({
     },
   },
   iconBtn: {
-    width: "30px",
-    height: "30px",
+    width: "36px",
+    height: "36px",
     borderRadius: vars.radiusSm,
     borderWidth: "1px",
     borderStyle: "solid",
@@ -149,14 +148,14 @@ const s = stylex.create({
     flexWrap: "wrap",
     alignItems: "center",
     gap: "10px",
-    padding: "8px 4px",
+    padding: "14px 0",
     fontFamily: vars.fontSans,
     fontSize: "12.5px",
     color: vars.textSecondary,
   },
   count: {
-    fontFamily: vars.fontMono,
-    fontSize: "11.5px",
+    fontFamily: vars.fontSans,
+    fontSize: "12px",
     color: vars.textTertiary,
   },
 });
@@ -211,6 +210,7 @@ function ScanRow({
     <div {...stylex.props(s.row)}>
       <input
         type="checkbox"
+        disabled={busy}
         checked={selected}
         onChange={() => onToggle()}
         aria-label={`Select ${scan.name}`}
@@ -233,7 +233,7 @@ function ScanRow({
               fontFamily: vars.fontMono as string,
               fontSize: 10,
               fontWeight: 600,
-              color: vars.bad as string,
+              color: vars.accent as string,
             }}
           >
             PDF
@@ -321,6 +321,7 @@ function ScanRow({
             rename.start();
           }}
           title="Rename"
+          disabled={busy}
           aria-label={`Rename ${scan.name}`}
         >
           <Pencil size={13} />
@@ -539,23 +540,7 @@ export function Library({
 
   return (
     <>
-      <div className="library-intro">
-        <p>
-          Select several scans to combine them into a PDF.
-        </p>
-        <a href="#scan">
-          Scan a new page <ScanLine size={14} />
-        </a>
-      </div>
-      <Card>
-        <div {...stylex.props(ui.sectionHead)}>
-          <h2 {...stylex.props(ui.sectionTitle)}>Scans</h2>
-          <span {...stylex.props(s.count)}>
-            {total}/{max}
-          </span>
-        </div>
-
-        {storage ? <StorageSummary storage={storage} /> : null}
+      <Card className="library-panel">
         {searching ? (
           <output className="section-loading">Searching saved scans…</output>
         ) : null}
@@ -564,7 +549,7 @@ export function Library({
             <Search size={14} {...stylex.props(s.searchIcon)} />
             <input
               {...stylex.props(ui.input, s.searchInput)}
-              placeholder="Filter by name…"
+              placeholder="Search your saved scans"
               value={filter}
               onChange={(e) => onFilter(e.target.value)}
               aria-label="Filter scans by name"
@@ -583,6 +568,7 @@ export function Library({
           </select>
         </div>
 
+        <div className="collection-summary"><label className="select-all-scans"><input type="checkbox" aria-label="Select all shown scans" disabled={busy || !visible.length} checked={visible.length > 0 && visible.every(scan => selected.has(scan.name))} ref={node => { if (node) node.indeterminate = selected.size > 0 && !visible.every(scan => selected.has(scan.name)); }} onChange={event => setSelected(event.target.checked ? new Set(visible.map(scan => scan.name)) : new Set())} /><span>{filter ? `${matched} matching scans` : `${total} saved ${total === 1 ? "scan" : "scans"}`}</span></label><span>Select files to combine them into a PDF</span></div>
         {selected.size > 0 ? (
           <div {...stylex.props(s.bulkBar)}>
             <span>{selected.size} selected</span>
@@ -664,6 +650,7 @@ export function Library({
             </button>
           </div>
         ) : null}
+        {storage ? <StorageSummary storage={storage} /> : <div className="collection-footer"><p>{total} of {max} scan spaces used</p></div>}
       </Card>
       {combineFiles ? (
         <CombineScans

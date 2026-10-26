@@ -1,86 +1,70 @@
-import * as stylex from "@stylexjs/stylex";
-import { vars } from "../styles/tokens.stylex";
-import { Moon, Printer, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
+import type { ReactNode } from "react";
 import { useTheme } from "../styles/ThemeProvider";
-import { Pill, StatusDot } from "./ui";
+import { Brand } from "./WorkspaceNavigation";
 
-const s = stylex.create({
-  bar: {
-    position: "sticky",
-    top: 0,
-    zIndex: 20,
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: vars.line,
-    backgroundColor: vars.bg,
-  },
-  inner: {
-    maxWidth: "1180px",
-    margin: "0 auto",
-    padding: "0 32px",
-    height: "64px",
-    "@media (max-width: 600px)": { padding: "0 16px", height: "64px" },
-    display: "flex",
-    alignItems: "center",
-    gap: "12px",
-  },
-  brand: { minWidth: 0, display: "flex", alignItems: "center", gap: "10px", textDecoration: "none", color: vars.text },
-  mark: {
-    width: "32px",
-    height: "32px",
-    borderRadius: "9px",
-    backgroundColor: vars.accentSoft,
-    color: vars.accent,
-    display: "grid",
-    placeItems: "center",
-    flexShrink: 0,
-  },
-  brandText: { minWidth: 0 },
-  name: { display: "block", fontFamily: vars.fontSans, fontSize: "15px", fontWeight: 650, letterSpacing: "-0.01em", lineHeight: 1.1 },
-  sub: { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary },
-  spacer: { flex: 1 },
-  iconBtn: {
-    width: "36px",
-    flexShrink: 0,
-    height: "36px",
-    borderRadius: vars.radiusSm,
-    borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: vars.line,
-    backgroundColor: "transparent",
-    color: vars.textSecondary,
-    display: "grid",
-    placeItems: "center",
-    cursor: "pointer",
-  },
-});
-
-export function Header({ printerName, displayName, online, setupNeeded, checking = false, stale = false }: { printerName: string; displayName: string; online: boolean; setupNeeded: boolean; checking?: boolean; stale?: boolean }) {
+export function Header({
+  online,
+  setupNeeded,
+  checking = false,
+  stale = false,
+  children,
+}: {
+  online: boolean;
+  setupNeeded: boolean;
+  checking?: boolean;
+  stale?: boolean;
+  children?: ReactNode;
+}) {
   const { theme, toggle } = useTheme();
+  const label = setupNeeded
+    ? "Setup needed"
+    : checking
+      ? "Checking connection"
+      : stale
+        ? "Last known status"
+        : online
+          ? "Printer connected"
+          : "Printer offline";
+  const tone =
+    setupNeeded || checking || stale ? "neutral" : online ? "good" : "warn";
   return (
-    <header {...stylex.props(s.bar)}>
-      <div {...stylex.props(s.inner)}>
-        <a {...stylex.props(s.brand)} href="#overview">
-          <span {...stylex.props(s.mark)}><Printer size={17} /></span>
-          <span {...stylex.props(s.brandText)}>
-            <span {...stylex.props(s.name)}>Print Room</span>
-            <span {...stylex.props(s.sub)}>{setupNeeded ? "setup" : displayName || printerName}</span>
+    <header className="app-topbar">
+      <div className="mobile-brand">
+        <Brand />
+      </div>
+      <span className="topbar-title">Epson printer hub</span>
+      <div className="topbar-actions">
+        <span
+          className={`connection-status is-${tone}`}
+          role="status"
+          aria-label={label}
+        >
+          <i className="status-light" />
+          <span className="connection-label-long">{label}</span>
+          <span className="connection-label-short" aria-hidden="true">
+            {setupNeeded
+              ? "Setup"
+              : checking
+                ? "Checking"
+                : stale
+                  ? "Last known"
+                  : online
+                    ? "Online"
+                    : "Offline"}
           </span>
-        </a>
-        <span {...stylex.props(s.spacer)} />
-        {setupNeeded ? (
-          <Pill tone="warn"><StatusDot tone="warn" /> Setup needed</Pill>
-        ) : checking ? (
-          <Pill><StatusDot tone="idle" /> Checking</Pill>
-        ) : stale ? (
-          <Pill><StatusDot tone="idle" /> Last known</Pill>
-        ) : online ? (
-          <Pill tone="good"><StatusDot tone="good" /> Online</Pill>
-        ) : (
-          <Pill tone="bad"><StatusDot tone="bad" /> Offline</Pill>
-        )}
-        <button {...stylex.props(s.iconBtn)} onClick={toggle} aria-label={theme === "light" ? "Switch to dark mode" : "Switch to light mode"} title="Toggle theme">
-          {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
+        </span>
+        {children}
+        <button
+          className="icon-button theme-button"
+          type="button"
+          onClick={toggle}
+          aria-label={
+            theme === "dark" ? "Switch to light mode" : "Switch to dark mode"
+          }
+          title={theme === "dark" ? "Light mode" : "Dark mode"}
+        >
+          {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
         </button>
       </div>
     </header>

@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { useRef, useState } from "react";
-import { ArrowRight, Image, Loader2, Printer } from "lucide-react";
+import { ArrowRight, FileText, Loader2, Printer } from "lucide-react";
 import { postPrint, type PrintResponse } from "../lib/api";
 import { createSubmissionId } from "../lib/submission-id";
 import { s as ui, ProgressBar } from "./ui";
@@ -136,12 +136,7 @@ export function PrintCard({
 
   return (
     <div className="print-workflow">
-      <div className="workflow-heading">
-        <div>
-          <h2>Print a document</h2>
-          <p>Choose a file, then check the print settings.</p>
-        </div>
-      </div>
+      <div className="workflow-section-heading"><h2>Your document</h2><span>PDF, images or text</span></div>
       {receipt ? (
         <OperationResult
           title="Added to your print queue"
@@ -150,8 +145,8 @@ export function PrintCard({
           onDismiss={() => setReceipt(null)}
         >
           <small>
-            {receipt.job_id ? `Job ${receipt.job_id} · ` : ""}Follow its
-            progress in the queue below.
+            {receipt.job_id ? `Job ${receipt.job_id} · ` : ""}Track its
+            progress in the print queue.
           </small>
           <a href="#history">
             View print history <ArrowRight size={13} />
@@ -173,6 +168,7 @@ export function PrintCard({
         />
         <fieldset className="print-options" disabled={busy}>
           <legend className="visually-hidden">Print settings</legend>
+          <h2 className="form-section-title">Print settings</h2>
           <div className="option-grid">
             <label {...stylex.props(ui.fieldLabel)}>
               <span>Copies</span>
@@ -213,7 +209,7 @@ export function PrintCard({
           </div>
           <details className="more-options">
             <summary>
-              Layout & page selection <span>Optional</span>
+              Page layout <span>Orientation, scale & pages</span>
             </summary>
             <div className="option-grid">
               <label {...stylex.props(ui.fieldLabel)}>
@@ -269,6 +265,8 @@ export function PrintCard({
             <a href="#history">Check history</a>
           </div>
         ) : null}
+        <div className="workflow-action-bar">
+          <p><FileText size={14} /> {file ? `${options.copies || "1"} ${options.copies === "1" ? "copy" : "copies"} on ${options.paper === "Letter" ? "US Letter" : "A4"}` : "Choose a file to continue"}</p>
         <button
           {...stylex.props(
             ui.buttonPrimary,
@@ -289,6 +287,7 @@ export function PrintCard({
             </>
           )}
         </button>
+        </div>
         {busy ? (
           <div className="upload-progress">
             <ProgressBar />
@@ -296,7 +295,7 @@ export function PrintCard({
           </div>
         ) : null}
         <p className="workflow-footnote">
-          <Image size={13} /> Your file is removed after it leaves the queue.
+          Your document is removed after it leaves the print queue.
         </p>
       </form>
     </div>

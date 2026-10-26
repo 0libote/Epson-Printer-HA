@@ -48,32 +48,32 @@ export const s = stylex.create({
     display: "grid",
     gap: "6px",
     fontFamily: vars.fontSans,
-    fontSize: "12.5px",
+    fontSize: "13px",
     fontWeight: 500,
     color: vars.textSecondary,
   },
   input: {
     width: "100%",
-    minHeight: "46px",
+    minHeight: "44px",
     padding: "8px 12px",
     borderRadius: vars.radiusSm,
     borderWidth: "1px",
     borderStyle: "solid",
     borderColor: vars.lineStrong,
-    backgroundColor: vars.panel,
+    backgroundColor: vars.bgSunken,
     color: vars.text,
     fontFamily: vars.fontSans,
     fontSize: "14px",
   },
   select: {
     width: "100%",
-    minHeight: "46px",
+    minHeight: "44px",
     padding: "8px 12px",
     borderRadius: vars.radiusSm,
     borderWidth: "1px",
     borderStyle: "solid",
     borderColor: vars.lineStrong,
-    backgroundColor: vars.panel,
+    backgroundColor: vars.bgSunken,
     color: vars.text,
     fontFamily: vars.fontSans,
     fontSize: "14px",
@@ -97,13 +97,14 @@ export const s = stylex.create({
     cursor: "pointer",
     width: "100%",
   },
-  buttonPrimaryDisabled: { opacity: 0.55, cursor: "wait" },
+  buttonPrimaryDisabled: { opacity: 0.45, cursor: "not-allowed" },
   buttonTeal: { backgroundColor: vars.teal },
   buttonQuiet: {
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
-    padding: "7px 12px",
+    minHeight: "38px",
+    padding: "8px 12px",
     borderRadius: vars.radiusSm,
     borderWidth: "1px",
     borderStyle: "solid",
@@ -114,7 +115,7 @@ export const s = stylex.create({
     fontSize: "13px",
     fontWeight: 500,
     cursor: "pointer",
-    whiteSpace: "nowrap",
+    whiteSpace: "normal",
   },
   buttonDanger: { color: vars.bad, borderColor: vars.line },
   buttonDisabled: { opacity: 0.5, cursor: "not-allowed" },
@@ -126,6 +127,8 @@ export const s = stylex.create({
   },
   errorBox: {
     display: "flex",
+    flexWrap: "wrap",
+    overflowWrap: "anywhere",
     alignItems: "flex-start",
     gap: "8px",
     padding: "10px 12px",
@@ -179,7 +182,7 @@ export const s = stylex.create({
     borderColor: vars.line,
     backgroundColor: vars.panel,
     fontFamily: vars.fontSans,
-    fontSize: "12.5px",
+    fontSize: "13px",
     fontWeight: 500,
     color: vars.textSecondary,
     whiteSpace: "nowrap",
@@ -230,8 +233,8 @@ export const s = stylex.create({
   },
 });
 
-export function Card({ children, pad = true }: { children: ReactNode; pad?: boolean }) {
-  return <section {...stylex.props(s.card, pad && s.cardPad)}>{children}</section>;
+export function Card({ children, pad = true, className = "" }: { children: ReactNode; pad?: boolean; className?: string }) {
+  return <section className={`${stylex.props(s.card, pad && s.cardPad).className} ${className}`}>{children}</section>;
 }
 
 export function CardHeader({ icon, title, sub, right, tileBg, tileColor }: { icon: ReactNode; title: string; sub: string; right?: ReactNode; tileBg?: string; tileColor?: string }) {

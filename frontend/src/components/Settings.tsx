@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
 import { useEffect, useState } from "react";
-import { Check, Copy, Loader2, Radar } from "lucide-react";
+import { Check, ChevronDown, Copy, Loader2, Printer, Radar } from "lucide-react";
 import { useToast } from "./Toast";
 import { type RecoveryStatus, recoverPrinter, fetchDiagnostics, rediscoverScanner, postClientSettings, postSetup, isPlausiblePrinterIpv4, fetchDiscovered, type DiscoveredPrinter } from "../lib/api";
 import { s as ui, Card, StatusDot } from "./ui";
@@ -29,7 +29,7 @@ const s = stylex.create({
     padding: "8px 10px",
     overflowWrap: "anywhere",
     flex: 1,
-    minWidth: "200px",
+    minWidth: 0,
   },
   h3: { fontFamily: vars.fontSans, fontSize: "13.5px", fontWeight: 600, color: vars.text, marginTop: "18px" },
   p: { fontFamily: vars.fontSans, fontSize: "13px", lineHeight: 1.55, overflowWrap: "anywhere", color: vars.textSecondary, marginTop: "6px" },
@@ -114,21 +114,15 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
   };
 
   return (
-    <Card>
+    <Card className="settings-card sharing-card">
       <div {...stylex.props(ui.sectionHead)}>
-        <h2 {...stylex.props(ui.sectionTitle)}>Network sharing</h2>
+        <h2 {...stylex.props(ui.sectionTitle)}>Sharing & devices</h2>
       </div>
       <form {...stylex.props(s.stack)} onSubmit={submit}>
-        <div {...stylex.props(s.cols)}>
-          <label {...stylex.props(ui.fieldLabel)}>
-            Display name
-            <input {...stylex.props(ui.input)} value={nameEdit} onChange={(e) => setNameEdit(e.target.value)} maxLength={80} required />
-          </label>
-          <label {...stylex.props(ui.fieldLabel)}>
-            Queue name
-            <input {...stylex.props(ui.input, ui.mono)} value={queueEdit} onChange={(e) => setQueueEdit(e.target.value)} maxLength={127} required />
-          </label>
-        </div>
+        <label {...stylex.props(ui.fieldLabel)}>
+          <span>Printer name</span>
+          <input {...stylex.props(ui.input)} value={nameEdit} onChange={event => setNameEdit(event.target.value)} maxLength={80} required />
+        </label>
         <label {...stylex.props(s.toggle)}>
           <input
             type="checkbox"
@@ -141,8 +135,12 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
             <span {...stylex.props(s.toggleSub)}>Lets phones and computers find the printer over IPP.</span>
           </span>
         </label>
+        <details className="settings-subsection"><summary>Advanced queue name</summary>
+          <label {...stylex.props(ui.fieldLabel)}><span>Queue name</span><input {...stylex.props(ui.input, ui.mono)} value={queueEdit} onChange={event => setQueueEdit(event.target.value)} maxLength={127} required /></label>
+          <p {...stylex.props(s.p)}>The address used by computers that already connect to this printer.</p>
+        </details>
         <div>
-          <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy} style={busy ? { opacity: 0.5 } : undefined}>
+          <button className="button-solid" type="submit" disabled={busy}>
             {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save settings
           </button>
         </div>
@@ -150,7 +148,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
 
       {sharing ? (
         <>
-          <h3 {...stylex.props(s.h3)}>Connect a device</h3>
+          <h3 className="connect-device-title">Connect another device</h3>
           <p {...stylex.props(s.p)}>
             On most devices, just add a printer and pick <strong>{displayName}</strong> from the list.
             If it doesn't appear, add it manually:
@@ -161,10 +159,10 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
               {copied ? <Check size={13} {...stylex.props(s.copied)} /> : <Copy size={13} />} {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          <p {...stylex.props(s.p)} style={{ marginTop: 10 }}>
-            Windows: Settings → Bluetooth &amp; devices → Printers &amp; scanners → Add device (manual address: {httpUri}).
-            Mac: System Settings → Printers &amp; Scanners → Add Printer.
-          </p>
+          <div className="device-instructions">
+            <details><summary>Windows</summary><p>Open Settings, then Bluetooth &amp; devices, Printers &amp; scanners, and Add device.</p><p>For manual setup, use this address:</p><code>{httpUri}</code></details>
+            <details><summary>Mac</summary><p>Open System Settings, then Printers &amp; Scanners and Add Printer. Look for <strong>{displayName}</strong>.</p></details>
+          </div>
         </>
       ) : (
         <div {...stylex.props(ui.noteBox)} style={{ marginTop: 14 }}>
@@ -227,13 +225,14 @@ export function PrinterAddressSettings({ printerIp, recovery, onSaved }: { print
   };
 
   return (
-    <Card>
+    <Card className="settings-card connection-card">
       <div {...stylex.props(ui.sectionHead)}>
-        <h2 {...stylex.props(ui.sectionTitle)}>Find your printer</h2>
+        <h2 {...stylex.props(ui.sectionTitle)}>Printer connection</h2>
       </div>
+      {printerIp ? <div className="saved-printer-address"><Printer size={21} strokeWidth={1.5} /><span><small>Saved printer address</small><code>{printerIp}</code></span></div> : null}
       <p {...stylex.props(s.p)} role="status">{recovery?.message || "The hub finds Epson printers automatically and follows address changes once your printer is remembered."}</p>
-      <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={busy || scanning} onClick={async () => { setScanning(true); try { const result = await recoverPrinter(); push({kind: "info", title: result.message}); onSaved(); } catch { push({kind: "error", title: "Could not reconnect yet"}); } finally { setScanning(false); } }}>Find and reconnect automatically</button>
-      <details style={{ marginTop: 14 }}><summary>Advanced: enter an address manually</summary>
+      <button type="button" {...stylex.props(ui.buttonQuiet)} disabled={busy || scanning} onClick={async () => { setScanning(true); try { const result = await recoverPrinter(); push({kind: "info", title: result.message}); onSaved(); } catch { push({kind: "error", title: "Could not reconnect yet"}); } finally { setScanning(false); } }}>{scanning ? "Reconnecting…" : "Reconnect printer"}</button>
+      <details className="settings-subsection"><summary>Enter an address manually</summary>
       <form {...stylex.props(s.stack)} onSubmit={e => { e.preventDefault(); void saveAddress(ip.trim()); }}>
         <label {...stylex.props(ui.fieldLabel)}>
           <span>Printer IP address</span>
@@ -243,13 +242,11 @@ export function PrinterAddressSettings({ printerIp, recovery, onSaved }: { print
           <button {...stylex.props(ui.buttonQuiet)} type="submit" disabled={busy} style={busy ? { opacity: 0.5 } : undefined}>
             {busy ? <Loader2 size={14} className="spin" /> : <Check size={14} />} Save address
           </button>
-          <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={scanning ? { opacity: 0.5 } : undefined}>
-            {scanning ? <Loader2 size={14} className="spin" /> : <Radar size={14} />} {scanning ? "Searching network…" : "Search network"}
-          </button>
+
         </div>
       </form>
       </details>
-      <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={{ marginTop: 12 }}>{scanning ? "Searching…" : "Choose a printer on the network"}</button>
+      <button type="button" {...stylex.props(ui.buttonQuiet)} onClick={search} disabled={scanning || busy} style={{ marginTop: 12 }}>{scanning ? "Searching…" : "Find a different printer"}</button>
       {scanning ? (
         <p {...stylex.props(s.p)}>Scanning the local network for printers — this can take up to ~25 seconds.</p>
       ) : null}
@@ -322,8 +319,8 @@ export function BackendDiagnostics({ onChanged }: { onChanged: () => void }) {
 
 export function AdvancedDiagnostics({ onChanged }: { onChanged: () => void }) {
  const [open, setOpen] = useState(false);
- return <details onToggle={event => setOpen(event.currentTarget.open)}>
-  <summary>Advanced diagnostics</summary>
-  {open ? <BackendDiagnostics onChanged={onChanged} /> : <p>Versions, active backends and scanner rediscovery.</p>}
+ return <details className="diagnostics-disclosure" onToggle={event => setOpen(event.currentTarget.open)}>
+  <summary><span><strong>Diagnostics</strong><small>Software versions and scanner troubleshooting</small></span><ChevronDown size={18} /></summary>
+  {open ? <BackendDiagnostics onChanged={onChanged} /> : null}
  </details>;
 }

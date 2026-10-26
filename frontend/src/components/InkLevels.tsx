@@ -1,10 +1,10 @@
 import * as stylex from "@stylexjs/stylex";
 import { vars } from "../styles/tokens.stylex";
-import { Droplet, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw } from "lucide-react";
 import { useState, type CSSProperties } from "react";
 import { fetchInk, type InkStatus } from "../lib/api";
 import { useToast } from "./Toast";
-import { s as ui, CardHeader, StatusDot } from "./ui";
+import { s as ui, StatusDot } from "./ui";
 
 const s = stylex.create({
   grid: {
@@ -48,6 +48,7 @@ export function InkLevels({
   stale?: boolean;
 }>) {
   const [manual, setManual] = useState<InkStatus | null>(null);
+  const [expanded, setExpanded] = useState(() => window.matchMedia("(min-width: 701px)").matches);
   const { push } = useToast();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -84,28 +85,11 @@ export function InkLevels({
   const subtitle = inkSubtitle(ink, stale);
 
   return (
-    <div className="supplies-panel">
-      <CardHeader
-        icon={<Droplet size={16} />}
-        title="Ink levels"
-        sub={subtitle}
-        tileBg={vars.accentSoft as string}
-        tileColor={vars.accent as string}
-        right={
-          <button
-            {...stylex.props(ui.buttonQuiet, s.refresh)}
-            onClick={refresh}
-            disabled={refreshing}
-            aria-label="Refresh ink levels"
-          >
-            <RefreshCw size={13} className={refreshing ? "spin" : undefined} />{" "}
-            {refreshing ? "Checking…" : "Refresh"}
-          </button>
-        }
-      />
+    <details className="supplies-panel" open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary><h2>Ink levels</h2><ChevronDown size={14} /></summary>
+      <div className="supplies-toolbar"><p>{subtitle}</p><button className="icon-button" type="button" onClick={refresh} disabled={refreshing} aria-label="Refresh ink levels" title="Refresh ink levels"><RefreshCw size={14} className={refreshing ? "spin" : undefined} /></button></div>
       <CartridgeList ink={ink} />
-      <style>{`.spin{animation:spin 1.2s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
+    </details>
   );
 }
 

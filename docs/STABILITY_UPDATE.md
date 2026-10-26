@@ -1,5 +1,8 @@
 # Build 289: stability fixes and a plain interface
 
+Historical release notes. The current interface and installed release are
+documented in [UI_DESIGN.md](UI_DESIGN.md).
+
 This local release keeps the existing print and scan workflows and replaces the
 illustrated sidebar layout with simple navigation, neutral dark surfaces and
 readable system text. Dark mode is the default; an explicitly saved light theme

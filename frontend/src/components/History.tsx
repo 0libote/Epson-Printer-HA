@@ -1,145 +1,153 @@
-import * as stylex from "@stylexjs/stylex";
-import { vars } from "../styles/tokens.stylex";
-import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
+import { useState } from "react";
+import { FileText, Search } from "lucide-react";
 import type { HistoryItem } from "../lib/api";
-import { s as ui, Card, EmptyState, safeLabel } from "./ui";
-
-const s = stylex.create({
-  searchWrap: { position: "relative", flex: 1, minWidth: 0 },
-  searchIcon: { position: "absolute", left: "11px", top: "50%", transform: "translateY(-50%)", opacity: 0.5, pointerEvents: "none" },
-  tableWrap: { overflowX: "auto", margin: "0 -20px", padding: "0 20px" },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: "13px", minWidth: "560px" },
-  th: {
-    textAlign: "left",
-    fontFamily: vars.fontSans,
-    fontSize: "11px",
-    fontWeight: 600,
-    color: vars.textTertiary,
-    padding: "8px 12px 8px 0",
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: vars.line,
-    whiteSpace: "nowrap",
-  },
-  td: {
-    padding: "10px 12px 10px 0",
-    borderBottomWidth: "1px",
-    borderBottomStyle: "solid",
-    borderBottomColor: vars.line,
-    verticalAlign: "top",
-  },
-  doc: { fontFamily: vars.fontSans, fontSize: "13px", fontWeight: 550, color: vars.text, overflowWrap: "anywhere" },
-  sub: { fontFamily: vars.fontMono, fontSize: "11px", color: vars.textTertiary, marginTop: "2px" },
-  mono: { fontFamily: vars.fontMono, fontSize: "12px", color: vars.textSecondary, whiteSpace: "nowrap" },
-  state: {
-    display: "inline-block",
-    padding: "3px 9px",
-    borderRadius: vars.radiusFull,
-    fontFamily: vars.fontSans,
-    fontSize: "12px",
-    fontWeight: 550,
-    textTransform: "capitalize",
-    whiteSpace: "nowrap",
-  },
-});
-
-function stateTone(state: string): string | undefined {
-  if (state === "completed") return vars.goodSoft as string;
-  if (state === "pending" || state === "printing") return vars.warnSoft as string;
-  if (state === "cancelled" || state === "aborted") return vars.badSoft as string;
-  return vars.bgSunken as string;
-}
-
-function stateColor(state: string): string | undefined {
-  if (state === "completed") return vars.good as string;
-  if (state === "pending" || state === "printing") return vars.warn as string;
-  if (state === "cancelled" || state === "aborted") return vars.bad as string;
-  return vars.textSecondary as string;
-}
+import { filterHistory, type HistoryFilter } from "../lib/history-filter";
+import { Card, safeLabel } from "./ui";
 
 const PAGE = 25;
+function stateTone(state: string) {
+  if (state === "completed") return "good";
+  if (["pending", "held", "printing", "stopped"].includes(state)) return "warn";
+  if (["cancelled", "aborted"].includes(state)) return "bad";
+  return "neutral";
+}
+function dateParts(item: HistoryItem) {
+  if (!item.created_at) return [item.created_display, ""];
+  const date = new Date(item.created_at * 1000);
+  return [
+    date.toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }),
+    date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+  ];
+}
 
 export function History({ items }: { items: HistoryItem[] }) {
-  const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<HistoryFilter>("all");
   const [expanded, setExpanded] = useState(false);
-
-  const filtered = useMemo(() => {
-    if (!filter.trim()) return items;
-    const q = filter.toLowerCase();
-    return items.filter((h) =>
-      `${h.document} ${h.source} ${h.state} ${h.user_name || ""} ${h.origin_host || ""}`.toLowerCase().includes(q)
-    );
-  }, [items, filter]);
-
+  const filtered = filterHistory(items, search, status);
   const visible = expanded ? filtered : filtered.slice(0, PAGE);
-
   return (
-    <Card>
-      <div {...stylex.props(ui.sectionHead)}>
-        <h2 {...stylex.props(ui.sectionTitle)}>Print history</h2>
-        <span {...stylex.props(s.mono)}>{filtered.length} {filtered.length === 1 ? "job" : "jobs"}</span>
-      </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-        <div {...stylex.props(s.searchWrap)}>
-          <Search size={14} {...stylex.props(s.searchIcon)} />
+    <Card className="history-panel">
+      <div className="collection-toolbar">
+        <div className="collection-search">
+          <Search size={17} />
           <input
-            {...stylex.props(ui.input)}
-            style={{ paddingLeft: 32 }}
-            placeholder="Search documents, users, status…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
+            className="control"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search documents, people or devices"
             aria-label="Search print history"
           />
         </div>
+        <select
+          className="control collection-select"
+          value={status}
+          onChange={(event) => setStatus(event.target.value as HistoryFilter)}
+          aria-label="Filter history by status"
+        >
+          <option value="all">All statuses</option>
+          <option value="completed">Completed</option>
+          <option value="active">Printing & waiting</option>
+          <option value="failed">Failed or cancelled</option>
+          <option value="unknown">Unknown outcome</option>
+        </select>
       </div>
-      {visible.length === 0 ? (
-        <EmptyState title="No print history" body={items.length === 0 ? "Printed documents will show up here." : "Try a different search."} />
-      ) : (
-        <>
-          <div {...stylex.props(s.tableWrap)}>
-            <table {...stylex.props(s.table)}>
-              <thead>
-                <tr>
-                  <th {...stylex.props(s.th)}>Document</th>
-                  <th {...stylex.props(s.th)}>When</th>
-                  <th {...stylex.props(s.th)}>From</th>
-                  <th {...stylex.props(s.th)}>Status</th>
-                  <th {...stylex.props(s.th)}>Size</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((j) => (
-                  <tr key={j.history_key || `${j.job_id}-${j.created_at}-${j.document}`}>
-                    <td {...stylex.props(s.td)}>
-                      <div {...stylex.props(s.doc)}>{j.document}</div>
-                      <div {...stylex.props(s.sub)}>#{j.job_id}</div>
-                    </td>
-                    <td {...stylex.props(s.td)}><span {...stylex.props(s.mono)}>{j.created_display}</span></td>
-                    <td {...stylex.props(s.td)} style={{ maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      <span {...stylex.props(s.mono)}>{j.origin_host || j.user_name || j.source}</span>
-                    </td>
-                    <td {...stylex.props(s.td)}>
-                      <span {...stylex.props(s.state)} style={{ backgroundColor: stateTone(j.state), color: stateColor(j.state) }}>
-                        {safeLabel(j.state)}
+      <div className="collection-summary">
+        <span>
+          {filtered.length} {filtered.length === 1 ? "job" : "jobs"}
+          {search || status !== "all" ? " found" : " in your history"}
+        </span>
+      </div>
+      {visible.length ? (
+        <div className="history-table-wrap">
+          <table className="history-table">
+            <caption className="visually-hidden">
+              Print jobs and their results
+            </caption>
+            <thead>
+              <tr>
+                <th scope="col">Document</th>
+                <th scope="col">Date</th>
+                <th scope="col">From</th>
+                <th scope="col">Status</th>
+                <th scope="col">Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((item) => {
+                const [date, time] = dateParts(item);
+                return (
+                  <tr
+                    key={
+                      item.history_key ||
+                      `${item.job_id}-${item.created_at}-${item.document}`
+                    }
+                  >
+                    <td className="history-document">
+                      <span className="history-file-icon">
+                        <FileText size={19} strokeWidth={1.5} />
+                      </span>
+                      <span>
+                        <strong>{item.document}</strong>
+                        <small>Job #{item.job_id}</small>
                       </span>
                     </td>
-                    <td {...stylex.props(s.td)}><span {...stylex.props(s.mono)}>{j.size_display}</span></td>
+                    <td className="history-date" data-label="Date">
+                      <span>{date}</span>
+                      <small>{time}</small>
+                    </td>
+                    <td className="history-origin" data-label="From">
+                      {item.origin_host || item.user_name || item.source}
+                    </td>
+                    <td className="history-state">
+                      <span
+                        className={`status-badge is-${stateTone(item.state)}`}
+                      >
+                        {item.state === "unknown"
+                          ? "Outcome unknown"
+                          : safeLabel(item.state)}
+                      </span>
+                    </td>
+                    <td className="history-size" data-label="Size">
+                      {item.size_display}
+                    </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p {...stylex.props(ui.help)} style={{ marginTop: 10 }}>File contents are never stored — metadata only.</p>
-          {filtered.length > PAGE ? (
-            <div style={{ marginTop: 10 }}>
-              <button {...stylex.props(ui.buttonQuiet)} onClick={() => setExpanded((v) => !v)}>
-                {expanded ? "Show less" : `Show all ${filtered.length}`}
-              </button>
-            </div>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="collection-empty">
+          <FileText size={30} strokeWidth={1.3} />
+          <h2>{items.length ? "No matching jobs" : "No print jobs yet"}</h2>
+          <p>
+            {items.length
+              ? "Try another search or choose a different status."
+              : "Documents you print will appear here, including jobs sent from other devices."}
+          </p>
+          {!items.length ? (
+            <a className="button-secondary" href="#print">
+              Print your first document
+            </a>
           ) : null}
-        </>
+        </div>
       )}
+      <div className="collection-footer">
+        <p>Only job details are kept. Document contents aren’t stored here.</p>
+        {filtered.length > PAGE ? (
+          <button
+            className="button-secondary"
+            onClick={() => setExpanded((previous) => !previous)}
+          >
+            {expanded ? "Show fewer" : `Show all ${filtered.length} jobs`}
+          </button>
+        ) : null}
+      </div>
     </Card>
   );
 }

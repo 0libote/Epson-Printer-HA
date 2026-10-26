@@ -34,9 +34,13 @@ Useful `.env` controls include `WEB_USERNAME`/`WEB_PASSWORD` for dashboard authe
 
 ## Everyday use
 
-The workspace has separate **Print a document** and **Scan a page** tabs. File
-selections, scan progress and completion panels survive switching dashboard
-sections. The plain interface defaults to dark mode, with a saved light-mode option, and works on desktop and mobile without external fonts.
+The workspace has five direct destinations: **Print**, **Scan**, **Saved scans**,
+**History** and **Settings**. A desktop sidebar becomes a bottom navigation bar
+on phones. File selections, print settings, scan progress and completion panels
+survive switching sections. Dark mode is the default; an explicitly saved light
+theme is respected. The interface uses system fonts without external downloads.
+See [the interface design and local release notes](docs/UI_DESIGN.md) for the
+layout, verification and rollback details.
 
 Printing accepts PDF, PNG, JPEG and plain text. Choose A4 or US Letter, copies,
 colour or black and white, portrait/landscape, and fit-to-page or actual size.
@@ -187,8 +191,8 @@ and still require validation after an address change.
 
 ### Builds and updating an installed appliance
 
-The footer, Settings diagnostics, `/api/status`, `/api/health` and
-`/api/diagnostics` show the build number. The recorded local build is 289.
+The sidebar, Settings diagnostics, `/api/status`, `/api/health` and
+`/api/diagnostics` show the build number. The recorded local build is 290.
 CI uses **131 + this workflow's run number**, increasing by one per new CI run;
 reruns keep the same identity. Both images share the number and commit revision.
 Published images also have a `build-N` tag. Failed/unpublished runs can leave
@@ -209,7 +213,7 @@ docker compose up -d --force-recreate epson-hub epson-scan-bridge
 Keep the existing `/data`, CUPS spool and cache binds; do not remove volumes.
 The user's host-network/legacy-sidecar Compose requires no new environment
 variables or IPC volume for automatic recovery. Confirm the new build in the
-footer or health endpoint. A browser refresh alone does not update a container.
+sidebar or health endpoint. A browser refresh alone does not update a container.
 For source deployments, the repository's `docker-compose.yml` builds locally;
 that is a separate deployment from a custom ZimaOS stack and may use different
 volume paths. Preserve your existing bind mounts when testing local builds.
