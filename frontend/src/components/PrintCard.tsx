@@ -138,10 +138,9 @@ export function PrintCard({
     <div className="print-workflow">
       <div className="workflow-heading">
         <div>
-          <h2>What would you like to print?</h2>
-          <p>Choose a file. We’ll take care of the rest.</p>
+          <h2>Print a document</h2>
+          <p>Choose a file, then check the print settings.</p>
         </div>
-        <span className="step-label">01 / PRINT</span>
       </div>
       {receipt ? (
         <OperationResult
@@ -287,7 +286,6 @@ export function PrintCard({
             <>
               <Printer size={17} />{" "}
               {offline ? "Add to print queue" : "Print document"}
-              <ArrowRight size={16} />
             </>
           )}
         </button>

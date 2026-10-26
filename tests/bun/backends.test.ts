@@ -41,6 +41,25 @@ test("discovery matches target address exactly and supports other vendors", () =
  const found = parseSaneDevices("device 'airscan:e0:Other' is a scanner ip=192.0.2.10\ndevice 'airscan:e1:Wrong' is a scanner ip=192.0.2.100", "192.0.2.10");
  expect(found.map(d => d.device)).toEqual(["airscan:e0:Other"]);
 });
+test("a working bridge is discovered without entering a stalled generic driver", async () => {
+ const calls: string[][] = [];
+ const service = createSaneService(async args => {
+  calls.push(args);
+  if (args[0] === "scanimage") throw new Error("Generic discovery would hang");
+  return commandResult(true, "device 'net:127.0.0.1:epsonscan2:network:192.0.2.10' is a EPSON scanner");
+ }, async () => true);
+ expect((await service.detectSaneDevice("192.0.2.10"))[0]).toContain("epsonscan2");
+ expect(calls).toHaveLength(1);
+});
+test("an empty bridge still falls back to generic SANE discovery", async () => {
+ const calls: string[][] = [];
+ const service = createSaneService(async args => {
+  calls.push(args);
+  return commandResult(true, args[0] === "env" ? "" : "device 'epsonds:net:192.0.2.10' is a scanner");
+ }, async () => true);
+ expect((await service.detectSaneDevice("192.0.2.10"))[1]).toBe("Open-source SANE");
+ expect(calls).toHaveLength(2);
+});
 test("AirScan with usable capabilities is preferred", async () => {
  const sane=fakeSane([{rank:0,device:"airscan:test",backend:"AirScan/WSD"},{rank:2,device:"epsonds:test",backend:"Open-source SANE"}]);
  const epson=new EpsonScan2Backend(async () => Response.json(health));

@@ -12,6 +12,7 @@ const s = stylex.create({
   strip: {
     display: "grid",
     gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+    "@media (max-width: 600px)": { gridTemplateColumns: "1fr" },
     gap: "1px",
     backgroundColor: vars.line,
     borderWidth: "1px",
@@ -23,7 +24,7 @@ const s = stylex.create({
   cell: {
     backgroundColor: vars.panel,
     padding: "14px 16px",
-    "@media (max-width: 600px)": { padding: "12px 8px" },
+    "@media (max-width: 600px)": { padding: "12px", display: "grid", gridTemplateColumns: "84px minmax(0, 1fr)" },
     display: "flex",
     flexDirection: "column",
     gap: "4px",
@@ -33,8 +34,6 @@ const s = stylex.create({
     fontFamily: vars.fontSans,
     fontSize: "11px",
     fontWeight: 600,
-    letterSpacing: "0.06em",
-    textTransform: "uppercase",
     color: vars.textTertiary,
     display: "flex",
     alignItems: "center",
@@ -57,6 +56,7 @@ const s = stylex.create({
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
+    "@media (max-width: 600px)": { gridColumn: "1 / -1", whiteSpace: "normal", overflowWrap: "anywhere" },
   },
   jobRow: {
     display: "flex",
@@ -91,7 +91,7 @@ export function StatusStrip({ printerOk, printerState, printerDetail, scannerOk,
       <div {...stylex.props(s.cell)}>
         <span {...stylex.props(s.label)}><StatusDot tone={queueChecking ? "idle" : queueCount > 0 ? "warn" : "good"} /> Queue</span>
         <span {...stylex.props(s.value)}>{queueChecking ? "Checking…" : `${queueCount} ${queueCount === 1 ? "job" : "jobs"}`}</span>
-        <span {...stylex.props(s.detail)}>{queueChecking ? "Reading the print queue" : queueCount > 0 ? "Waiting or printing" : "Ready for your next document"}</span>
+        <span {...stylex.props(s.detail)}>{queueChecking ? "Reading the print queue" : queueCount > 0 ? "Waiting or printing" : "No waiting documents"}</span>
       </div>
     </div>
   );

@@ -20,7 +20,7 @@ function DocumentDrop({
 }>) {
   const [dragOver, setDragOver] = useState(false);
   const dragDepth = useRef(0);
-  let title = file?.name || "A little drag. A little drop.";
+  let title = file?.name || "Choose a file or drop it here";
   if (dragOver) title = "Drop your document here";
   return (
     <button

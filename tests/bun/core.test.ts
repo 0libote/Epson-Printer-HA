@@ -102,18 +102,22 @@ describe("core", () => {
   });
 
   test("a reachable bridge alone does not claim scanner readiness and is cached", async () => {
-    // clear caches
     core.clearStatusCaches();
+    core.clearDeviceCache();
     const mockTcp = spyOn(core, "tcpOpen").mockResolvedValue(true);
-    // need to mock performance.now to stable bucket? Use real time but check caching via call count
-    const first = await core.scannerStatus("192.0.2.10");
-    const second = await core.scannerStatus("192.0.2.10");
-    expect(first).toEqual(second);
-    expect(first.state).toBe("not_detected");
-    expect(first.ok).toBe(false);
-    expect(first.detail).toContain("bridge is online");
-    expect(mockTcp).toHaveBeenCalledTimes(1);
-    mockTcp.mockRestore();
+    const mockRun = spyOn(core, "runCommand").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+    try {
+      const first = await core.scannerStatus("192.0.2.10");
+      const second = await core.scannerStatus("192.0.2.10");
+      expect(first).toEqual(second);
+      expect(first.state).toBe("not_detected");
+      expect(first.ok).toBe(false);
+      expect(first.detail).toContain("bridge is online");
+      expect(mockTcp).toHaveBeenCalledTimes(2);
+    } finally {
+      mockRun.mockRestore();
+      mockTcp.mockRestore();
+    }
   });
 
   test("scanner status reports missing hardware without claiming it is starting", async () => {

@@ -46,6 +46,13 @@ test('multiple Epson printers require deliberate selection',async()=>{
 test('learns identity online without reconfiguring a healthy queue',async()=>{
  const f=fixture({ip:'192.168.1.50'});f.setConnected(true);expect((await f.recovery.tick()).state).toBe('ready');expect(f.remembers).toBe(1);expect(f.saved.identity?.uuid).toBe('printer-123456');expect(f.relocations).toBe(0);
 });
+test('an identity check with no model preserves the remembered printer model',async()=>{
+ const f=fixture({ip:'192.168.1.50',identity:{uuid:'printer-123456',model:'Epson XP-2200'}});
+ f.setConnected(true);f.setFound([{...printer(),model:null}]);
+ expect((await f.recovery.tick()).state).toBe('ready');
+ expect(f.saved.identity?.model).toBe('Epson XP-2200');
+ expect(f.relocations).toBe(0);
+});
 test('sleeping/offline device leaves settings intact and retries with backoff',async()=>{
  const f=fixture();f.setFound([]);expect((await f.recovery.tick()).state).toBe('offline');await f.recovery.tick();expect(f.scans).toBe(2);f.advance();await f.recovery.tick();expect(f.scans).toBe(3);expect(f.sweepFlags).toEqual([false,true,false]);expect(f.saved.ip).toBe('192.168.1.20');
 });

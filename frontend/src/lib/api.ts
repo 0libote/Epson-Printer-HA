@@ -105,7 +105,7 @@ export function getCsrfToken(): string {
 
 export async function fetchCsrf(): Promise<string> {
   const data = await readJson<{ csrf_token: string }>(await fetch("/api/csrf", {
-    credentials: "same-origin", headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(8000), credentials: "same-origin", headers: { Accept: "application/json" },
   }));
   if (!data.csrf_token) throw new Error("The server did not issue a CSRF token. Reload and try again.");
   return data.csrf_token;
@@ -155,14 +155,14 @@ export async function fetchStatus(): Promise<StatusResponse> {
   return readJson<StatusResponse>(await fetch("/api/status?cached=1", { signal: AbortSignal.timeout(8000), credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function fetchHistory(limit = 100): Promise<HistoryResponse> {
-  return readJson<HistoryResponse>(await fetch(`/api/history?limit=${limit}`, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+  return readJson<HistoryResponse>(await fetch(`/api/history?limit=${limit}`, { signal: AbortSignal.timeout(10000), credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function fetchHealth(): Promise<{ ok: boolean }> {
-  return readJson<{ ok: boolean }>(await fetch("/api/health", { credentials: "same-origin", headers: { Accept: "application/json" } }));
+  return readJson<{ ok: boolean }>(await fetch("/api/health", { signal: AbortSignal.timeout(8000), credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 export async function fetchInk(refresh = false): Promise<InkStatus> {
   const url = refresh ? "/api/ink?refresh=1" : "/api/ink";
-  return readJson<InkStatus>(await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+  return readJson<InkStatus>(await fetch(url, { signal: AbortSignal.timeout(25000), credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
 export type DiscoveredPrinter = {
@@ -183,7 +183,7 @@ export type DiscoverResponse = {
 
 export async function fetchDiscovered(refresh = false): Promise<DiscoverResponse> {
   const url = refresh ? "/api/discover?refresh=1" : "/api/discover";
-  return readJson<DiscoverResponse>(await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } }));
+  return readJson<DiscoverResponse>(await fetch(url, { signal: AbortSignal.timeout(60000), credentials: "same-origin", headers: { Accept: "application/json" } }));
 }
 
 async function parseFormResponse(res: Response): Promise<{ ok: boolean; message?: string; redirect?: string }> {
@@ -203,6 +203,8 @@ async function addCsrf(form: FormData): Promise<string> {
 }
 
 async function csrfAwareFetch(input: RequestInfo, init: RequestInit, retryBody?: () => RequestInit): Promise<Response> {
+  // Allow slow uploads and queue configuration, but never leave controls waiting forever.
+  init = { ...init, signal: init.signal ?? AbortSignal.timeout(120000) };
   let res = await fetch(input, init);
   if (res.status === 400) {
     const clone = res.clone();
@@ -224,6 +226,7 @@ async function csrfAwareFetch(input: RequestInfo, init: RequestInit, retryBody?:
         retryInit.body.set("_csrf_token", fresh);
       }
       retryInit.headers = headers;
+      retryInit.signal ??= AbortSignal.timeout(120000);
       res = await fetch(input, retryInit);
     }
   }
@@ -247,7 +250,8 @@ export async function postPrint(form: FormData) {
 }
 export async function postScan(form: FormData) {
   const csrf = await addCsrf(form);
-  return formRequest(csrfAwareFetch("/scan", formInit(form, csrf), () => formInit(form, cachedCsrf || csrf)));
+  const init = (token: string) => ({ ...formInit(form, token), signal: AbortSignal.timeout(300000) });
+  return formRequest(csrfAwareFetch("/scan", init(csrf), () => init(cachedCsrf || csrf)));
 }
 export async function postClientSettings(form: FormData) {
   const csrf = await addCsrf(form);
@@ -354,8 +358,8 @@ export async function cancelAllScans(): Promise<{ cancelled: number }> {
   return data as { cancelled: number };
 }
 
-export async function fetchCapabilities() { return readJson<CapabilitiesResponse>(await fetch("/api/capabilities", { credentials: "same-origin" })); }
-export async function fetchDiagnostics() { return readJson<DiagnosticsResponse>(await fetch("/api/diagnostics", { credentials: "same-origin" })); }
+export async function fetchCapabilities() { return readJson<CapabilitiesResponse>(await fetch("/api/capabilities", { signal: AbortSignal.timeout(60000), credentials: "same-origin" })); }
+export async function fetchDiagnostics() { return readJson<DiagnosticsResponse>(await fetch("/api/diagnostics", { signal: AbortSignal.timeout(60000), credentials: "same-origin" })); }
 export async function rediscoverScanner() {
  const csrf = await ensureCsrf();
  return readJson(await csrfAwareFetch("/api/scanner/rediscover", { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf }, body: "{}" }));

@@ -15,8 +15,6 @@ const s = stylex.create({
     fontFamily: vars.fontSans,
     fontSize: "11px",
     fontWeight: 600,
-    letterSpacing: "0.05em",
-    textTransform: "uppercase",
     color: vars.textTertiary,
     padding: "8px 12px 8px 0",
     borderBottomWidth: "1px",

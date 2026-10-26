@@ -32,7 +32,7 @@ const s = stylex.create({
     minWidth: "200px",
   },
   h3: { fontFamily: vars.fontSans, fontSize: "13.5px", fontWeight: 600, color: vars.text, marginTop: "18px" },
-  p: { fontFamily: vars.fontSans, fontSize: "13px", lineHeight: 1.55, color: vars.textSecondary, marginTop: "6px" },
+  p: { fontFamily: vars.fontSans, fontSize: "13px", lineHeight: 1.55, overflowWrap: "anywhere", color: vars.textSecondary, marginTop: "6px" },
   copied: { color: vars.good },
 });
 

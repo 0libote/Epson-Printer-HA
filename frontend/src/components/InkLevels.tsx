@@ -142,6 +142,7 @@ function CartridgeList({
 function inkColor(cartridge: InkStatus["cartridges"][number]) {
   if (cartridge.state === "empty") return vars.bad as string;
   if (cartridge.state === "low") return vars.warn as string;
+  if (cartridge.key === "black") return vars.textSecondary as string;
   return cartridge.color;
 }
 
@@ -162,7 +163,7 @@ function InkCartridge({
     <div {...stylex.props(s.row)}>
       <span
         {...stylex.props(s.dot)}
-        style={{ backgroundColor: c.color }}
+        style={{ backgroundColor: c.key === "black" ? vars.textSecondary as string : c.color }}
         aria-hidden="true"
       />
       <div {...stylex.props(s.nameWrap)}>

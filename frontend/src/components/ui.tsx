@@ -198,11 +198,9 @@ export const s = stylex.create({
   },
   sectionTitle: {
     fontFamily: vars.fontSans,
-    fontSize: "13px",
+    fontSize: "16px",
     fontWeight: 600,
-    letterSpacing: "0.04em",
-    textTransform: "uppercase",
-    color: vars.textTertiary,
+    color: vars.text,
   },
   // modal
   scrim: {

@@ -96,7 +96,8 @@ export function createStatusSnapshot<T extends Record<string, unknown>>(options:
   for (const name of names) {
    const part = parts[name];
    metadata[name] = { updated_at: part?.at ? new Date(part.at).toISOString() : null,
-    refreshing: running.has(name), stale: !part || part.restored || !!part.error || now() - part.at >= (options.ttlMs?.[name] ?? 15_000), error: part?.error ?? null };
+    // A refresh becoming due does not make a healthy reading unavailable.
+    refreshing: running.has(name), stale: !part || part.restored || !!part.error || now() - part.at >= Math.max(30_000, 2 * (options.ttlMs?.[name] ?? 15_000)), error: part?.error ?? null };
   }
   return { values: { ...values }, metadata };
  }

@@ -50,6 +50,7 @@ COPY scripts/configure-cups.sh /usr/local/bin/configure-cups.sh
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY config/cupsd.conf /etc/cups/cupsd.conf
 COPY config/net.conf /etc/sane.d/net.conf
+COPY config/bridge-dll.conf /etc/sane.d/epson-bridge/dll.conf
 COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
 RUN bun run build
@@ -70,6 +71,6 @@ ENV WEB_PORT=8080 \
 EXPOSE 8080 631
 VOLUME ["/data", "/var/cache/cups", "/var/spool/cups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD curl -fsS "http://127.0.0.1:${WEB_PORT:-8080}/api/health" >/dev/null || exit 1
-ARG BUILD_NUMBER=134
+ARG BUILD_NUMBER=289
 LABEL org.opencontainers.image.version="build-${BUILD_NUMBER}"
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

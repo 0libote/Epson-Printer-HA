@@ -52,3 +52,19 @@ test('invalidated TTL tasks cannot poison a replacement cache entry',async()=>{
  const first=ttlCached(cache,inflight,'printer',15000,()=>old.promise);cache.clear();inflight.clear();const second=ttlCached(cache,inflight,'printer',15000,()=>fresh.promise);
  old.resolve('offline');await first;expect(inflight.has('printer')).toBe(true);expect(cache.has('printer')).toBe(false);fresh.resolve('ready');await second;expect(cache.get('printer').value).toBe('ready');
 });
+
+test('routine refresh deadlines do not flicker healthy readings into stale state', async () => {
+ let time = 100000;
+ const next = gate<string>(); let calls = 0;
+ const cache = createStatusSnapshot({ key: () => 'a', now: () => time,
+  ttlMs: { printer: 5000 }, fallback: () => ({ printer: 'unknown' }),
+  loaders: { printer: () => ++calls === 1 ? Promise.resolve('ready') : next.promise } });
+ await cache.refresh(); time += 5001;
+ const pending = cache.refresh(); await Bun.sleep(0);
+ expect(cache.read().metadata.printer).toMatchObject({ refreshing: true, stale: false });
+ expect(cache.read().values.printer).toBe('ready');
+ time += 25000;
+ expect(cache.read().metadata.printer.stale).toBe(true);
+ next.resolve('ready'); await pending;
+ expect(cache.read().metadata.printer.stale).toBe(false);
+});

@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import {
   parseEpsonTitle,
   rankCandidates,
@@ -58,6 +58,8 @@ describe("discover - api", () => {
     const appModule = await import("../../src/app.ts");
     const prevDir: string = (appModule as any).APP_DIR;
     let calls = 0;
+    const network = await import("../../src/system/network.ts");
+    const addresses = spyOn(network, "localIPv4s").mockReturnValue(["192.0.2.10"]);
     try {
       appModule._setAppDirForTest(tmp);
       writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10" }));
@@ -80,6 +82,7 @@ describe("discover - api", () => {
       await appModule.app.request(new Request("http://localhost/api/discover", { headers: { Accept: "application/json" } }));
       expect(calls).toBe(1);
     } finally {
+      addresses.mockRestore();
       _setScanImplForTest(null);
       _clearDiscoverCacheForTest();
       appModule._setAppDirForTest(prevDir);

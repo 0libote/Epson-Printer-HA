@@ -39,7 +39,14 @@ const candidatesByIp = new Map<string, ReturnType<typeof parseSaneDevices>>();
 async function detectSaneDevice(printerIp = ""): Promise<[string | null, string | null]> {
   // A dozing printer can take ~16s to answer SANE probes; cutting off at 12s
   // made detection (and therefore every scan) impossible while it naps.
-  const result = await runCommand(["scanimage", "-L"], 30_000);
+  let result: CommandResult | null = null;
+  if (await tcpOpen("127.0.0.1", 6566, 200)) {
+    // A hanging epsonds driver must not hide a working AirScan/bridge device.
+    result = await runCommand(["env", "SANE_CONFIG_DIR=/etc/sane.d/epson-bridge:/etc/sane.d", "scanimage", "-L"], 8000);
+  }
+  if (!result?.ok || !parseSaneDevices(result.stdout, printerIp).length) {
+    result = await runCommand(["scanimage", "-L"], 30_000);
+  }
   if (!result.ok) { candidatesByIp.set(printerIp, []); return [null, null]; }
 
   const found = parseSaneDevices(result.stdout, printerIp);

@@ -36,7 +36,7 @@ Useful `.env` controls include `WEB_USERNAME`/`WEB_PASSWORD` for dashboard authe
 
 The workspace has separate **Print a document** and **Scan a page** tabs. File
 selections, scan progress and completion panels survive switching dashboard
-sections. Light and dark themes work on desktop and mobile without external fonts.
+sections. The plain interface defaults to dark mode, with a saved light-mode option, and works on desktop and mobile without external fonts.
 
 Printing accepts PDF, PNG, JPEG and plain text. Choose A4 or US Letter, copies,
 colour or black and white, portrait/landscape, and fit-to-page or actual size.
@@ -90,6 +90,8 @@ Failed or cancelled acquisitions do not remove existing documents.
 Saved scans are paginated, with search and sorting across the complete library.
 Use **Load more scans** to browse beyond the first 100; a search can find files
 that have not been loaded into the browser.
+
+See the [build 289 changes and rollback notes](docs/STABILITY_UPDATE.md).
 
 See the [household deployment checks](docs/HOUSEHOLD_ACCEPTANCE.md) for the
 remaining physical-printer verification before relying on an updated build.
@@ -186,7 +188,7 @@ and still require validation after an address change.
 ### Builds and updating an installed appliance
 
 The footer, Settings diagnostics, `/api/status`, `/api/health` and
-`/api/diagnostics` show the build number. The recorded development build is 134.
+`/api/diagnostics` show the build number. The recorded local build is 289.
 CI uses **131 + this workflow's run number**, increasing by one per new CI run;
 reruns keep the same identity. Both images share the number and commit revision.
 Published images also have a `build-N` tag. Failed/unpublished runs can leave

@@ -47,6 +47,8 @@ case "${EPSON_SCANNER_MODE:-legacy}" in
   *) echo "[scan-bridge] EPSON_SCANNER_MODE must be direct or legacy."; exit 3 ;;
 esac
 
+# Unrelated SANE backends can stall enumeration before Epson is reached.
+printf 'epsonscan2\n' > /etc/sane.d/dll.conf
 mkdir -p /root/.epsonscan2/Network
 
 last_ip=""

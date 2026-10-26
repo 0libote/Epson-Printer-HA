@@ -433,10 +433,9 @@ export function ScanCard({
     <div className="scan-workflow">
       <div className="workflow-heading">
         <div>
-          <h2>Give paper a digital home.</h2>
-          <p>A receipt, a letter, a page worth keeping.</p>
+          <h2>Scan a page</h2>
+          <p>Save an A4 page as a PDF or image.</p>
         </div>
-        <span className="step-label">02 / SCAN</span>
       </div>
       <ScanFeedback
         resultName={resultName}
@@ -453,7 +452,7 @@ export function ScanCard({
             <ScanLine size={45} strokeWidth={1.1} />
           </span>
           <span>
-            <strong>Paper down. Possibilities up.</strong>
+            <strong>Place your page on the scanner</strong>
             <small>
               Place one A4 page face-down on the glass.
               <br />

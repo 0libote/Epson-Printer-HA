@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { clearCachedCsrf, deleteScan, cancelScanJob, cancelAllScans, fetchHistory, fetchScans, postClientSettings, startScanJob, pollScanJob } from "../../frontend/src/lib/api";
+import { clearCachedCsrf, deleteScan, cancelScanJob, cancelAllScans, fetchHistory, fetchScans, postClientSettings, startScanJob, pollScanJob, fetchCsrf, fetchHealth, fetchInk, fetchDiagnostics } from "../../frontend/src/lib/api";
 
 const originalFetch = globalThis.fetch;
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
@@ -21,6 +21,16 @@ function mockFetch(handler: (input: RequestInfo | URL, init?: RequestInit) => Pr
 }
 
 describe("dashboard API client", () => {
+  test("status controls and mutations have bounded request lifetimes", async () => {
+    mockFetch(async (_input, init) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Response.json({ ok: true, csrf_token: "test" });
+    });
+    await Promise.all([fetchCsrf(), fetchHealth(), fetchHistory(), fetchInk(), fetchDiagnostics()]);
+    cookie = "csrf_token=test";
+    await deleteScan("one.pdf");
+  });
+
   test("parallel library deletions share one initial CSRF request", async () => {
     let tokenRequests = 0;
     let deletes = 0;

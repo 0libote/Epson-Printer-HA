@@ -540,10 +540,8 @@ export function Library({
   return (
     <>
       <div className="library-intro">
-        <span>YOUR PAPER, DIGITISED</span>
         <p>
-          Keep a single page, or select several scans to bring them together in
-          one PDF.
+          Select several scans to combine them into a PDF.
         </p>
         <a href="#scan">
           Scan a new page <ScanLine size={14} />

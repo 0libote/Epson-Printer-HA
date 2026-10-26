@@ -1,10 +1,11 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 
 let history: typeof import("../../src/history.ts");
+const fetchCupsJobs = (await import("../../src/history.ts"))._fetchJobs;
 
 describe("history", () => {
   let tmp: string;
@@ -105,6 +106,67 @@ describe("history", () => {
     db.close();
     expect(history.prunePrintHistory({ retentionDays: 5 })).toBe(1);
     expect(history.listPrintHistory().map(r => r.state)).toEqual(["printing"]);
+  });
+
+  test("a complete empty CUPS snapshot stops claiming lost jobs are printing", async () => {
+    history.__setFetchJobs(async (which): Promise<Record<number, Record<string, any>>> => which === "not-completed" ? {
+      7: { "job-printer-uri": "ipp://localhost/printers/Printer", "job-state": 5, "time-at-creation": 1000 },
+    } : {});
+    await history.syncPrintHistory("Printer");
+    history.__setFetchJobs(async () => ({}));
+    expect(await history.syncPrintHistory("Printer")).toBe(1);
+    const row = history.listPrintHistory()[0];
+    expect(row.state).toBe("unknown");
+    expect(row.completed_at).toBe(0);
+  });
+
+  test("partial or active-only snapshots never invalidate retained jobs", async () => {
+    history.__setFetchJobs(async (which): Promise<Record<number, Record<string, any>>> => which === "not-completed" ? {
+      7: { "job-printer-uri": "ipp://localhost/printers/Printer", "job-state": 5, "time-at-creation": 1000 },
+    } : {});
+    await history.syncPrintHistory("Printer");
+    history.__setFetchJobs(async () => ({}));
+    await history.syncPrintHistory("Printer", { includeCompleted: false });
+    expect(history.listPrintHistory()[0].state).toBe("printing");
+    history.__setFetchJobs(async which => { if (which === "completed") throw Error("offline"); return {}; });
+    await history.syncPrintHistory("Printer");
+    expect(history.listPrintHistory()[0].state).toBe("printing");
+  });
+
+  test("truncated CUPS listings never invalidate jobs outside the page", async () => {
+    history.__setFetchJobs(async () => ({
+      7: { "job-printer-uri": "ipp://localhost/printers/Printer", "job-state": 5, "time-at-creation": 1000 },
+    }));
+    await history.syncPrintHistory("Printer");
+    history.__setFetchJobs(async () => Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [i + 100, {
+      "job-printer-uri": "ipp://localhost/printers/Other", "job-state": 9,
+    }])));
+    await history.syncPrintHistory("Printer");
+    expect(history.listPrintHistory()[0].state).toBe("printing");
+  });
+
+  test("private metadata becoming unavailable does not erase a recorded document", async () => {
+    const attrs = { "job-printer-uri": "ipp://localhost/printers/Printer", "job-state": 5, "time-at-creation": Math.floor(Date.now() / 1000) };
+    history.__setFetchJobs(async () => ({ 7: { ...attrs, "job-name": "letter.pdf", "job-originating-user-name": "epson", "job-originating-host-name": "localhost" } }));
+    await history.syncPrintHistory("Printer");
+    history.__setFetchJobs(async () => ({ 7: { ...attrs, "job-state": 9 } }));
+    await history.syncPrintHistory("Printer");
+    expect(history.listPrintHistory()[0]).toMatchObject({ document: "letter.pdf", user_name: "epson", origin_host: "localhost", source: "WebUI", state: "completed" });
+  });
+
+  test("invalid CUPS responses and missing pycups are failures, never empty queues", async () => {
+    for (const [stdout, code] of [["not json", 0], ["[]", 0], ["null", 0], ['{"7":null}', 0], ["", 1]] as const) {
+      const spawn = spyOn(Bun, "spawn").mockReturnValue({
+        stdout: new Response(stdout).body, stderr: new Response("").body, exited: Promise.resolve(code), kill() {},
+      } as any);
+      try { await expect(fetchCupsJobs("completed")).rejects.toThrow(/CUPS|cups/); }
+      finally { spawn.mockRestore(); }
+    }
+  });
+
+  test("non-finite CUPS attributes fall back to valid SQLite integers", () => {
+    expect(history._safeInt(Infinity)).toBe(0);
+    expect(history._safeInt("-Infinity")).toBe(0);
   });
 
   test("legacy history survives reused cups job id", async () => {

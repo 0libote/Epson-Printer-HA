@@ -118,6 +118,11 @@ jobs:
           tags: epson-printer-ha:smoke
           cache-from: type=gha,scope=epson-printer-ha
           cache-to: type=gha,mode=max,scope=epson-printer-ha
+      - name: Verify CUPS history metadata without network or document output
+        run: |
+          docker run --rm --network none \
+            -v "$PWD/tests/fixtures/check-cups-history.py:/tmp/check-cups-history.py:ro" \
+            --entrypoint python3 epson-printer-ha:smoke /tmp/check-cups-history.py
       - name: Boot CUPS and send a PDF through the XP-2200 filter chain
         run: scripts/smoke-test.sh epson-printer-ha:smoke
 

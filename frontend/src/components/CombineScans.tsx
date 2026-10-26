@@ -91,7 +91,7 @@ export function CombineScans({
         </button>
       </div>
       <h2 id="combine-title">
-        {result ? "One neat document. Ready." : "Bring your pages together."}
+        {result ? "PDF created" : "Combine scans into a PDF"}
       </h2>
       {result ? (
         <>

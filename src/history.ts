@@ -158,7 +158,7 @@ function safeInt(value: any, def = 0): number {
   try {
     if (value === null || value === undefined || value === "") return def;
     const n = Number(value);
-    if (Number.isNaN(n)) return def;
+    if (!Number.isFinite(n)) return def;
     return Math.trunc(n);
   } catch {
     return def;
@@ -197,50 +197,50 @@ async function fetchJobs(whichJobs: string): Promise<Record<number, Record<strin
     throw new Error(`Invalid whichJobs: ${whichJobs}`);
   }
   // Use python3 to call cups, returns JSON
+  // pycups getJobs(my_jobs=False) omits requesting-user-name, hiding private fields.
   const pythonScript = `
-import json, sys
+import http.client, io, json, sys
 try:
     import cups
-except ImportError:
-    print(json.dumps({}))
-    sys.exit(0)
-attrs = ${JSON.stringify(REQUESTED_ATTRIBUTES)}
-try:
-    conn = cups.Connection()
-    jobs = conn.getJobs(which_jobs="${whichJobs}", my_jobs=False, limit=1000, requested_attributes=attrs)
-    # Convert keys to int and ensure serializable
-    out = {}
-    for k, v in jobs.items():
-        # v may contain non-json types, convert to plain
-        plain = {}
-        for kk, vv in v.items():
-            try:
-                json.dumps(vv)
-                plain[kk] = vv
-            except:
-                plain[kk] = str(vv)
-        out[str(k)] = plain
-    print(json.dumps(out))
-except TypeError:
+    request = cups.IPPRequest(cups.IPP_OP_GET_JOBS)
+    for tag, name, value in [
+        (cups.IPP_TAG_URI, "printer-uri", "ipp://localhost/printers/"),
+        (cups.IPP_TAG_NAME, "requesting-user-name", "epson"),
+        (cups.IPP_TAG_KEYWORD, "which-jobs", "${whichJobs}"),
+        (cups.IPP_TAG_BOOLEAN, "my-jobs", False),
+        (cups.IPP_TAG_INTEGER, "limit", 1000),
+        (cups.IPP_TAG_KEYWORD, "requested-attributes", ${JSON.stringify(REQUESTED_ATTRIBUTES)}),
+    ]:
+        request.add(cups.IPPAttribute(cups.IPP_TAG_OPERATION, tag, name, value))
+    body = io.BytesIO()
+    if request.writeIO(body.write) != cups.IPP_STATE_DATA:
+        raise RuntimeError("Cannot encode CUPS history request")
+    conn = http.client.HTTPConnection("127.0.0.1", 631, timeout=10)
     try:
-        conn = cups.Connection()
-        jobs = conn.getJobs(which_jobs="${whichJobs}", my_jobs=False, limit=1000)
-        out = {}
-        for k, v in jobs.items():
-            plain = {}
-            for kk, vv in v.items():
-                try:
-                    json.dumps(vv)
-                    plain[kk] = vv
-                except:
-                    plain[kk] = str(vv)
-            out[str(k)] = plain
-        print(json.dumps(out))
-    except Exception as e:
-        print(json.dumps({"__error__": str(e)}), file=sys.stderr)
-        sys.exit(1)
-except Exception as e:
-    print(json.dumps({"__error__": str(e)}), file=sys.stderr)
+        conn.request("POST", "/", body=body.getvalue(), headers={"Content-Type": "application/ipp"})
+        response = conn.getresponse()
+        payload = response.read(4 * 1024 * 1024 + 1)
+        if response.status != 200 or len(payload) > 4 * 1024 * 1024:
+            raise RuntimeError("CUPS history response unavailable or too large")
+    finally:
+        conn.close()
+    reply = cups.IPPRequest()
+    if reply.readIO(io.BytesIO(payload).read) != cups.IPP_STATE_DATA or reply.statuscode >= 0x0100:
+        raise RuntimeError("Invalid CUPS history response")
+    jobs, current = {}, {}
+    for attr in reply.attributes:
+        if attr.group_tag == cups.IPP_TAG_ZERO:
+            if "job-id" in current:
+                jobs[str(current["job-id"])] = current
+            current = {}
+        # pycups can crash reading .values for no-value/unknown IPP attributes.
+        elif attr.group_tag == cups.IPP_TAG_JOB and attr.value_tag >= 0x20 and attr.values:
+            current[attr.name] = attr.values[0] if len(attr.values) == 1 else attr.values
+    if "job-id" in current:
+        jobs[str(current["job-id"])] = current
+    print(json.dumps(jobs))
+except Exception as exc:
+    print(str(exc), file=sys.stderr)
     sys.exit(1)
 `;
   const proc = Bun.spawn(["python3", "-c", pythonScript], { stdout: "pipe", stderr: "pipe" });
@@ -261,22 +261,22 @@ except Exception as e:
     if (stderr.includes("__error__") || stderr.trim()) {
       throw new Error(stderr.trim() || `cups fetch failed ${whichJobs}`);
     }
-    // if python not available, return empty
-    if (!stdout.trim()) return {};
-    throw new Error(`cups fetch failed: ${stderr}`);
+    throw new Error(`cups fetch failed: ${whichJobs}`);
   }
-  try {
-    const data = JSON.parse(stdout.trim() || "{}");
-    if (data["__error__"]) throw new Error(data["__error__"]);
-    const result: Record<number, Record<string, any>> = {};
-    for (const [k, v] of Object.entries(data)) {
-      result[Number(k)] = v as any;
+  let data: unknown;
+  try { data = JSON.parse(stdout); }
+  catch { throw new Error("CUPS returned invalid job metadata"); }
+  if (!data || typeof data !== "object" || Array.isArray(data) || "__error__" in data) {
+    throw new Error("CUPS returned invalid job metadata");
+  }
+  const result: Record<number, Record<string, any>> = {};
+  for (const [id, attrs] of Object.entries(data)) {
+    if (!/^\d+$/.test(id) || !attrs || typeof attrs !== "object" || Array.isArray(attrs)) {
+      throw new Error("CUPS returned invalid job metadata");
     }
-    return result;
-  } catch (e) {
-    // if parse fails, return empty
-    return {};
+    result[Number(id)] = attrs;
   }
+  return result;
 }
 
 // Sync variant for tests that mock _fetchJobs - expose for monkeypatching
@@ -297,15 +297,17 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
   const ongoing = _syncInflight.get(flightKey);
   if (ongoing) return ongoing;
   const task = (async () => {
-  // Check if cups available by trying fetch; if python missing, _fetchJobs will return {}
+  // Fetch errors must remain distinguishable from a genuinely empty queue.
   initHistory();
 
   const snapshots: Record<number, Record<string, any>> = {};
   const failures: string[] = [];
+  let truncated = false;
   const jobSets = includeCompleted ? (["not-completed", "completed"] as const) : (["not-completed"] as const);
   for (const which of jobSets) {
     try {
       const jobs = await _fetchJobs(which);
+      truncated ||= Object.keys(jobs).length >= 1000;
       Object.assign(snapshots, jobs);
     } catch (exc: any) {
       failures.push(`${which}: ${exc?.message ?? String(exc)}`);
@@ -327,10 +329,7 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
     if (row.job_id >= 0) rows.push(row);
   }
 
-  if (!rows.length) {
-    if (includeCompleted) prunePrintHistory();
-    return 0;
-  }
+  const reconcile = includeCompleted && !failures.length && !truncated;
 
   const db = connect();
   try {
@@ -347,10 +346,10 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
       ON CONFLICT(history_key) DO UPDATE SET
         job_id=excluded.job_id,
         printer=excluded.printer,
-        document=excluded.document,
-        user_name=excluded.user_name,
-        source=excluded.source,
-        origin_host=excluded.origin_host,
+        document=CASE WHEN excluded.document NOT IN ('', 'Untitled job') THEN excluded.document ELSE print_history.document END,
+        user_name=CASE WHEN excluded.user_name != '' THEN excluded.user_name ELSE print_history.user_name END,
+        source=CASE WHEN excluded.user_name != '' OR excluded.origin_host != '' THEN excluded.source ELSE print_history.source END,
+        origin_host=CASE WHEN excluded.origin_host != '' THEN excluded.origin_host ELSE print_history.origin_host END,
         state=excluded.state,
         size_bytes=CASE WHEN excluded.size_bytes > 0 THEN excluded.size_bytes ELSE print_history.size_bytes END,
         pages=CASE WHEN excluded.pages > 0 THEN excluded.pages ELSE print_history.pages END,
@@ -358,10 +357,10 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
         processing_at=CASE WHEN excluded.processing_at > 0 THEN excluded.processing_at ELSE print_history.processing_at END,
         completed_at=CASE WHEN excluded.completed_at > 0 THEN excluded.completed_at ELSE print_history.completed_at END,
         updated_at=excluded.updated_at
-      WHERE print_history.document != excluded.document
-         OR print_history.user_name != excluded.user_name
-         OR print_history.source != excluded.source
-         OR print_history.origin_host != excluded.origin_host
+      WHERE (excluded.document NOT IN ('', 'Untitled job') AND print_history.document != excluded.document)
+         OR (excluded.user_name != '' AND print_history.user_name != excluded.user_name)
+         OR ((excluded.user_name != '' OR excluded.origin_host != '') AND print_history.source != excluded.source)
+         OR (excluded.origin_host != '' AND print_history.origin_host != excluded.origin_host)
          OR print_history.state != excluded.state
          OR (excluded.size_bytes > 0 AND print_history.size_bytes != excluded.size_bytes)
          OR (excluded.pages > 0 AND print_history.pages != excluded.pages)
@@ -373,6 +372,15 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
       for (const row of rows) {
         const res = stmt.run(row);
         totalChanges += res.changes;
+      }
+      if (reconcile) {
+        const present = new Set(rows.map(row => row.history_key));
+        const previous = db.query("SELECT history_key FROM print_history WHERE printer = ? AND state IN ('pending', 'held', 'printing', 'stopped')").all(printerName) as Array<{ history_key: string }>;
+        const missing = db.prepare("UPDATE print_history SET state = 'unknown', updated_at = ? WHERE history_key = ?");
+        for (const row of previous) {
+          // CUPS no longer has this job. Its physical outcome cannot be inferred.
+          if (!present.has(row.history_key)) totalChanges += missing.run(Math.floor(Date.now() / 1000), row.history_key).changes;
+        }
       }
       return totalChanges;
     });

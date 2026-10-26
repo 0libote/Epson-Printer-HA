@@ -1,38 +1,37 @@
 import * as stylex from "@stylexjs/stylex";
 
 // ————————————————————————————————————————————————
-// Print Room — design tokens
-// A calm device console for a home-lab printer appliance.
+// Print Room — neutral surfaces, blue actions and semantic device states.
 // Components only ever read `vars.*`; light/dark themes override them.
 // ————————————————————————————————————————————————
 export const vars = stylex.defineVars({
   // surfaces
-  bg: "#f6f5f2",
-  bgSunken: "#eeede9",
+  bg: "#f4f5f6",
+  bgSunken: "#e9ebee",
   panel: "#ffffff",
-  panelHover: "#fafaf9",
+  panelHover: "#f8f9fa",
   overlay: "rgba(20, 22, 26, 0.45)",
 
   // text
-  text: "#282733",
-  textSecondary: "#64616e",
-  textTertiary: "#76727e",
+  text: "#25282d",
+  textSecondary: "#575d66",
+  textTertiary: "#626973",
 
   // lines
-  line: "#e7e5e0",
-  lineStrong: "#d7d4de",
+  line: "#dfe2e6",
+  lineStrong: "#bdc3cc",
 
   // accent — violet for primary actions and focus
-  accent: "#6554c0",
-  accentHover: "#5040a4",
-  accentSoft: "#f0ecfa",
+  accent: "#315f9c",
+  accentHover: "#264b7d",
+  accentSoft: "#eaf0f8",
   accentText: "#ffffff",
   onAccent: "#ffffff",
 
   // scan accent — deep teal
-  teal: "#416c66",
-  tealHover: "#305951",
-  tealSoft: "#edf4f1",
+  teal: "#315f9c",
+  tealHover: "#264b7d",
+  tealSoft: "#eaf0f8",
 
   // semantics
   good: "#237957",
@@ -43,74 +42,74 @@ export const vars = stylex.defineVars({
   badSoft: "#fdecec",
 
   // shape + depth
-  radiusSm: "8px",
-  radiusMd: "12px",
-  radiusLg: "18px",
+  radiusSm: "6px",
+  radiusMd: "8px",
+  radiusLg: "8px",
   radiusFull: "9999px",
-  shadowSm: "0 1px 2px rgba(23, 24, 26, 0.06)",
-  shadowMd: "0 1px 2px rgba(23, 24, 26, 0.06), 0 8px 24px -12px rgba(23, 24, 26, 0.18)",
+  shadowSm: "none",
+  shadowMd: "0 8px 28px rgba(0, 0, 0, 0.16)",
 
   // type
-  fontSans: `Inter, system-ui, -apple-system, "Segoe UI", sans-serif`,
-  fontMono: `"JetBrains Mono", ui-monospace, SFMono-Regular, monospace`,
+  fontSans: `"Segoe UI", system-ui, -apple-system, sans-serif`,
+  fontMono: `"Segoe UI", system-ui, -apple-system, sans-serif`,
 });
 
 export const lightTheme = stylex.createTheme(vars, {
-  bg: "#f6f5f2",
-  bgSunken: "#eeede9",
+  bg: "#f4f5f6",
+  bgSunken: "#e9ebee",
   panel: "#ffffff",
-  panelHover: "#fafaf9",
+  panelHover: "#f8f9fa",
   overlay: "rgba(20, 22, 26, 0.45)",
-  text: "#282733",
-  textSecondary: "#64616e",
-  textTertiary: "#76727e",
-  line: "#e7e5e0",
-  lineStrong: "#d7d4de",
-  accent: "#6554c0",
-  accentHover: "#5040a4",
-  accentSoft: "#f0ecfa",
+  text: "#25282d",
+  textSecondary: "#575d66",
+  textTertiary: "#626973",
+  line: "#dfe2e6",
+  lineStrong: "#bdc3cc",
+  accent: "#315f9c",
+  accentHover: "#264b7d",
+  accentSoft: "#eaf0f8",
   accentText: "#ffffff",
   onAccent: "#ffffff",
-  teal: "#416c66",
-  tealHover: "#305951",
-  tealSoft: "#edf4f1",
+  teal: "#315f9c",
+  tealHover: "#264b7d",
+  tealSoft: "#eaf0f8",
   good: "#237957",
   goodSoft: "#edf6ef",
   warn: "#a65017",
   warnSoft: "#fdf0e6",
   bad: "#e03131",
   badSoft: "#fdecec",
-  shadowSm: "0 1px 2px rgba(23, 24, 26, 0.06)",
-  shadowMd: "0 1px 2px rgba(23, 24, 26, 0.06), 0 8px 24px -12px rgba(23, 24, 26, 0.18)",
+  shadowSm: "none",
+  shadowMd: "0 8px 28px rgba(0, 0, 0, 0.16)",
 });
 
 export const darkTheme = stylex.createTheme(vars, {
-  bg: "#16151b",
-  bgSunken: "#1c1b23",
-  panel: "#211f29",
-  panelHover: "#272430",
+  bg: "#18191b",
+  bgSunken: "#151618",
+  panel: "#202225",
+  panelHover: "#282b2f",
   overlay: "rgba(0, 0, 0, 0.6)",
-  text: "#f0edf5",
-  textSecondary: "#bdb6cb",
-  textTertiary: "#a29aae",
-  line: "#35313e",
-  lineStrong: "#4c4659",
-  accent: "#b8a6f3",
-  accentHover: "#cfc0fb",
-  accentSoft: "#302840",
-  accentText: "#16151b",
-  onAccent: "#16151b",
-  teal: "#93cec0",
-  tealHover: "#afe0d4",
-  tealSoft: "#233d36",
-  good: "#51cf66",
-  goodSoft: "#12291a",
-  warn: "#ffa94d",
-  warnSoft: "#2f2012",
-  bad: "#ff6b6b",
-  badSoft: "#331414",
-  shadowSm: "0 1px 2px rgba(0, 0, 0, 0.4)",
-  shadowMd: "0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -12px rgba(0, 0, 0, 0.6)",
+  text: "#f0f1f2",
+  textSecondary: "#bbc0c8",
+  textTertiary: "#9ba2ad",
+  line: "#373a3f",
+  lineStrong: "#555b65",
+  accent: "#9cbded",
+  accentHover: "#bad2f4",
+  accentSoft: "#293747",
+  accentText: "#18191b",
+  onAccent: "#18191b",
+  teal: "#9cbded",
+  tealHover: "#bad2f4",
+  tealSoft: "#293747",
+  good: "#8dcca7",
+  goodSoft: "#24362c",
+  warn: "#e7bd7c",
+  warnSoft: "#3a3022",
+  bad: "#f09b9b",
+  badSoft: "#3d2729",
+  shadowSm: "none",
+  shadowMd: "0 8px 28px rgba(0, 0, 0, 0.3)",
 });
 
 export const themes = {

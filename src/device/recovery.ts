@@ -3,7 +3,7 @@ export type DeviceIdentity = { uuid?: string; mac?: string; model?: string | nul
 export type RecoverySettings = { ip: string; identity?: DeviceIdentity };
 export type RecoveryStatus = { state: "waiting" | "checking" | "searching" | "ready" | "recovered" | "ambiguous" | "offline" | "busy" | "failed"; message: string; lastChecked: string | null; lastRecovered: string | null; previousAddress: string | null };
 export function identityOf(p: DiscoveredPrinter): DeviceIdentity {
- return { ...(p.uuid ? { uuid: p.uuid } : {}), ...(p.mac ? { mac: p.mac } : {}), model: p.model };
+ return { ...(p.uuid ? { uuid: p.uuid } : {}), ...(p.mac ? { mac: p.mac } : {}), ...(p.model ? { model: p.model } : {}) };
 }
 export function sameDevice(identity: DeviceIdentity, p: DiscoveredPrinter): boolean {
  // A conflicting UUID cannot be overridden by a coincidental matching MAC.

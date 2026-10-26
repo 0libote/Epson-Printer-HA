@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { themes, type ThemeName } from "./tokens.stylex";
 
 const ThemeContext = createContext<{ theme: ThemeName; setTheme: (t: ThemeName) => void; toggle: () => void }>({
-  theme: "light",
+  theme: "dark",
   setTheme: () => {},
   toggle: () => {},
 });
@@ -17,10 +17,7 @@ function initialTheme(): ThemeName {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved === "light" || saved === "dark") return saved;
   } catch {}
-  try {
-    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
-  } catch {}
-  return "light";
+  return "dark";
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
