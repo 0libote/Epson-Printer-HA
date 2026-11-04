@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 
 let history: typeof import("../../src/history.ts");
-const fetchCupsJobs = (await import("../../src/history.ts"))._fetchJobs;
+const fetchCupsJobs = (await import("../../src/history.ts"))._fetchCupsJobs;
 
 describe("history", () => {
   let tmp: string;
@@ -19,6 +19,7 @@ describe("history", () => {
   });
 
   afterEach(() => {
+    history.__setFetchJobs(fetchCupsJobs);
     try { rmSync(tmp, { recursive: true, force: true }); } catch {}
     delete process.env.APP_DATA;
   });

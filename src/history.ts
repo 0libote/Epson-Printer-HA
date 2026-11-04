@@ -468,6 +468,7 @@ function formatBytes(value: number): string {
 }
 
 // For testing exports
+export const _fetchCupsJobs = fetchJobs;
 export const _queueFromUri = queueFromUri;
 export const _sourceFor = sourceFor;
 export const _safeInt = safeInt;
