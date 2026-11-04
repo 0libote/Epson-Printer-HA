@@ -345,3 +345,21 @@ test("queue resume uses authentication checks and does not resubmit any document
   expect(await resumed.json()).toMatchObject({ ok: true });
   expect(submitted).toHaveLength(0);
 });
+
+test("queue rename rejects new jobs before inspecting unfinished jobs", async () => {
+  const calls: string[][] = [];
+  const backend = createCupsBackend((async (args: string[]) => {
+    calls.push(args);
+    return commandResult(true, args[0] === "lpstat" ? "Home-42 epson 100" : "");
+  }) as any);
+  const result = await backend.prepareQueueRename("Home");
+  expect(result.ok).toBe(false);
+  expect(result.stderr).toContain("unfinished print jobs");
+  expect(calls).toEqual([["cupsreject", "Home"], ["lpstat", "-o", "Home"]]);
+});
+
+test("queue rename fails closed if job inspection fails", async () => {
+  const backend = createCupsBackend((async (args: string[]) =>
+    commandResult(args[0] !== "lpstat", "", "offline")) as any);
+  expect((await backend.prepareQueueRename("Home")).ok).toBe(false);
+});

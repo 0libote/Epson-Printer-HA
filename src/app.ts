@@ -314,9 +314,49 @@ function networkSharingEnabledSync(): boolean {
   return ["1", "true", "yes", "on"].includes(s);
 }
 function savePrinterIp(ip:string){ const data={...savedSettingsSync()}; if(data.printer_ip !== ip) delete data.printer_identity; data.printer_ip=ip; saveSettingsSync(data); }
-async function configureCups(printerIp:string, opts:{printerName?:string|null;displayName?:string|null;sharePrinter?:boolean|null;oldPrinterName?:string}={}):Promise<[boolean,string]> {
+async function configureCups(printerIp:string, opts:{printerName?:string|null;displayName?:string|null;sharePrinter?:boolean|null}={}):Promise<[boolean,string]> {
  return cupsBackend.configureQueue(printerIp, { printerName: opts.printerName || currentPrinterName(), displayName: opts.displayName || currentDisplayName(),
- sharePrinter: opts.sharePrinter ?? networkSharingEnabledSync(), oldPrinterName: opts.oldPrinterName });
+ sharePrinter: opts.sharePrinter ?? networkSharingEnabledSync() });
+}
+async function applyPrinterSettings(next: Record<string, any>): Promise<[boolean, string]> {
+  const previousIp = currentPrinterIp();
+  const previous = { printerName: currentPrinterName(), displayName: currentDisplayName(), sharePrinter: networkSharingEnabledSync() };
+  const options = { printerName: next.printer_name ?? previous.printerName, displayName: next.display_name ?? previous.displayName, sharePrinter: next.share_printer ?? previous.sharePrinter };
+  const renaming = options.printerName !== previous.printerName;
+  let committed = false;
+  try {
+    if (renaming) {
+      const ready = await cupsBackend.prepareQueueRename(previous.printerName);
+      if (!ready.ok) return [false, ready.stderr || "Could not prepare the old print queue."];
+    }
+    const [ok, log] = await configureCups(next.printer_ip, options);
+    if (!ok) return [false, log];
+    try {
+      saveSettingsSync(next);
+    } catch (error) {
+      // The saved configuration remains authoritative if persistence fails.
+      const [restored] = previousIp ? await configureCups(previousIp, previous) : [false];
+      if (renaming || !previousIp) {
+        const empty = await cupsBackend.prepareQueueRename(options.printerName);
+        if (empty.ok) await cupsBackend.deleteQueue(options.printerName);
+        else await cupsBackend.acceptQueue(options.printerName); // Keep any jobs accepted by the new queue.
+      }
+      clearStatusCaches();
+      console.error("[settings] Could not save printer settings", error);
+      return [false, restored
+        ? "Could not save printer settings. The previous CUPS configuration was restored. Check the data volume."
+        : "Could not save printer settings or restore the previous CUPS configuration. Check the data volume and re-save settings before printing."];
+    }
+    committed = true;
+    clearStatusCaches();
+    if (renaming) {
+      const removed = await cupsBackend.deleteQueue(previous.printerName);
+      if (!removed.ok) return [true, "Settings saved. The old queue is still present but rejects new jobs; remove it through CUPS when available."];
+    }
+    return [true, ""];
+  } finally {
+    if (renaming && !committed) await cupsBackend.acceptQueue(previous.printerName);
+  }
 }
 // recentScans with mtime cache (5s) — /api/status polls this constantly
 let _recentScansCache: { at: number; value: Array<{name:string;path:string}> } | null = null;
@@ -738,9 +778,14 @@ app.post("/setup", async(c)=>{
   }
   let setupOk=false; let setupMsg="";
   const lock=await withOperationLock("cups-config", async()=>{
-    const [ok,log]=await configureCups(printerIp);
-    if(ok){ savePrinterIp(printerIp); const selected = cachedDiscoveredPrinter(printerIp); if(selected) { const data = savedSettingsSync(); data.printer_identity = identityOf({ ...selected, mac: selected.mac || arpIdentity(printerIp) }); saveSettingsSync(data); } clearStatusCaches(); setupOk=true; setupMsg=`Printer saved at ${printerIp}. CUPS is configured.`; if(!wantsJson(c)) setFlash(c,"success",setupMsg); }
-    else { setupOk=false; setupMsg=`CUPS setup failed; the previous printer setting was kept: ${(log||"unknown error").slice(-800)}`; if(!wantsJson(c)) setFlash(c,"error",setupMsg); }
+    const data: Record<string, any> = { ...savedSettingsSync(), printer_ip: printerIp };
+    if (currentPrinterIp() !== printerIp) delete data.printer_identity;
+    const selected = cachedDiscoveredPrinter(printerIp);
+    if (selected) data.printer_identity = identityOf({ ...selected, mac: selected.mac || arpIdentity(printerIp) });
+    const [ok,log]=await applyPrinterSettings(data);
+    setupOk=ok;
+    setupMsg=ok ? `Printer saved at ${printerIp}. CUPS is configured.` : `CUPS setup failed: ${(log||"unknown error").slice(-800)}`;
+    if(!wantsJson(c)) setFlash(c,ok?"success":"error",setupMsg);
   });
   if(!lock.acquired){
     const msg="Printer settings are already being changed. Wait for that operation to finish.";
@@ -774,17 +819,11 @@ app.post("/client-settings", async(c)=>{
   const sharePrinter=(body as any)["share_printer"]==="on";
   let okResult=false; let msgResult="";
   const lock=await withOperationLock("cups-config", async()=>{
-    const oldName=currentPrinterName();
-    const [ok,log]=await configureCups(printerIp,{printerName, displayName, sharePrinter, oldPrinterName:oldName});
-    if(!ok){ okResult=false; msgResult=`Network printing settings were not applied: ${(log||"unknown error").slice(-800)}`; if(!wantsJson(c)) setFlash(c,"error",msgResult); return; }
-    const data=savedSettingsSync();
-    data.printer_name=printerName;
-    data.display_name=displayName;
-    data.share_printer=sharePrinter;
-    saveSettingsSync(data);
-    clearStatusCaches();
-    okResult=true; msgResult="Network printing settings applied.";
-    if(!wantsJson(c)) setFlash(c,"success",msgResult);
+    const data={ ...savedSettingsSync(), printer_ip: currentPrinterIp(), printer_name: printerName, display_name: displayName, share_printer: sharePrinter };
+    const [ok,log]=await applyPrinterSettings(data);
+    okResult=ok;
+    msgResult=ok ? log || "Network printing settings applied." : `Network printing settings were not applied: ${(log||"unknown error").slice(-800)}`;
+    if(!wantsJson(c)) setFlash(c,ok?"success":"error",msgResult);
   });
   if(!lock.acquired){
     const msg="Printer settings are already being changed. Wait for that operation to finish.";

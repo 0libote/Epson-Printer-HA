@@ -6,7 +6,6 @@ PRINTER_NAME="${PRINTER_NAME:-Home_Epson_XP2200}"
 PRINTER_DISPLAY_NAME="${PRINTER_DISPLAY_NAME:-Home Epson XP-2200}"
 PRINT_PROTOCOL="${PRINT_PROTOCOL:-auto}"
 SHARE_PRINTER="${SHARE_PRINTER:-true}"
-OLD_PRINTER_NAME="${OLD_PRINTER_NAME:-}"
 PREFER_ENV_SETTINGS="${PREFER_ENV_SETTINGS:-false}"
 
 lock_root="${CUPS_LOCK_DIR:-/run/epson}"
@@ -180,9 +179,5 @@ lpadmin \
 lpoptions -d "$PRINTER_NAME" >/dev/null 2>&1 || true
 cupsaccept "$PRINTER_NAME" || true
 cupsenable "$PRINTER_NAME" || true
-
-if [[ -n "$OLD_PRINTER_NAME" && "$OLD_PRINTER_NAME" != "$PRINTER_NAME" ]]; then
-  lpadmin -x "$OLD_PRINTER_NAME" >/dev/null 2>&1 || true
-fi
 
 echo "[cups] Queue '$PRINTER_NAME' configured -> $URI using $MODEL (shared=${SHARE_PRINTER})"

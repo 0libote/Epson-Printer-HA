@@ -74,7 +74,7 @@ test('automatic recovery updates existing queue then persistent address and iden
  restores.push(spyOn(core,'cachedPrinterReachable').mockImplementation(async ip=>ip==='192.0.2.44'));
  restores.push(spyOn(discovery,'discoverPrinters').mockResolvedValue({ok:true,printers:[{ip:'192.0.2.44',uuid:'device-123456',model:'Epson XP-2200',ports:[631],likelyEpson:true,detail:'mdns'}],subnets:[],scanned_at:''}));
  const configure=spyOn(core.cupsBackend,'configureQueue').mockResolvedValue([true,'configured']);restores.push(configure);
- const status=await app.deviceRecovery.tick(true);expect(status.state).toBe('recovered');expect(configure).toHaveBeenCalledWith('192.0.2.44',{printerName:'Existing_Queue',displayName:'My Printer',sharePrinter:true,oldPrinterName:undefined});
+ const status=await app.deviceRecovery.tick(true);expect(status.state).toBe('recovered');expect(configure).toHaveBeenCalledWith('192.0.2.44',{printerName:'Existing_Queue',displayName:'My Printer',sharePrinter:true});
  const saved=JSON.parse(readFileSync(join(dir,'settings.json'),'utf8'));expect(saved.printer_ip).toBe('192.0.2.44');expect(saved.printer_identity.uuid).toBe('device-123456');expect(saved.printer_name).toBe('Existing_Queue');
 });
 test('a manual edit during discovery prevents stale recovery from reconfiguring CUPS',async()=>{

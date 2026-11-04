@@ -151,6 +151,95 @@ describe("web - Bun Hono", () => {
     (Bun as any).spawn = originalSpawn;
   });
 
+  for (const route of ["/setup", "/client-settings"]) {
+    test(`${route} restores CUPS when settings cannot be saved`, async () => {
+      const fs = await import("node:fs");
+      const previous = { printer_ip: "192.0.2.10", printer_name: "Old", display_name: "Old printer", share_printer: true };
+      fs.writeFileSync(join(tmp, "settings.json"), JSON.stringify(previous));
+      const client = createClient(appModule.app);
+      const csrf = await getCsrf(client, appModule.app);
+      const configure = spyOn(coreModule.cupsBackend, "configureQueue").mockResolvedValue([true, ""]);
+      const prepare = spyOn(coreModule.cupsBackend, "prepareQueueRename").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+      const accept = spyOn(coreModule.cupsBackend, "acceptQueue").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+      const remove = spyOn(coreModule.cupsBackend, "deleteQueue").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+      const rename = spyOn(fs, "renameSync").mockImplementation(() => { throw new Error("disk full"); });
+      try {
+        const form = new URLSearchParams({ _csrf_token: csrf, printer_ip: "192.0.2.20", printer_name: "New", display_name: "New printer", share_printer: "on" });
+        const response = await client.request(route, { method: "POST", headers: { Accept: "application/json" }, body: form });
+        expect(response.status).toBe(500);
+        expect(JSON.stringify(await response.json())).toContain("previous CUPS configuration was restored");
+        expect(configure).toHaveBeenLastCalledWith(previous.printer_ip, { printerName: "Old", displayName: "Old printer", sharePrinter: true });
+        expect(JSON.parse(fs.readFileSync(join(tmp, "settings.json"), "utf8"))).toEqual(previous);
+        if (route === "/client-settings") {
+          expect(remove).toHaveBeenCalledWith("New");
+          expect(remove).not.toHaveBeenCalledWith("Old");
+          expect(accept).toHaveBeenCalledWith("Old");
+        } else expect(remove).not.toHaveBeenCalled();
+      } finally {
+        for (const spy of [configure, prepare, accept, remove, rename]) spy.mockRestore();
+      }
+    });
+  }
+
+  test("failed rename keeps jobs accepted by the replacement queue and reports failed rollback", async () => {
+    const fs = await import("node:fs");
+    fs.writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10", printer_name: "Old" }));
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const configure = spyOn(coreModule.cupsBackend, "configureQueue").mockResolvedValueOnce([true, ""]).mockResolvedValueOnce([false, "offline"]);
+    const prepare = spyOn(coreModule.cupsBackend, "prepareQueueRename").mockImplementation(async name => ({ ok: name === "Old", stdout: "", stderr: "Unfinished jobs", returncode: name === "Old" ? 0 : 1 }));
+    const accept = spyOn(coreModule.cupsBackend, "acceptQueue").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+    const remove = spyOn(coreModule.cupsBackend, "deleteQueue").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+    const rename = spyOn(fs, "renameSync").mockImplementation(() => { throw new Error("disk full"); });
+    try {
+      const response = await client.request("/client-settings", { method: "POST", headers: { Accept: "application/json" }, body: new URLSearchParams({ _csrf_token: csrf, printer_name: "New", display_name: "New printer" }) });
+      expect(response.status).toBe(500);
+      expect((await response.json()).error).toContain("or restore the previous CUPS configuration");
+      expect(remove).not.toHaveBeenCalled();
+      expect(accept).toHaveBeenCalledWith("New");
+      expect(accept).toHaveBeenCalledWith("Old");
+    } finally { for (const spy of [configure, prepare, accept, remove, rename]) spy.mockRestore(); }
+  });
+
+  test("queue rename refuses unfinished jobs and restores acceptance", async () => {
+    const fs = await import("node:fs");
+    fs.writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10", printer_name: "Old" }));
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const prepare = spyOn(coreModule.cupsBackend, "prepareQueueRename").mockResolvedValue({ ok: false, stdout: "", stderr: "Unfinished jobs", returncode: 1 });
+    const accept = spyOn(coreModule.cupsBackend, "acceptQueue").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+    const configure = spyOn(coreModule.cupsBackend, "configureQueue").mockResolvedValue([true, ""]);
+    try {
+      const response = await client.request("/client-settings", { method: "POST", headers: { Accept: "application/json" }, body: new URLSearchParams({ _csrf_token: csrf, printer_name: "New", display_name: "New printer" }) });
+      expect(response.status).toBe(500);
+      expect(configure).not.toHaveBeenCalled();
+      expect(accept).toHaveBeenCalledWith("Old");
+      expect(appModule.currentPrinterName()).toBe("Old");
+    } finally { for (const spy of [prepare, accept, configure]) spy.mockRestore(); }
+  });
+
+  test("queue deletion waits until the new settings are saved", async () => {
+    const fs = await import("node:fs");
+    fs.writeFileSync(join(tmp, "settings.json"), JSON.stringify({ printer_ip: "192.0.2.10", printer_name: "Old" }));
+    const client = createClient(appModule.app);
+    const csrf = await getCsrf(client, appModule.app);
+    const prepare = spyOn(coreModule.cupsBackend, "prepareQueueRename").mockResolvedValue({ ok: true, stdout: "", stderr: "", returncode: 0 });
+    const configure = spyOn(coreModule.cupsBackend, "configureQueue").mockImplementation(async () => {
+      expect(JSON.parse(fs.readFileSync(join(tmp, "settings.json"), "utf8")).printer_name).toBe("Old");
+      return [true, ""];
+    });
+    const remove = spyOn(coreModule.cupsBackend, "deleteQueue").mockImplementation(async name => {
+      expect(name).toBe("Old");
+      expect(JSON.parse(fs.readFileSync(join(tmp, "settings.json"), "utf8")).printer_name).toBe("New");
+      return { ok: true, stdout: "", stderr: "", returncode: 0 };
+    });
+    try {
+      const response = await client.request("/client-settings", { method: "POST", headers: { Accept: "application/json" }, body: new URLSearchParams({ _csrf_token: csrf, printer_name: "New", display_name: "New printer" }) });
+      expect(response.status).toBe(200);
+      expect(remove).toHaveBeenCalledTimes(1);
+    } finally { for (const spy of [prepare, configure, remove]) spy.mockRestore(); }
+  });
+
   test("print upload uses isolated temporary file", async () => {
     // set printer ip
     const { writeFileSync } = await import("node:fs");

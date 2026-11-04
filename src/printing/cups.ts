@@ -76,15 +76,37 @@ async function resumeQueue(printerName: string): Promise<CommandResult> {
   return runCommand(["cupsaccept", printerName], 10_000);
 }
 
-async function configureQueue(printerIp: string, opts: { printerName: string; displayName: string; sharePrinter: boolean; oldPrinterName?: string }): Promise<[boolean, string]> {
-  try { validatePrinterAddress(printerIp); validateQueue(opts.printerName); if (opts.oldPrinterName) validateQueue(opts.oldPrinterName); } catch { return [false, "Invalid printer address or queue name"]; }
+// Stop new LAN submissions before checking whether deleting the queue is safe.
+async function prepareQueueRename(printerName: string): Promise<CommandResult> {
+  validateQueue(printerName);
+  const rejected = await runCommand(["cupsreject", printerName], 10_000);
+  if (!rejected.ok) return rejected;
+  try {
+    if ((await listJobs(printerName)).length) {
+      return commandResult(false, "", "Wait for unfinished print jobs before changing the queue name.", 1);
+    }
+    return commandResult(true);
+  } catch {
+    return commandResult(false, "", "Could not check unfinished print jobs. Try again shortly.", 1);
+  }
+}
+async function acceptQueue(printerName: string) {
+  validateQueue(printerName);
+  return runCommand(["cupsaccept", printerName], 10_000);
+}
+async function deleteQueue(printerName: string) {
+  validateQueue(printerName);
+  return runCommand(["lpadmin", "-x", printerName], 10_000);
+}
+
+async function configureQueue(printerIp: string, opts: { printerName: string; displayName: string; sharePrinter: boolean; }): Promise<[boolean, string]> {
+  try { validatePrinterAddress(printerIp); validateQueue(opts.printerName); } catch { return [false, "Invalid printer address or queue name"]; }
   const env:Record<string,string>={...(process.env as Record<string,string>)};
   env.PRINTER_IP=printerIp;
   env.PRINTER_NAME=opts.printerName;
   env.PRINTER_DISPLAY_NAME=opts.displayName;
   const share=opts.sharePrinter;
   env.SHARE_PRINTER=share?"true":"false";
-  env.OLD_PRINTER_NAME=opts.oldPrinterName||"";
   env.PREFER_ENV_SETTINGS="true";
   try{
     const proc=Bun.spawn(["/usr/local/bin/configure-cups.sh"],{env, stdout:"pipe", stderr:"pipe"});
@@ -97,6 +119,6 @@ async function configureQueue(printerIp: string, opts: { printerName: string; di
   }catch(exc:any){ return [false,String(exc?.message ?? exc)]; }
 }
 return { id: "cups", getStatus: cupsPrinterStatus, cachedStatus: cachedCupsPrinterStatus,
- configureQueue, listJobs, cachedJobs: cachedListJobs, submitJob: submitPrint, cancelJob, resumeQueue,
+ configureQueue, prepareQueueRename, acceptQueue, deleteQueue, listJobs, cachedJobs: cachedListJobs, submitJob: submitPrint, cancelJob, resumeQueue,
  clearCache() { cupsStatusCache.clear(); cupsStatusInflight.clear(); jobsCache.clear(); jobsInflight.clear(); } };
 }
