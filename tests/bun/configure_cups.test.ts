@@ -8,7 +8,7 @@ function makeCommand(path: string, body: string) {
   chmodSync(path, 0o755);
 }
 
-async function runConfigure(tmp: string, protocol: string, pythonBody: string): Promise<{ result: any; args: string[] }> {
+async function runConfigure(tmp: string, protocol: string, pythonBody: string, oldPrinterName = ""): Promise<{ result: any; args: string[] }> {
   const commands = join(tmp, "bin");
   mkdirSync(commands, { recursive: true });
   const record = join(tmp, "lpadmin.args");
@@ -16,7 +16,7 @@ async function runConfigure(tmp: string, protocol: string, pythonBody: string): 
   makeCommand(join(commands, "python3"), pythonBody);
   makeCommand(join(commands, "lpstat"), "exit 0");
   makeCommand(join(commands, "lpinfo"), "echo 'epson.ppd Epson XP-2200 Series'");
-  makeCommand(join(commands, "lpadmin"), 'printf "%s\\n" "$@" > "$LPADMIN_RECORD"');
+  makeCommand(join(commands, "lpadmin"), 'printf "%s\\n" "$@" >> "$LPADMIN_RECORD"');
   for (const name of ["lpoptions", "cupsaccept", "cupsenable"]) makeCommand(join(commands, name), "exit 0");
 
   const env = {
@@ -24,6 +24,7 @@ async function runConfigure(tmp: string, protocol: string, pythonBody: string): 
     PATH: `${commands}:${process.env.PATH}`,
     PRINTER_IP: "192.0.2.10",
     PRINTER_NAME: "Test_Epson",
+    OLD_PRINTER_NAME: oldPrinterName,
     PRINT_PROTOCOL: protocol,
     LPADMIN_RECORD: record,
     PREFER_ENV_SETTINGS: "true",
@@ -45,6 +46,15 @@ function assertIpp(args: string[]) {
 }
 
 describe("configure-cups", () => {
+  test("configuration leaves the old queue intact until settings are committed", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "cups-test-"));
+    try {
+      const { result, args } = await runConfigure(tmp, "ipp", "exit 0", "Old_Epson");
+      expect(result.returncode).toBe(0);
+      expect(args).not.toContain("-x");
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+
   test("sleeping printer still gets ipp queue", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "cups-test-"));
     try {
