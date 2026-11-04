@@ -110,7 +110,9 @@ test('background dashboard sampling does not discover scanners during acquisitio
  restores.push(spyOn(core,'cachedCupsPrinterStatus').mockResolvedValue({ok:true,state:'ready',detail:'idle'}));
  restores.push(spyOn(core,'cachedListJobs').mockResolvedValue([]));
  app._getScanJobsForTest().set('active',{id:'active',state:'scanning',printerIp:'192.0.2.10',dpi:300,mode:'Color',fmt:'png',createdAt:Date.now(),cancelRequested:false,progress:'Scanning'});
- await app.app.request('/api/status?cached=1');await Bun.sleep(0);
+ await app.app.request('/api/status?cached=1');
+ // Join the sampler before asserting its cached result; one timer tick is not a completion barrier.
+ await app.app.request('/api/status');
  const data=await (await app.app.request('/api/status?cached=1')).json() as any;
  expect(data.scanner.state).toBe('scanning');expect(scanner).not.toHaveBeenCalled();
 });
