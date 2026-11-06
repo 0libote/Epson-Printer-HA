@@ -10,6 +10,7 @@ const WSDD_SH = readFileSync(join(import.meta.dir, "../../scripts/run-wsdd.sh"),
 describe("windows discovery", () => {
   test("samba shares CUPS printers to guests without a server-side driver", () => {
     expect(SMB).toContain("printing = cups");
+    expect(SMB).toContain("printcap name = /run/cups/printcap");
     expect(SMB).toContain("load printers = yes");
     expect(SMB).toContain("use client driver = yes");
     expect(SMB).toContain("guest ok = yes");
