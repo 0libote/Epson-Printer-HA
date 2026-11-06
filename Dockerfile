@@ -17,10 +17,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-cups \
     python3-pil \
     python3-pip \
+    samba \
     sane-airscan \
     sane-utils \
     supervisor \
     unzip \
+    wsdd \
     && rm -rf /var/lib/apt/lists/*
 
 # Epson's drivers and Scan 2 bundle are x86-64 only — fail fast on arm with a
@@ -47,19 +49,22 @@ RUN bun install --frozen-lockfile --ignore-scripts
 COPY src ./src
 COPY frontend ./frontend
 COPY scripts/configure-cups.sh /usr/local/bin/configure-cups.sh
+COPY scripts/run-wsdd.sh /usr/local/bin/run-wsdd.sh
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY config/cupsd.conf /etc/cups/cupsd.conf
+COPY config/smb.conf /etc/samba/smb.conf
 COPY config/net.conf /etc/sane.d/net.conf
 COPY config/bridge-dll.conf /etc/sane.d/epson-bridge/dll.conf
 COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
 RUN bun run build
 
-RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh \
+RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-wsdd.sh \
     && groupadd --system epson 2>/dev/null || true \
     && useradd --system --gid epson --home-dir /nonexistent --shell /usr/sbin/nologin epson 2>/dev/null || true \
     && usermod -aG lp epson 2>/dev/null || true \
-    && mkdir -p /data/scans /data/uploads /var/cache/cups /var/spool/cups /var/log/supervisor \
+    && mkdir -p /data/scans /data/uploads /var/cache/cups /var/spool/cups /var/log/supervisor /var/spool/samba /var/log/samba \
+    && chmod 1777 /var/spool/samba \
     && printf 'airscan\nepsonds\nnet\n' > /etc/sane.d/dll.conf
 
 ENV WEB_PORT=8080 \
@@ -71,6 +76,6 @@ ENV WEB_PORT=8080 \
 EXPOSE 8080 631
 VOLUME ["/data", "/var/cache/cups", "/var/spool/cups"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD curl -fsS "http://127.0.0.1:${WEB_PORT:-8080}/api/health" >/dev/null || exit 1
-ARG BUILD_NUMBER=291
+ARG BUILD_NUMBER=292
 LABEL org.opencontainers.image.version="build-${BUILD_NUMBER}"
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

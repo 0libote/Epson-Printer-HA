@@ -7,6 +7,7 @@ Epson Printer Hub is intended for a trusted private LAN.
 - Set `SESSION_COOKIE_SECURE=true` when the reverse proxy provides HTTPS and the dashboard is not also accessed directly over HTTP.
 - Leaving either credential blank disables dashboard authentication. This is convenient on a trusted household LAN, but anyone who can reach the dashboard can then submit print jobs, start scans and change the configured queue.
 - CUPS permits LAN clients to print and read queue status. Queue administration is restricted to localhost, and all operations not explicitly allowed by the policy are denied.
+- Windows discovery runs a Samba print-only share with guest printing and no server-side driver (the client renders with its built-in class driver), plus a WS-Discovery announcer. Both listen on the LAN with no credentials, matching the trusted-LAN posture above: enable `WEB_USERNAME`/`WEB_PASSWORD` for the dashboard if untrusted devices share the network, and do not forward SMB (TCP 445) or WS-Discovery (UDP 3702) beyond it.
 - The web dashboard and history collector run as an unprivileged service account. CUPS, D-Bus and Avahi retain only the privileges their system daemons require.
 - Both Bun processes start with `--disallow-code-generation-from-strings`, so `eval()` and `new Function()` throw instead of executing. The codebase uses neither; a future dependency attempting runtime code generation fails loudly rather than running.
 - The main `epson-printer-ha` image contains no Epson Scan 2 proprietary network plug-in and has no package-install endpoint.

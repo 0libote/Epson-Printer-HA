@@ -160,7 +160,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
             </button>
           </div>
           <div className="device-instructions">
-            <details><summary>Windows</summary><p>Open Settings, then Bluetooth &amp; devices, Printers &amp; scanners, and Add device.</p><p>For manual setup, use this address:</p><code>{httpUri}</code></details>
+            <details><summary>Windows</summary><p>Open Settings, then Bluetooth &amp; devices, Printers &amp; scanners, and Add device — <strong>{displayName}</strong> appears on its own. If it doesn't, use this address:</p><code>{httpUri}</code></details>
             <details><summary>Mac</summary><p>Open System Settings, then Printers &amp; Scanners and Add Printer. Look for <strong>{displayName}</strong>.</p></details>
           </div>
         </>
