@@ -4,8 +4,9 @@
 # refresh, because ResolveMatch replies arrive with tunnel/bridge addresses.
 set -eu
 IFACE=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
+WSDD=$(command -v wsdd)
 if [ -n "${IFACE}" ]; then
-  exec /usr/sbin/wsdd -i "${IFACE}" -s
+  exec ${WSDD} -i "${IFACE}" -s
 else
-  exec /usr/sbin/wsdd -s
+  exec ${WSDD} -s
 fi
