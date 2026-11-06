@@ -22,6 +22,7 @@ describe("windows discovery", () => {
 
   test("supervisor runs smbd and wsdd", () => {
     expect(SUPERVISOR).toContain("[program:smbd]");
+    expect(SUPERVISOR).toContain("smbd --interactive");
     expect(SUPERVISOR).toContain("[program:wsdd]");
   });
 
