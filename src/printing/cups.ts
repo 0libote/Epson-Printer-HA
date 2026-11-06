@@ -42,6 +42,7 @@ async function listJobs(printerName: string): Promise<Array<{ id: string; owner:
 
 const jobsCache = new Map<string, { exp: number; value: any }>();
 const jobsInflight = new Map<string, Promise<any>>();
+function clearCaches() { cupsStatusCache.clear(); cupsStatusInflight.clear(); jobsCache.clear(); jobsInflight.clear(); }
 async function cachedListJobs(printerName: string) {
   return ttlCached(jobsCache, jobsInflight, printerName, 4_000, () => listJobs(printerName));
 }
@@ -51,7 +52,7 @@ async function submitPrint(printerName: string, path: string, opts: Partial<Prin
   if (opts.copies !== undefined && (!Number.isInteger(opts.copies) || opts.copies < 1 || opts.copies > 99)) return commandResult(false, "", "Invalid copy count", 2);
   let validated: PrintOptions;
   try { validated = parsePrintOptions(opts); } catch (error) { return commandResult(false, "", (error as Error).message, 2); }
-  const copies = Math.max(1, Math.min(opts.copies ?? 1, 99));
+  const copies = validated.copies;
   const title = (opts.title ?? path.split("/").pop() ?? "WebUI print").slice(0, 255) || "WebUI print";
   const args = ["lp", "-U", "epson", "-d", printerName, "-t", title, "-n", String(copies)];
   if (opts.grayscale) args.push("-o", "Ink=MONO");
@@ -59,21 +60,27 @@ async function submitPrint(printerName: string, path: string, opts: Partial<Prin
     "-o", `fit-to-page=${validated.scaling === "fit"}`, "-o", "sides=one-sided", "-o", "Collate=True");
   if (validated.pages) args.push("-o", `page-ranges=${validated.pages}`);
   args.push(path);
-  return runCommand(args, 60_000);
+  const result = await runCommand(args, 60_000);
+  clearCaches();
+  return result;
 }
 
 async function cancelJob(jobId: string): Promise<CommandResult> {
   if (!/^[A-Za-z0-9_.-]+-\d+$/.test(jobId)) {
     return commandResult(false, "", "Invalid job id", 2);
   }
-  return runCommand(["cancel", jobId], 10_000);
+  const result = await runCommand(["cancel", jobId], 10_000);
+  clearCaches();
+  return result;
 }
 
 async function resumeQueue(printerName: string): Promise<CommandResult> {
   try { validateQueue(printerName); } catch { return commandResult(false, "", "Invalid queue name", 2); }
   const enabled = await runCommand(["cupsenable", printerName], 10_000);
-  if (!enabled.ok) return enabled;
-  return runCommand(["cupsaccept", printerName], 10_000);
+  if (!enabled.ok) { clearCaches(); return enabled; }
+  const accepted = await runCommand(["cupsaccept", printerName], 10_000);
+  clearCaches();
+  return accepted;
 }
 
 // Stop new LAN submissions before checking whether deleting the queue is safe.
@@ -96,7 +103,9 @@ async function acceptQueue(printerName: string) {
 }
 async function deleteQueue(printerName: string) {
   validateQueue(printerName);
-  return runCommand(["lpadmin", "-x", printerName], 10_000);
+  const result = await runCommand(["lpadmin", "-x", printerName], 10_000);
+  clearCaches();
+  return result;
 }
 
 async function configureQueue(printerIp: string, opts: { printerName: string; displayName: string; sharePrinter: boolean; }): Promise<[boolean, string]> {
@@ -120,5 +129,5 @@ async function configureQueue(printerIp: string, opts: { printerName: string; di
 }
 return { id: "cups", getStatus: cupsPrinterStatus, cachedStatus: cachedCupsPrinterStatus,
  configureQueue, prepareQueueRename, acceptQueue, deleteQueue, listJobs, cachedJobs: cachedListJobs, submitJob: submitPrint, cancelJob, resumeQueue,
- clearCache() { cupsStatusCache.clear(); cupsStatusInflight.clear(); jobsCache.clear(); jobsInflight.clear(); } };
+ clearCache() { clearCaches(); } };
 }

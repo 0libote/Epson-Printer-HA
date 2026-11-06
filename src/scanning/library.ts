@@ -55,7 +55,7 @@ export function createScanLibrary(options: {
 }) {
   let cached: { directory: string; at: number; files: ScanFile[] } | null =
     null;
-  const pending = new Map<symbol, { directory: string; rotating: boolean }>();
+  const pending = new Map<symbol, { directory: string; rotating: boolean; reservedAt: number }>();
   const invalidate = () => {
     cached = null;
   };
@@ -153,7 +153,11 @@ export function createScanLibrary(options: {
         409,
       );
     const token = Symbol("scan-output");
-    pending.set(token, { directory, rotating });
+    // mtimeMs carries sub-millisecond precision while Date.now() truncates
+    // to whole milliseconds; anchor to the newest observed file so files
+    // present at reserve time always satisfy the commit filter below.
+    const reservedAt = Math.max(Date.now(), ...files.map((f) => f.mtimeMs));
+    pending.set(token, { directory, rotating, reservedAt });
     let active = true;
     function release() {
       if (!active) return;
@@ -174,7 +178,7 @@ export function createScanLibrary(options: {
             throw new ScanStorageError(
               "The new scan could not be found. Existing documents were kept.",
             );
-          const older = files.filter((file) => file.name !== name);
+          const older = files.filter((file) => file.name !== name && file.mtimeMs <= reservedAt);
           for (const file of older.slice(Math.max(0, options.limit() - 1))) {
             unlinkSync(file.path);
             try {

@@ -141,17 +141,16 @@ function snmpValueToString(v: Tlv | null): string {
   return "";
 }
 
-let _reqId = 1;
-
 async function snmpRequest(host: string, oid: string, getNext: boolean, timeoutMs = 2000): Promise<{ oid: string; value: Tlv | null }> {
   const { default: dgram } = await import("node:dgram");
-  const reqId = (_reqId = (_reqId + 1) % 0x7fffffff) || 1;
+  const reqId = Math.floor(Math.random() * 0x7fffffff) + 1;
   const payload = buildSnmpGet(snmpCommunity(), oid, reqId, getNext);
   return new Promise((resolve, reject) => {
     const sock: any = dgram.createSocket("udp4");
     const timer = setTimeout(() => { try { sock.close(); } catch {} reject(new Error("snmp timeout")); }, timeoutMs);
     sock.on("error", (e: any) => { clearTimeout(timer); try { sock.close(); } catch {} reject(e); });
-    sock.on("message", (msg: Buffer) => {
+    sock.on("message", (msg: Buffer, rinfo: any) => {
+      if (rinfo?.address !== host) return;
       clearTimeout(timer);
       try { sock.close(); } catch {}
       try {

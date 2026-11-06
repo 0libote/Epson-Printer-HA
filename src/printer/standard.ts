@@ -11,7 +11,7 @@ export function _setFetchImplForTest(fn: ((host: string) => Promise<InkStatus>) 
   _fetchImpl = fn;
 }
 /** Refresh requests join a current hardware check instead of duplicating it. */
-export function clearInkCache() { cache.clear(); }
+export function clearInkCache() { cache.clear(); inflight.clear(); }
 export function _clearInkCacheForTest() { cache.clear(); inflight.clear(); }
 
 function unknownStatus(host: string, message: string): InkStatus {
@@ -96,5 +96,6 @@ export function getCachedInkLevels(host: string): InkStatus | null {
   if (host && !inflight.has(host)) {
     getInkLevels(host).catch(() => {});
   }
+  // Expired entries are stale but still returned while the refresh runs.
   return hit?.value ?? null;
 }

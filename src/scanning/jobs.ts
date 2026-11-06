@@ -172,12 +172,25 @@ export function createScanJobStore(directory: () => string, now = Date.now) {
   }
   function restore() {
     if (loadedDirectory === directory()) return;
+    const path = join(directory(), "scan-jobs.json");
+    try {
+      if (statSync(path).size > MAX_JOURNAL_BYTES) {
+        loadedDirectory = directory();
+        console.error("[scan] Scan journal oversize, preserving existing jobs");
+        try {
+          renameSync(path, `${path}.corrupt-${Date.now()}.json`);
+        } catch {}
+        return;
+      }
+    } catch (e) {
+      // Missing file falls through to a normal empty restore; any other
+      // stat failure falls through too and the read below will log it.
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") void 0;
+    }
     jobs.clear();
     loadedDirectory = directory();
-    const path = join(directory(), "scan-jobs.json");
     let recovered = false;
     try {
-      if (statSync(path).size > MAX_JOURNAL_BYTES) return;
       const journal = JSON.parse(readFileSync(path, "utf8"));
       if (
         journal.version !== 1 ||

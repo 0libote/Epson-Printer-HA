@@ -323,12 +323,25 @@ export function ScanCard({
           return;
         }
       }
+      schedule();
+    };
+    const schedule = () => {
+      // Pause polling while the tab is hidden; visibilitychange resumes it.
+      if (document.hidden) return;
       timer = setTimeout(poll, 1500);
     };
+    const onVisible = () => {
+      if (!document.hidden && !disposed) {
+        clearTimeout(timer);
+        void poll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
     void poll();
     return () => {
       disposed = true;
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [jobId, push]);
 
@@ -393,6 +406,9 @@ export function ScanCard({
   const clearStuck = async () => {
     setClearing(true);
     try {
+      // Prefer cancelling the single tracked scan; cancel-all is a last resort
+      // when the ID was lost (stuckJobId null) and only behind this explicit click.
+      // Never auto-called on transient poll failure — failures>=7 preserves stuckJobId above.
       if (stuckJobId) await cancelScanJob(stuckJobId);
       else await cancelAllScans();
       safeClearJob();
@@ -550,7 +566,7 @@ export function ScanCard({
                 disabled={clearing || busy}
                 onClick={clearStuck}
               >
-                {clearing ? "Clearing…" : "Cancel existing scan"}
+                {clearing ? "Clearing…" : stuckJobId ? "Cancel existing scan" : "Cancel all scans"}
               </button>
             </div>
           </div>

@@ -74,8 +74,19 @@ export function createPrintSubmissions(dataDir: () => string) {
             },
           };
         if (existing.result) {
-          const result = JSON.parse(existing.result) as SubmissionResult;
-          return { ...result, body: { ...result.body, replayed: true } };
+          try {
+            const result = JSON.parse(existing.result) as SubmissionResult;
+            return { ...result, body: { ...result.body, replayed: true } };
+          } catch {
+            return {
+              status: 409,
+              body: {
+                ok: false,
+                error:
+                  "The previous submission was interrupted and may have reached the printer. Check the queue and print history before sending a new job.",
+              },
+            };
+          }
         }
         const running = pending.get(pendingKey);
         if (running) return await running;
@@ -98,10 +109,14 @@ export function createPrintSubmissions(dataDir: () => string) {
       .then((result) => {
         const receiptDb = connect(path);
         try {
-          receiptDb.run("UPDATE submissions SET result = ? WHERE key = ?", [
-            JSON.stringify(result),
-            key,
-          ]);
+          try {
+            receiptDb.run("UPDATE submissions SET result = ? WHERE key = ?", [
+              JSON.stringify(result),
+              key,
+            ]);
+          } catch (error) {
+            console.error("[print] could not save submission receipt", error);
+          }
         } finally {
           receiptDb.close();
         }

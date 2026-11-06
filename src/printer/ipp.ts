@@ -76,7 +76,7 @@ export function parsePrinterSupplyEntry(entry: string): { key: InkKey | null; le
   const colorM = entry.match(/colorant\s*=\s*([^;,\s]+)/i) || entry.match(/color\s*=\s*([^;,\s]+)/i);
   // Single-letter colorant codes (K/C/M/Y) never match keyFromDescription's
   // whole-string rules, so map them directly first.
-  const code = (colorM?.[1] ?? "").trim().toLowerCase();
+  const code = (colorM?.[1] ?? "").trim().replace(/^["']+|["']+$/g, "").toLowerCase();
   const direct: Record<string, InkKey> = {
     k: "black", bk: "black", black: "black",
     c: "cyan", cyan: "cyan",
@@ -114,7 +114,7 @@ export async function tryIpp(host: string, timeoutMs = 3000): Promise<InkStatus 
           const key = keyFromDescription(`${name} ${colors[i] ?? ""}`);
           if (!key) continue;
           const raw = levels[i];
-          const pct = raw === -3 ? 100 : raw < 0 ? null : Math.max(0, Math.min(100, Math.round(raw)));
+          const pct = !Number.isFinite(raw) ? null : raw === -3 ? 100 : raw < 0 ? null : Math.max(0, Math.min(100, Math.round(raw)));
           carts.push({ key, name: PRETTY[key], color: COLOR_HEX[key], level: pct, state: cartridgeState(pct), detail: `${name} (marker-levels=${raw})` });
         }
       } else {

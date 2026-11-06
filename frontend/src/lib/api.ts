@@ -358,7 +358,6 @@ export async function cancelAllScans(): Promise<{ cancelled: number }> {
   return data as { cancelled: number };
 }
 
-export async function fetchCapabilities() { return readJson<CapabilitiesResponse>(await fetch("/api/capabilities", { signal: AbortSignal.timeout(60000), credentials: "same-origin" })); }
 export async function fetchDiagnostics() { return readJson<DiagnosticsResponse>(await fetch("/api/diagnostics", { signal: AbortSignal.timeout(60000), credentials: "same-origin" })); }
 export async function rediscoverScanner() {
  const csrf = await ensureCsrf();

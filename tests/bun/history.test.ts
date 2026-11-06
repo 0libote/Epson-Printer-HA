@@ -129,9 +129,11 @@ describe("history", () => {
     history.__setFetchJobs(async () => ({}));
     await history.syncPrintHistory("Printer", { includeCompleted: false });
     expect(history.listPrintHistory()[0].state).toBe("printing");
+    // Full poll with active OK but completed failing: job is gone from the
+    // active set, so it cannot still be printing — mark unknown, not printing.
     history.__setFetchJobs(async which => { if (which === "completed") throw Error("offline"); return {}; });
     await history.syncPrintHistory("Printer");
-    expect(history.listPrintHistory()[0].state).toBe("printing");
+    expect(history.listPrintHistory()[0].state).toBe("unknown");
   });
 
   test("truncated CUPS listings never invalidate jobs outside the page", async () => {

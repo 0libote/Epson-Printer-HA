@@ -68,7 +68,7 @@ export function registerDeviceApi(app: Hono, deps: {
    deps.scanner.capabilities(deps.ip()), deps.printer.capabilities(deps.ip()), getVersions(),
    epsonUtilityIntegration.installation(), deps.scanner.epson.health().catch(() => null),
   ]);
-  return c.json({ version, build_number: buildInfo.number, build: buildInfo, recovery: deps.recovery?.() ?? null, architecture: arch(), printerAddress: deps.ip(), printing: { backend: "cups", ...installedVersions },
+  return c.json({ version, build_number: buildInfo.number, build: buildInfo, recovery: deps.recovery?.() ?? null, architecture: arch(), printerAddress: deps.ip(), auth_enabled: !!process.env.WEB_USERNAME, printing: { backend: "cups", ...installedVersions },
    scanner, epsonScan2: { available: !!epson, version: epson?.version ?? null, profilesValidated: !!epson?.capabilities.verified && epson.printerAddress === deps.ip(),
     lastError: epson?.lastError ?? deps.scanner.epson.lastError }, printer, epsonUtility: utility });
  });

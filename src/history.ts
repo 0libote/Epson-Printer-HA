@@ -141,7 +141,12 @@ function queueFromUri(uri: string): string {
   } catch {
     const path = uri.split("?")[0].split("#")[0];
     const parts = path.replace(/\/$/, "").split("/");
-    return decodeURIComponent(parts[parts.length - 1] ?? "");
+    const last = parts[parts.length - 1] ?? "";
+    try {
+      return decodeURIComponent(last);
+    } catch {
+      return last;
+    }
   }
 }
 
@@ -165,6 +170,13 @@ function safeInt(value: any, def = 0): number {
   }
 }
 
+function jobHash(document: string, userName: string, originHost: string, sizeBytes: number): string {
+  const s = `${document}|${userName}|${originHost}|${sizeBytes}`;
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
 function normaliseJob(jobId: number, attrs: Record<string, any>, printerName: string) {
   jobId = safeInt(jobId, -1);
   const stateValue = safeInt(attrs["job-state"]);
@@ -173,16 +185,18 @@ function normaliseJob(jobId: number, attrs: Record<string, any>, printerName: st
   const userName = String(attrs["job-originating-user-name"] ?? "");
   const originHost = String(attrs["job-originating-host-name"] ?? "");
   const createdAt = safeInt(attrs["time-at-creation"]);
+  const document = String(attrs["job-name"] ?? "Untitled job");
+  const sizeBytes = Math.max(0, sizeKb * 1024);
   return {
-    history_key: `${printerName}:${jobId}:${createdAt}`,
+    history_key: createdAt ? `${printerName}:${jobId}:${createdAt}` : `${printerName}:${jobId}:0:${jobHash(document, userName, originHost, sizeBytes)}`,
     job_id: jobId,
     printer: printerName,
-    document: String(attrs["job-name"] ?? "Untitled job"),
+    document,
     user_name: userName,
     source: sourceFor(userName, originHost),
     origin_host: originHost,
     state: STATE_NAMES[stateValue] ?? (stateValue ? `state-${stateValue}` : "unknown"),
-    size_bytes: Math.max(0, sizeKb * 1024),
+    size_bytes: sizeBytes,
     pages: Math.max(0, pages),
     created_at: createdAt,
     processing_at: safeInt(attrs["time-at-processing"]),
@@ -303,10 +317,12 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
   const snapshots: Record<number, Record<string, any>> = {};
   const failures: string[] = [];
   let truncated = false;
+  let activeOk = false;
   const jobSets = includeCompleted ? (["not-completed", "completed"] as const) : (["not-completed"] as const);
   for (const which of jobSets) {
     try {
       const jobs = await _fetchJobs(which);
+      if (which === "not-completed") activeOk = true;
       truncated ||= Object.keys(jobs).length >= 1000;
       Object.assign(snapshots, jobs);
     } catch (exc: any) {
@@ -329,7 +345,10 @@ export async function syncPrintHistory(printerName: string, opts: { includeCompl
     if (row.job_id >= 0) rows.push(row);
   }
 
-  const reconcile = includeCompleted && !failures.length && !truncated;
+  const reconcile = includeCompleted && activeOk && !truncated;
+  if (truncated) {
+    console.log("[history] CUPS job list truncated, skipping reconcile");
+  }
 
   const db = connect();
   try {
@@ -429,7 +448,8 @@ export function prunePrintHistory(opts: { retentionDays?: any; db?: Database } =
 }
 
 export function listPrintHistory(limit = 100): Array<Record<string, any>> {
-  limit = Math.max(1, Math.min(Math.trunc(limit), 1000));
+  const n = Number(limit);
+  limit = !Number.isFinite(n) ? 100 : Math.max(1, Math.min(Math.trunc(n), 1000));
   initHistory();
   const db = connect(true);
   try {

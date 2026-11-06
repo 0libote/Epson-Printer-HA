@@ -60,4 +60,4 @@ export function levelToPercent(level: number, max: number): number | null {
 }
 
 
-export function hasKnownLevel(carts: InkCartridge[]) { return carts.some(c => c.level != null); }
+export function hasKnownLevel(carts: InkCartridge[]) { return carts.some(c => c.level != null && !Number.isNaN(c.level)); }

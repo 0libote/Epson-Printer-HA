@@ -147,6 +147,34 @@ try {
   }
 } catch {}
 
+if (!WEB_USERNAME) {
+  console.warn("[security] Dashboard auth disabled: WEB_USERNAME/WEB_PASSWORD are blank. Anyone on your LAN can open this hub.");
+}
+// A crashed rename can leave the queue rejecting new LAN jobs
+// (prepareQueueRename runs cupsreject before validation). Re-accept on boot
+// best-effort; applyPrinterSettings already re-accepts on in-process failure.
+try {
+  const q = currentPrinterName();
+  if (q) cupsBackend.acceptQueue(q).catch(() => {});
+} catch {}
+// Reap orphaned scan temp/dotfiles from crashed conversions.
+// scanimage/combine pipelines write .scan_, .tmp_ and .combine- prefixed
+// temp files; a SIGKILL between write and rename leaks them. Active work is
+// always younger than 1h, matching the uploads/print-* reap above.
+try {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const entry of readdirSync(SCAN_DIR)) {
+    if (!(entry.startsWith(".scan_") || entry.startsWith(".tmp_") || entry.startsWith(".combine-"))) continue;
+    const sp = join(SCAN_DIR, entry);
+    try {
+      const sst = statSync(sp);
+      if (sst.mtimeMs < cutoff) {
+        rmSync(sp, { recursive: true, force: true });
+      }
+    } catch {}
+  }
+} catch {}
+
 /** Truncate verbose subprocess stderr before it reaches UI/JSON (scanimage
  * can dump MBs of SANE debug — never send that to a browser). */
 function truncateErrorText(s: string, max = 800): string {
@@ -1349,8 +1377,7 @@ app.get("/assets/*", async(c)=>{
   const mimeMap:Record<string,string>={".js":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8", ".svg":"image/svg+xml", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg", ".woff2":"font/woff2", ".woff":"font/woff", ".map":"application/json"};
   for(const base of [join(process.cwd(),"public","assets"), join(process.cwd(),"public")]){
     const cand=join(base, safe);
-    // also try direct path for nested
-    const tryPaths=[cand, join(process.cwd(),"public","assets", raw)];
+    const tryPaths=[cand];
     for(const p of tryPaths){
       const f=Bun.file(p);
       if(await f.exists()){

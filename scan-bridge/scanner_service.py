@@ -264,7 +264,7 @@ class Service:
             job.update(state="error", error=self.last_error)
             print(f"[scanner:epsonscan2] {self.last_error}", flush=True)
         finally:
-            if job["cancelled"]:
+            if job["cancelled"] and job["state"] != "done":
                 job["state"] = "cancelled"
             if job["state"] != "done":
                 shutil.rmtree(job["directory"], ignore_errors=True)
@@ -321,15 +321,24 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(404, {"error": "Not found"})
         job = service.jobs[match[1]]
         if match[2]:
-            if job["state"] != "done":
+            if job.get("state") != "done":
                 return self.reply(409, {"error": "Scan not complete"})
-            path = job["output"]
+            path = job.get("output")
+            try:
+                size = path.stat().st_size
+                if not path.is_file():
+                    raise FileNotFoundError(path)
+            except OSError:
+                return self.reply(404, {"error": "Not found"})
             self.send_response(200)
             self.send_header("Content-Type", "image/png")
-            self.send_header("Content-Length", str(path.stat().st_size))
+            self.send_header("Content-Length", str(size))
             self.end_headers()
-            with path.open('rb') as file:
-                shutil.copyfileobj(file, self.wfile)
+            try:
+                with path.open('rb') as file:
+                    shutil.copyfileobj(file, self.wfile)
+            except (OSError, BrokenPipeError):
+                pass
             return
         return self.reply(200, {k: job[k] for k in ("id", "state", "error") if k in job})
 
