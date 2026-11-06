@@ -123,7 +123,7 @@ The WebUI contains a **Network Printing** section after the physical printer is 
 - view the generated IPP URI and HTTP IPP URL;
 - follow Windows 11 and macOS setup instructions using the actual server address.
 
-When LAN sharing is enabled, the queue is shared through CUPS and advertised through Bonjour/DNS-SD. Windows also sees the printer on its own: the hub announces itself with WS-Discovery and shares the queue over SMB, so **Add device** finds it and Windows installs its built-in class driver with no Epson software. Clients use normal IPP and do not need Epson's Windows/macOS connectivity suite.
+When LAN sharing is enabled, the queue is shared through CUPS and advertised through Bonjour/DNS-SD. The hub also announces itself with WS-Discovery and shares the queue over SMB, so Windows **Add device** finds it and installs the built-in class driver with no Epson software. One limit: only one SMB server can own port 445, so if the host already runs its own file sharing there (for example ZimaOS storage), the hub's SMB share stays hidden behind it — add the printer manually with the IPP address below, or use the Mopria Print Service app from the Microsoft Store, which discovers the hub's Mopria-certified IPP advertisement directly. Clients use normal IPP and do not need Epson's Windows/macOS connectivity suite.
 
 ## Print history
 

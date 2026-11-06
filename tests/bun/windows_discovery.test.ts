@@ -34,6 +34,14 @@ describe("windows discovery", () => {
     expect(SMB).toContain("printcap cache time");
   });
 
+  test("cups configurator owns one generated share file", () => {
+    const CONFIGURE = readFileSync(join(import.meta.dir, "../../scripts/configure-cups.sh"), "utf-8");
+    expect(SMB).toContain("include = /etc/samba/shares.conf");
+    expect(CONFIGURE).toContain("/etc/samba/shares.conf");
+    expect(CONFIGURE).toContain("smbcontrol smbd reload-config");
+    expect(CONFIGURE).toContain("printer name = $PRINTER_NAME");
+  });
+
   test("image installs samba and wsdd", () => {
     expect(DOCKERFILE).toMatch(/samba/);
     expect(DOCKERFILE).toMatch(/wsdd/);
