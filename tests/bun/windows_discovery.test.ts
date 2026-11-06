@@ -22,8 +22,15 @@ describe("windows discovery", () => {
 
   test("supervisor runs smbd and wsdd", () => {
     expect(SUPERVISOR).toContain("[program:smbd]");
-    expect(SUPERVISOR).toContain("smbd --interactive");
+    expect(SUPERVISOR).toContain("run-smbd.sh");
     expect(SUPERVISOR).toContain("[program:wsdd]");
+  });
+
+  test("smbd waits for the CUPS queue before snapshotting printcap", () => {
+    const RUN_SMBD = readFileSync(join(import.meta.dir, "../../scripts/run-smbd.sh"), "utf-8");
+    expect(RUN_SMBD).toContain("lpstat -p");
+    expect(RUN_SMBD).toContain("smbd --interactive");
+    expect(SMB).toContain("printcap cache time");
   });
 
   test("image installs samba and wsdd", () => {

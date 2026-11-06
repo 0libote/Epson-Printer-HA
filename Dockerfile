@@ -50,6 +50,7 @@ COPY src ./src
 COPY frontend ./frontend
 COPY scripts/configure-cups.sh /usr/local/bin/configure-cups.sh
 COPY scripts/run-wsdd.sh /usr/local/bin/run-wsdd.sh
+COPY scripts/run-smbd.sh /usr/local/bin/run-smbd.sh
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY config/cupsd.conf /etc/cups/cupsd.conf
 COPY config/smb.conf /etc/samba/smb.conf
@@ -59,7 +60,7 @@ COPY config/supervisord.conf /etc/supervisor/conf.d/epson-hub.conf
 
 RUN bun run build
 
-RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-wsdd.sh \
+RUN chmod +x /usr/local/bin/configure-cups.sh /usr/local/bin/entrypoint.sh /usr/local/bin/run-wsdd.sh /usr/local/bin/run-smbd.sh \
     && groupadd --system epson 2>/dev/null || true \
     && useradd --system --gid epson --home-dir /nonexistent --shell /usr/sbin/nologin epson 2>/dev/null || true \
     && usermod -aG lp epson 2>/dev/null || true \
