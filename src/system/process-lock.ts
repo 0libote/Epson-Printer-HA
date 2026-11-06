@@ -22,6 +22,10 @@ async function withOperationLock<T>(name: string, fn: () => Promise<T>): Promise
   const staleMs = operationLockStaleMs(name);
   // An in-memory holder is a live promise. Age alone cannot prove its
   // subprocess exited; overlapping hardware operations is never safe.
+  // Never steal a live entry by age here (see scan-jobs "live lock cannot
+  // be stolen" test): hung scans are cancelled via reapStaleScanJobs so the
+  // holder settles and releases, and crashed-process FS locks are reaped
+  // at boot / after SCAN_JOB_STALE_MS.
   if (operationLocks.has(name)) return { acquired: false };
   try {
     mkdirSync(lockPath);

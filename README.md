@@ -192,7 +192,7 @@ and still require validation after an address change.
 ### Builds and updating an installed appliance
 
 The sidebar, Settings diagnostics, `/api/status`, `/api/health` and
-`/api/diagnostics` show the build number. The recorded local build is 290.
+`/api/diagnostics` show the build number. The recorded local build is 291.
 CI uses **131 + this workflow's run number**, increasing by one per new CI run;
 reruns keep the same identity. Both images share the number and commit revision.
 Published images also have a `build-N` tag. Failed/unpublished runs can leave
