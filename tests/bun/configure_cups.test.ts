@@ -30,7 +30,6 @@ async function runConfigure(tmp: string, protocol: string, pythonBody: string, o
     PREFER_ENV_SETTINGS: "true",
     CUPS_LOCK_DIR: tmp,
     CUPS_READY_ATTEMPTS: "2",
-    SAMBA_SHARES_FILE: join(tmp, "shares.conf"),
   } as Record<string,string>;
 
   const proc = Bun.spawn(["bash", "scripts/configure-cups.sh"], { env, stdout: "pipe", stderr: "pipe" });
@@ -73,18 +72,6 @@ describe("configure-cups", () => {
       expect(result.returncode).toBe(0);
       expect(result.stdout + result.stderr).toContain("switching the saved socket setting to IPP");
       assertIpp(args);
-    } finally { try { rmSync(tmp, { recursive: true, force: true }); } catch {} }
-  });
-
-  test("queue configure publishes a matching samba share", async () => {
-    const tmp = mkdtempSync(join(tmpdir(), "cups-test-"));
-    try {
-      const { result } = await runConfigure(tmp, "ipp", "exit 0");
-      expect(result.returncode).toBe(0);
-      const shares = readFileSync(join(tmp, "shares.conf"), "utf-8");
-      expect(shares).toContain("[Test_Epson]");
-      expect(shares).toContain("printer name = Test_Epson");
-      expect(shares).toContain("guest ok = yes");
     } finally { try { rmSync(tmp, { recursive: true, force: true }); } catch {} }
   });
 });

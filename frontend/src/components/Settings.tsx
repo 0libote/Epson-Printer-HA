@@ -160,7 +160,7 @@ export function SharingSettings({ displayName, printerName, sharing, host, onSav
             </button>
           </div>
           <div className="device-instructions">
-            <details><summary>Windows</summary><p>Open Settings, then Bluetooth &amp; devices, Printers &amp; scanners, and Add device — <strong>{displayName}</strong> appears on its own where the hub owns the network discovery port. If it doesn't appear (for example the server already runs its own file sharing), use this address:</p><code>{httpUri}</code></details>
+            <details><summary>Windows</summary><p>Find this machine under Network in File Explorer (announced automatically). Then add the printer with this address — Windows uses its built-in driver, no Epson software:</p><code>{httpUri}</code></details>
             <details><summary>Mac</summary><p>Open System Settings, then Printers &amp; Scanners and Add Printer. Look for <strong>{displayName}</strong>.</p></details>
           </div>
         </>
