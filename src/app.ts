@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { join, basename, extname } from "node:path";
 import { mkdirSync, readdirSync, statSync, unlinkSync, rmSync, linkSync, renameSync, readFileSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import { registerPrintingApi } from "./api/printing.ts";
 import { createScanLibrary, scanRetentionPolicy, ScanStorageError, type ScanReservation } from "./scanning/library.ts";
 import { createScanJobStore, isActiveScan, type ScanJob } from "./scanning/jobs.ts";
@@ -634,7 +634,8 @@ function wantsJson(c:any):boolean{
 function isCsrfValid(c:any, body:any):boolean{
   const token=String(body?.["_csrf_token"]||c.req.header("x-csrf-token")||c.req.header("X-CSRF-Token")||"");
   const expected=getCookie(c,"csrf_token")||"";
-  return !!expected && token===expected;
+  if(!expected || !token) return false;
+  return constantTimeEqual(token,expected);
 }
 // Mutation endpoints accept dashboard FormData as well as JSON clients.
 // parseBody() throws on a JSON content-type and req.json() throws on an empty
@@ -698,17 +699,28 @@ async function tryServeSpa(c:any):Promise<Response|null>{
   return null;
 }
 function authRequired():boolean{ return Boolean(WEB_USERNAME); }
-function authValid(c:any):boolean{
+function basicCredentials(c:any):{decoded:string;user:string;pass:string}|null{
   const header=c.req.header("authorization")||"";
-  if(!header.startsWith("Basic ")) return false;
+  if(!header.startsWith("Basic ")) return null;
   try{
     const decoded=Buffer.from(header.slice(6),"base64").toString("utf-8");
     const idx=decoded.indexOf(":");
-    const user=idx>=0?decoded.slice(0,idx):decoded;
-    const pass=idx>=0?decoded.slice(idx+1):"";
-    return user===WEB_USERNAME && pass===WEB_PASSWORD;
+    return { decoded, user:idx>=0?decoded.slice(0,idx):decoded, pass:idx>=0?decoded.slice(idx+1):"" };
+  }catch{return null;}
+}
+function constantTimeEqual(a:string,b:string):boolean{
+  try{
+    return timingSafeEqual(createHash("sha256").update(a,"utf8").digest(), createHash("sha256").update(b,"utf8").digest());
   }catch{return false;}
 }
+// Compare the whole "user:password" string through a hash so neither length
+// nor a correct username leaks through response timing, and a wrong username
+// reveals no more than a wrong password does.
+function credentialsMatch(creds:{decoded:string}|null):boolean{
+  if(!creds) return false;
+  return constantTimeEqual(creds.decoded,`${WEB_USERNAME}:${WEB_PASSWORD}`);
+}
+function authValid(c:any):boolean{ return credentialsMatch(basicCredentials(c)); }
 // Header stamped by server.ts from the TCP socket (Bun server.requestIP).
 // The wrapper overwrites any client-sent value, so unlike X-Forwarded-For
 // this cannot be spoofed to dodge (or trigger) auth throttling.
@@ -721,20 +733,21 @@ function clientIp(c:any):string{
   const fwd=c.req.header("x-forwarded-for")||c.req.header("x-real-ip")||"unknown";
   return String(fwd).split(",")[0].trim()||"unknown";
 }
-function authFailureState(c:any, recordFailure=false):boolean{
-  const ip=clientIp(c);
+function throttleKey(ip:string,user:string):string{ return `${ip}\n${user}`; }
+function authFailureState(c:any, recordFailure=false, user=""):boolean{
+  const key=throttleKey(clientIp(c),user);
   const now=Date.now()/1000;
   const cutoff=now - AUTH_FAILURE_WINDOW_SECONDS;
-  let recent=( _authFailures.get(ip)||[] ).filter(t=>t>=cutoff);
+  let recent=( _authFailures.get(key)||[] ).filter(t=>t>=cutoff);
   if(recordFailure) recent.push(now);
   if(recent.length) {
-    _authFailures.set(ip,recent);
-    // bound map: evict oldest entry when too many distinct IPs (prevents leak)
+    _authFailures.set(key,recent);
+    // bound map: evict oldest entry when too many distinct buckets (prevents leak)
     if (_authFailures.size > 500) {
       const oldest = _authFailures.keys().next().value;
-      if (oldest !== undefined && oldest !== ip) _authFailures.delete(oldest);
+      if (oldest !== undefined && oldest !== key) _authFailures.delete(oldest);
     }
-  } else _authFailures.delete(ip);
+  } else _authFailures.delete(key);
   return recent.length>=AUTH_FAILURE_LIMIT;
 }
 export const app=new Hono();
@@ -759,9 +772,10 @@ app.use("*", async(c,next)=>{
 
 function requireAuth(c:any):Response|null{
   if(!authRequired()) return null;
-  if(authFailureState(c)) return new Response("Too many authentication attempts",{status:429, headers:{"Retry-After":String(AUTH_FAILURE_WINDOW_SECONDS)}});
-  if(!authValid(c)){ authFailureState(c,true); return new Response("Authentication required",{status:401, headers:{"WWW-Authenticate":'Basic realm="Epson Hub"'}});}
-  _authFailures.delete(clientIp(c));
+  const attemptedUser=basicCredentials(c)?.user ?? "";
+  if(authFailureState(c,false,attemptedUser)) return new Response("Too many authentication attempts",{status:429, headers:{"Retry-After":String(AUTH_FAILURE_WINDOW_SECONDS)}});
+  if(!authValid(c)){ authFailureState(c,true,attemptedUser); return new Response("Authentication required",{status:401, headers:{"WWW-Authenticate":'Basic realm="Epson Hub"'}});}
+  _authFailures.delete(throttleKey(clientIp(c),attemptedUser));
   return null;
 }
 function escapeHtml(s:string):string{ return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#x27;");}
