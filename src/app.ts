@@ -4,6 +4,8 @@ import { registerStatusApi } from "./api/status.ts";
 import { registerDeviceApi } from "./api/device.ts";
 import { createPrinterDeviceService } from "./printer/manager.ts";
 import { createOperationLocks } from "./system/process-lock.ts";
+import { parsePositiveInt, formatBytes } from "./system/numbers.ts";
+import { validatePrinterAddress } from "./system/validation.ts";
 import { renderIndex as renderLegacyIndex } from "./api/legacy-view.ts";
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
@@ -36,11 +38,6 @@ import {
 import { listPrintHistory } from "./history.ts";
 import { getCachedInkLevels, getInkLevels } from "./ink.ts";
 
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? String(fallback), 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
-}
-
 export let APP_DIR = process.env.APP_DATA || "/data";
 export let SCAN_DIR = join(APP_DIR, "scans");
 export let SETTINGS_FILE = join(APP_DIR, "settings.json");
@@ -51,8 +48,9 @@ export let SETTINGS_FILE = join(APP_DIR, "settings.json");
 export let DEFAULT_PRINTER_NAME = "Home_Epson_XP2200";
 export let DEFAULT_DISPLAY_NAME = "Home Epson XP-2200";
 export let DEFAULT_SHARE_PRINTER = true;
-export let MAX_UPLOAD_MB = Math.max(1, parsePositiveInt(process.env.MAX_UPLOAD_MB, 128));
-export let MAX_SCAN_FILES = Math.max(1, parsePositiveInt(process.env.MAX_SCAN_FILES, 100));
+// Upper bounds keep one upload or scan library from exhausting a small appliance.
+export let MAX_UPLOAD_MB = Math.min(512, Math.max(1, parsePositiveInt(process.env.MAX_UPLOAD_MB, 128)));
+export let MAX_SCAN_FILES = Math.min(1000, Math.max(1, parsePositiveInt(process.env.MAX_SCAN_FILES, 100)));
 export const SCAN_RETENTION_POLICY = scanRetentionPolicy(process.env.SCAN_RETENTION_POLICY);
 const scanLibrary = createScanLibrary({ directory: () => SCAN_DIR, limit: () => MAX_SCAN_FILES, policy: SCAN_RETENTION_POLICY });
 const scanReservations = new Map<string, ScanReservation>();
@@ -189,22 +187,14 @@ export const _authFailures = new Map<string, number[]>();
 export const AUTH_FAILURE_WINDOW_SECONDS_EXPORT = AUTH_FAILURE_WINDOW_SECONDS;
 export const AUTH_FAILURE_LIMIT_EXPORT = AUTH_FAILURE_LIMIT;
 
+// One IPv4 rule for the whole hub: the strict validator also rejects leading
+// zeros (which some network tools read as octal) and reserved ranges.
 function validateIPv4(value: string): string {
-  value = value.trim();
-  const parts = value.split(".");
-  if (parts.length !== 4) throw new Error("Use the printer's normal IPv4 address");
-  for (const p of parts) {
-    if (!/^\d+$/.test(p)) throw new Error("Use the printer's normal IPv4 address");
-    const n = Number.parseInt(p, 10);
-    if (n < 0 || n > 255) throw new Error("Use the printer's normal IPv4 address");
+  try {
+    return validatePrinterAddress(value.trim());
+  } catch {
+    throw new Error("Use the printer's normal IPv4 address");
   }
-  const ip = parts.join(".");
-  const first = Number.parseInt(parts[0], 10);
-  const last = Number.parseInt(parts[3], 10);
-  if (ip === "0.0.0.0" || ip === "127.0.0.1" || ip === "255.255.255.255") throw new Error("Use the printer's normal IPv4 address");
-  if (first === 0 || first === 127 || first === 255 || (first >= 224 && first <= 239)) throw new Error("Use the printer's normal IPv4 address");
-  if (last === 0 || last === 255) throw new Error("Use the printer's normal IPv4 address");
-  return ip;
 }
 
 function validateQueueName(value: string): string {
@@ -305,11 +295,7 @@ export function currentPrinterIp(): string {
   if (!v) return "";
   try { return validateIPv4(v); } catch { return ""; }
 }
-function formatBytes(bytes:number):string{
-  if(bytes<1024) return `${bytes} B`;
-  if(bytes<1024*1024) return `${(bytes/1024).toFixed(1)} KB`;
-  return `${(bytes/(1024*1024)).toFixed(1)} MB`;
-}
+
 function formatRelativeTime(mtimeMs:number):string{
   const diff = Date.now() - mtimeMs;
   const s = Math.floor(diff/1000);

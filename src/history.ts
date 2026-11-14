@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { formatBytes } from "./system/numbers.ts";
 
 export let APP_DIR = process.env.APP_DATA || "/data";
 export let HISTORY_DB = join(APP_DIR, "print_history.sqlite3");
@@ -478,13 +479,6 @@ export function listPrintHistory(limit = 100): Array<Record<string, any>> {
   } finally {
     db.close();
   }
-}
-
-function formatBytes(value: number): string {
-  value = Math.max(0, Math.trunc(value || 0));
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // For testing exports

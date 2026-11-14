@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { initHistory, syncPrintHistory } from "./history.ts";
+import { parsePositiveInt } from "./system/numbers.ts";
 
 const APP_DIR = process.env.APP_DATA || "/data";
 const SETTINGS_FILE = join(APP_DIR, "settings.json");
@@ -8,11 +9,8 @@ const SETTINGS_FILE = join(APP_DIR, "settings.json");
 const DEFAULT_PRINTER_NAME = "Home_Epson_XP2200";
 
 function positiveEnvInt(name: string, def: number): number {
-  const raw = process.env[name];
-  if (raw === undefined) return def;
-  const n = Number.parseInt(raw, 10);
-  if (Number.isNaN(n)) return def;
-  return Math.max(1, n);
+  const n = parsePositiveInt(process.env[name], def);
+  return Number.isNaN(n) ? def : Math.max(1, n);
 }
 
 export const POLL_INTERVAL_SECONDS = positiveEnvInt("HISTORY_POLL_SECONDS", 5);
