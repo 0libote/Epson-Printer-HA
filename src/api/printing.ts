@@ -146,6 +146,9 @@ export function registerPrintingApi(
         }
         writer.write(value);
       }
+    } catch (streamError) {
+      discardStaged();
+      throw streamError;
     } finally {
       try { reader.releaseLock(); } catch {}
       await writer.end();
