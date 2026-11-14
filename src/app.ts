@@ -134,7 +134,8 @@ try {
   mkdirSync(uploadsDir, { recursive: true });
   const cutoff = Date.now() - 60 * 60 * 1000;
   for (const entry of readdirSync(uploadsDir)) {
-    if (!entry.startsWith("print-")) continue;
+    // Stale .part files are interrupted print uploads that never reached CUPS.
+    if (!entry.startsWith("print-") && !(entry.startsWith(".print-") && entry.endsWith(".part"))) continue;
     const p = join(uploadsDir, entry);
     try {
       const st = statSync(p);
