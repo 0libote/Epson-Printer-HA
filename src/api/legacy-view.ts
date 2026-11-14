@@ -209,13 +209,14 @@ export async function renderIndex(c:any, deps: ViewDependencies):Promise<string>
               ${history.map(job=>`
                 <tr>
                   <td data-label="Document"><strong>${escapeHtml(job.document)}</strong><small>#${escapeHtml(String(job.job_id))}</small></td>
-                  <td data-label="When">${escapeHtml(job.created_display)}</td>
+                  <td data-label="When"><time data-ts="${Number(job.created_at) || Number(job.updated_at) || 0}">${escapeHtml(job.created_display)}</time></td>
                   <td data-label="From">${escapeHtml(job.origin_host||job.user_name||job.source)}</td>
                   <td data-label="Status"><span class="job-state state-${escapeHtml(job.state)}">${escapeHtml(job.state.replace("_"," ").replace(/\b\w/g,(s:string)=>s.toUpperCase()))}</span></td>
                   <td data-label="Size">${escapeHtml(job.size_display)}</td>
                 </tr>`).join("")}
               </tbody>
             </table>
+            <script>(function(){try{var els=document.querySelectorAll('time[data-ts]');for(var i=0;i<els.length;i++){var ts=parseInt(els[i].getAttribute('data-ts')||'0',10);if(ts>0){var d=new Date(ts*1000);els[i].textContent=d.toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'})+' '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}}}catch(e){}})();</script>
           </div>
           <p class="empty-copy" id="history-empty" ${history.length?"hidden":""}>No print history yet.</p>
         </div>
