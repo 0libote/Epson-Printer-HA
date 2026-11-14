@@ -109,6 +109,20 @@ describe("history", () => {
     expect(history.listPrintHistory().map(r => r.state)).toEqual(["printing"]);
   });
 
+  test("history retention removes old terminal jobs that never reported a timestamp", async () => {
+    const dbPath = join(tmp, "print_history.sqlite3");
+    history._setAppDir(tmp);
+    history._resetHistoryState();
+    history.initHistory();
+    const old = Math.floor(Date.now() / 1000) - 10 * 86400;
+    const db = new Database(dbPath);
+    db.run("INSERT INTO print_history (history_key, job_id, printer, state, created_at, completed_at, updated_at) VALUES ('old-timeless', 1, 'Printer', 'completed', 0, 0, ?)", [old]);
+    db.run("INSERT INTO print_history (history_key, job_id, printer, state, created_at, completed_at, updated_at) VALUES ('new-timeless', 2, 'Printer', 'completed', 0, 0, ?)", [Math.floor(Date.now() / 1000)]);
+    db.close();
+    expect(history.prunePrintHistory({ retentionDays: 5 })).toBe(1);
+    expect(history.listPrintHistory().map(r => r.job_id)).toEqual([2]);
+  });
+
   test("a complete empty CUPS snapshot stops claiming lost jobs are printing", async () => {
     history.__setFetchJobs(async (which): Promise<Record<number, Record<string, any>>> => which === "not-completed" ? {
       7: { "job-printer-uri": "ipp://localhost/printers/Printer", "job-state": 5, "time-at-creation": 1000 },

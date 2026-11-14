@@ -439,8 +439,9 @@ export function prunePrintHistory(opts: { retentionDays?: any; db?: Database } =
     const result = db.query(`
       DELETE FROM print_history
       WHERE state IN ('cancelled', 'aborted', 'completed')
-        AND CASE WHEN completed_at > 0 THEN completed_at ELSE created_at END > 0
-        AND CASE WHEN completed_at > 0 THEN completed_at ELSE created_at END < ?
+        -- updated_at is always set, so jobs whose CUPS record never carried a
+        -- timestamp age out instead of living in history forever.
+        AND CASE WHEN completed_at > 0 THEN completed_at WHEN created_at > 0 THEN created_at ELSE updated_at END < ?
     `).run(cutoff);
     return result.changes;
   } finally {
