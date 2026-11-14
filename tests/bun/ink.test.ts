@@ -141,6 +141,14 @@ describe("ink - snmp ber round trip", () => {
     expect(dec.error).toBe(0);
     expect(dec.value?.tag).toBe(0x04);
   });
+
+  test("decode rejects truncated and over-nested input", () => {
+    expect(() => decodeSnmpResponse(Buffer.alloc(0))).toThrow(/Invalid SNMP/);
+    expect(() => decodeSnmpResponse(Buffer.from([0x30, 0x05, 0x30]))).toThrow(/Invalid SNMP/);
+    let nested: number[] = [0x05, 0x00];
+    for (let i = 0; i < 40; i++) nested = [0x30, nested.length, ...nested];
+    expect(() => decodeSnmpResponse(Buffer.from(nested))).toThrow(/too deeply nested/);
+  });
 });
 
 // helper: hand-built SNMPv1 GetNextResponse for OID_DESC.1.1 = text, request-id 1
