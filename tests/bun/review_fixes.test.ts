@@ -170,6 +170,24 @@ describe("review fixes", () => {
     expect(other.status).toBe(401);
   });
 
+  test("auth throttle buckets differ per username on the same IP", async () => {
+    appModule._setAuthForTest("admin", "correct-password");
+    appModule._authFailures.clear();
+    const client = createClient(appModule.app);
+    const stamped = (userpass: string) => ({
+      authorization: "Basic " + Buffer.from(userpass).toString("base64"),
+      "x-epson-client-ip": "10.0.0.9",
+    });
+    for (let i = 0; i < appModule.AUTH_FAILURE_LIMIT; i++) {
+      expect((await client.request("/", { headers: stamped("admin:wrong") })).status).toBe(401);
+    }
+    // admin is throttled on this IP…
+    expect((await client.request("/", { headers: stamped("admin:wrong") })).status).toBe(429);
+    // …but a different username on the same IP is not.
+    expect((await client.request("/", { headers: stamped("other:wrong") })).status).toBe(401);
+    appModule._authFailures.clear();
+  });
+
   test("runCommand fails fast instead of queueing without bound", async () => {
     coreModule._setRunLimitsForTest(1, 0);
     try {

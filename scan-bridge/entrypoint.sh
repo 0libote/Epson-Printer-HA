@@ -76,8 +76,19 @@ saned -l -b 127.0.0.1 -p 6566 2> >(grep -v -- "TRACE" >&2) &
 saned_pid=$!
 trap 'kill "$saned_pid" 2>/dev/null || true; wait "$saned_pid" 2>/dev/null || true' TERM INT EXIT
 
+last_mtime=""
+tick=0
 while kill -0 "$saned_pid" 2>/dev/null; do
-  configure_ip "$(get_printer_ip)"
+  # The printer address only changes when the dashboard saves settings, so
+  # skip the Python parse unless the file changed. Re-check unconditionally
+  # every ~10 minutes in case a save landed inside the same mtime second.
+  cur_mtime="$(stat -c %Y /data/settings.json 2>/dev/null || echo missing)"
+  tick=$((tick + 1))
+  if [[ "$cur_mtime" != "$last_mtime" || "$tick" -ge 60 ]]; then
+    configure_ip "$(get_printer_ip)"
+    last_mtime="$cur_mtime"
+    tick=0
+  fi
   sleep 10
 done
 

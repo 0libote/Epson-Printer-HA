@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { formatBytes } from "./system/numbers.ts";
 
 export let APP_DIR = process.env.APP_DATA || "/data";
 export let HISTORY_DB = join(APP_DIR, "print_history.sqlite3");
@@ -438,8 +439,9 @@ export function prunePrintHistory(opts: { retentionDays?: any; db?: Database } =
     const result = db.query(`
       DELETE FROM print_history
       WHERE state IN ('cancelled', 'aborted', 'completed')
-        AND CASE WHEN completed_at > 0 THEN completed_at ELSE created_at END > 0
-        AND CASE WHEN completed_at > 0 THEN completed_at ELSE created_at END < ?
+        -- updated_at is always set, so jobs whose CUPS record never carried a
+        -- timestamp age out instead of living in history forever.
+        AND CASE WHEN completed_at > 0 THEN completed_at WHEN created_at > 0 THEN created_at ELSE updated_at END < ?
     `).run(cutoff);
     return result.changes;
   } finally {
@@ -478,13 +480,6 @@ export function listPrintHistory(limit = 100): Array<Record<string, any>> {
   } finally {
     db.close();
   }
-}
-
-function formatBytes(value: number): string {
-  value = Math.max(0, Math.trunc(value || 0));
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // For testing exports

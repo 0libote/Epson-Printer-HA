@@ -70,14 +70,21 @@ function buildSnmpGet(community: string, oid: string, requestId: number, getNext
 }
 
 interface Tlv { tag: number; value: Buffer; children?: Tlv[]; int?: number; oid?: string }
-function readTlv(buf: Buffer, off: number): { node: Tlv; next: number } {
+// A hostile LAN device can spoof an SNMP reply, so the decoder distrusts
+// every length and caps nesting instead of recursing without bound.
+const MAX_TLV_DEPTH = 32;
+function readTlv(buf: Buffer, off: number, depth = 0): { node: Tlv; next: number } {
+  if (depth > MAX_TLV_DEPTH) throw new Error("SNMP response too deeply nested");
+  if (!Number.isInteger(off) || off < 0 || off + 2 > buf.length) throw new Error("Invalid SNMP response");
   const tag = buf[off]; let pos = off + 1;
   let len = buf[pos++];
   if (len & 0x80) {
     const n = len & 0x7f;
+    if (n === 0 || n > 4 || pos + n > buf.length) throw new Error("Invalid SNMP length");
     len = 0;
     for (let i = 0; i < n; i++) len = (len << 8) | buf[pos++];
   }
+  if (len < 0 || pos + len > buf.length) throw new Error("Invalid SNMP response");
   const value = buf.subarray(pos, pos + len);
   const node: Tlv = { tag, value };
   if (tag === 0x02 && len <= 4) {
@@ -103,7 +110,8 @@ function readTlv(buf: Buffer, off: number): { node: Tlv; next: number } {
     const children: Tlv[] = [];
     let p = 0;
     while (p < value.length) {
-      const r = readTlv(value, p);
+      const r = readTlv(value, p, depth + 1);
+      if (r.next <= p) throw new Error("Invalid SNMP response");
       children.push(r.node);
       p = r.next;
     }

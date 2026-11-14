@@ -1,6 +1,6 @@
 import type { Hono } from "hono";
 import { join, extname } from "node:path";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, renameSync, unlinkSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { parsePrintOptions } from "../printing/options.ts";
 import {
@@ -112,11 +112,58 @@ export function registerPrintingApi(
     const key = String(body.submission_id ?? "");
     if (key && !/^[A-Za-z0-9_-]{16,80}$/.test(key))
       return fail("Invalid submission ID.");
-    const buffer = await file.arrayBuffer();
-    const validationError = deps.validateUpload(buffer, file.size, suffix);
-    if (validationError) return fail(validationError);
     const queueName = deps.queue();
     const printerIp = deps.ip();
+    // Stream the upload straight to a staging file: the document is never
+    // fully held in RAM, and the size limit is enforced on actual bytes
+    // rather than the client-declared size. The hash covers the same bytes
+    // in the same order as the old buffered version, so existing
+    // idempotency receipts still match.
+    const uploadDir = join(deps.dataDir(), "uploads");
+    mkdirSync(uploadDir, { recursive: true });
+    const stagingPath = join(uploadDir, `.print-${randomBytes(8).toString("hex")}.part`);
+    const limitBytes = deps.uploadLimit() * 1024 * 1024;
+    const fingerprintHash = createHash("sha256");
+    fingerprintHash.update(JSON.stringify([queueName, printerIp, name, options]));
+    let stagedBytes = 0;
+    let tooLarge = false;
+    const headChunks: Uint8Array[] = [];
+    let headBytes = 0;
+    const discardStaged = () => { try { unlinkSync(stagingPath); } catch {} };
+    const reader = file.stream().getReader();
+    const writer = Bun.file(stagingPath).writer();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        stagedBytes += value.byteLength;
+        if (stagedBytes > limitBytes) { tooLarge = true; break; }
+        fingerprintHash.update(value);
+        if (headBytes < 65536) {
+          const take = value.subarray(0, 65536 - headBytes);
+          headChunks.push(take);
+          headBytes += take.byteLength;
+        }
+        writer.write(value);
+      }
+    } catch (streamError) {
+      discardStaged();
+      throw streamError;
+    } finally {
+      try { reader.releaseLock(); } catch {}
+      await writer.end();
+    }
+    if (tooLarge) {
+      discardStaged();
+      const error = `That file is too large. The limit is ${deps.uploadLimit()} MB.`;
+      return fail(error, 413);
+    }
+    const head = new Uint8Array(headBytes);
+    let headOffset = 0;
+    for (const chunk of headChunks) { head.set(chunk, headOffset); headOffset += chunk.byteLength; }
+    const validationError = deps.validateUpload(head.buffer as ArrayBuffer, stagedBytes, suffix);
+    if (validationError) { discardStaged(); return fail(validationError); }
+    const fingerprint = fingerprintHash.digest("hex");
     const action = async (): Promise<SubmissionResult> => {
       const queueStatus = await deps.queueStatus(queueName);
       if (!queueStatus.ok || queueStatus.state === "disabled") {
@@ -129,8 +176,6 @@ export function registerPrintingApi(
           },
         };
       }
-      const uploadDir = join(deps.dataDir(), "uploads");
-      mkdirSync(uploadDir, { recursive: true });
       const workDir = join(
         uploadDir,
         `print-${randomBytes(6).toString("hex")}`,
@@ -138,7 +183,12 @@ export function registerPrintingApi(
       mkdirSync(workDir, { mode: 0o700 });
       try {
         const target = join(workDir, name);
-        await Bun.write(target, buffer);
+        try {
+          renameSync(stagingPath, target);
+        } catch (error) {
+          discardStaged();
+          throw error;
+        }
         const locked = await deps.lock(async () => {
           if (deps.queue() !== queueName || deps.ip() !== printerIp) {
             return {
@@ -190,14 +240,17 @@ export function registerPrintingApi(
         rmSync(workDir, { recursive: true, force: true });
       }
     };
-    if (!key) return respond(await action()); // Existing form/API clients remain supported.
-    const fingerprint = createHash("sha256")
-      .update(JSON.stringify([queueName, printerIp, name, options]))
-      .update(new Uint8Array(buffer))
-      .digest("hex");
+    // Existing form/API clients remain supported. The action consumes the
+    // staging file on success; discard whatever is left on early failure.
+    if (!key) { const result = await action(); discardStaged(); return respond(result); }
     try {
-      return respond(await submitOnce(key, fingerprint, action));
+      const receipt = await submitOnce(key, fingerprint, action);
+      // A fresh submission consumed the staging file via rename; a replayed
+      // or rejected one never runs the action. Either way nothing must leak.
+      discardStaged();
+      return respond(receipt);
     } catch (error) {
+      discardStaged();
       console.error("[print] could not store submission receipt", error);
       return fail(
         "Print submission storage is unavailable. Check the hub's data volume and try again.",
